@@ -1013,49 +1013,214 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   color: var(--dsw-alias-label-secondary);
 }
 
-/* Global HUD Overlay Widget */
+/* Global Floating HUD & Window Overlay */
 .att-hud-overlay {
   position: fixed;
-  right: 18px;
-  top: 56px;
   z-index: 1000;
   pointer-events: auto;
   font-family: inherit;
+  transition: opacity 0.15s ease;
 }
 
+.att-hud-overlay.is-dragging {
+  user-select: none;
+}
+
+/* Draggable Mini Pill */
 .att-hud-pill {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 16px;
-  padding: 4px 12px;
+  border-radius: 20px;
+  padding: 5px 12px;
   font-size: 12px;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: var(--dsw-shadow-lv2);
-  transition: all 0.2s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
+  touch-action: none;
 }
 
 .att-hud-pill:hover {
   border-color: var(--dsw-alias-brand-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 85%, transparent);
+  box-shadow: var(--dsw-shadow-lv3);
 }
 
-.att-hud-expanded-card {
-  position: absolute;
-  right: 0;
-  top: 36px;
-  width: 320px;
-  background: var(--dsw-alias-bg-layer-2);
+.att-hud-pill:active,
+.att-hud-pill.is-dragging {
+  cursor: grabbing;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.att-hud-pill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 80%, transparent);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Draggable Floating Window */
+.att-floating-window {
+  width: 400px;
+  max-height: 540px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 92%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 12px;
   box-shadow: var(--dsw-shadow-lv3);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.att-floating-window.is-dragging {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.att-floating-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 75%, transparent);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  cursor: grab;
+  user-select: none;
+}
+
+.att-floating-window-header:active,
+.att-floating-window-header.is-dragging {
+  cursor: grabbing;
+}
+
+.att-floating-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.att-floating-drag-grip {
+  color: var(--dsw-alias-label-dimmed);
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+
+.att-floating-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.att-floating-subtabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 45%, transparent);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.att-floating-tab-btn {
+  flex: 1;
+  text-align: center;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  transition: all 0.15s ease;
+}
+
+.att-floating-tab-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.att-floating-tab-btn.is-active {
+  background: var(--dsw-alias-bg-layer-2);
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+}
+
+.att-floating-window-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  user-select: text;
+}
+
+.att-floating-window-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 40%, transparent);
+}
+
+/* Floating Overview Grid & Cards */
+.att-overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.att-overview-metric-card {
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.att-overview-metric-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.att-overview-metric-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.att-overview-agent-card {
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 @keyframes att-pulse {

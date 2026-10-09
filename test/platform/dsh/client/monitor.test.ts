@@ -270,4 +270,40 @@ Swap:     2147483648           0  2147483648
       unsubscribe();
     });
   });
+
+  describe('Draggable Floating Window Position & Clamping', () => {
+    it('clamps coordinates strictly within viewport boundaries', async () => {
+      const { clampPosition } = await import('../../../../src/platform/dsh/client/views/monitorHud');
+
+      // Given a 1200x800 viewport and 400x520 window
+      // Top-left overflow:
+      expect(clampPosition(-100, -50, 400, 520)).toEqual({ x: 8, y: 8 });
+
+      // Bottom-right overflow:
+      // maxX = 1200 - 400 - 8 = 792, maxY = 800 - 520 - 8 = 272
+      expect(clampPosition(2000, 1500, 400, 520)).toEqual({ x: 792, y: 272 });
+
+      // In-bounds coordinates:
+      expect(clampPosition(200, 150, 400, 520)).toEqual({ x: 200, y: 150 });
+    });
+
+    it('persists and recovers floating window position from localStorage', async () => {
+      const { loadSavedPosition, savePosition } = await import('../../../../src/platform/dsh/client/views/monitorHud');
+
+      const storageMap: Record<string, string> = {};
+      const fakeStorage = {
+        getItem: (k: string) => storageMap[k] ?? null,
+        setItem: (k: string, v: string) => { storageMap[k] = v; },
+        removeItem: (k: string) => { delete storageMap[k]; }
+      };
+      vi.stubGlobal('localStorage', fakeStorage);
+
+      savePosition({ x: 350, y: 120 });
+      const loaded = loadSavedPosition();
+      expect(loaded.x).toBe(350);
+      expect(loaded.y).toBe(120);
+
+      vi.unstubAllGlobals();
+    });
+  });
 });

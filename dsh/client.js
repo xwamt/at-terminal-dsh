@@ -9179,6 +9179,7 @@ window.__ModuleLoader__.load({
       "monitor.title": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
       "monitor.guideTitle": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
       "monitor.guideDescription": "\u5B9E\u65F6\u67E5\u770B\u4E3B\u673A\u786C\u4EF6\u6307\u6807\u4E0E Agent \u6267\u884C\u5BA1\u8BA1",
+      "monitor.tab.overview": "\u603B\u89C8",
       "monitor.tab.hardware": "\u786C\u4EF6\u6307\u6807",
       "monitor.tab.agent": "Agent \u6267\u884C",
       "monitor.server": "\u76EE\u6807\u670D\u52A1\u5668\uFF1A",
@@ -9188,6 +9189,10 @@ window.__ModuleLoader__.load({
       "monitor.hud.toggle": "HUD \u60AC\u6D6E\u7A97",
       "monitor.hud.expand": "\u5C55\u5F00\u8BE6\u60C5",
       "monitor.hud.close": "\u5173\u95ED HUD",
+      "monitor.hud.minimize": "\u6700\u5C0F\u5316\u4E3A\u60AC\u6D6E\u80F6\u56CA",
+      "monitor.hud.openSidebar": "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00\u5B8C\u6574\u9762\u677F",
+      "monitor.hud.dragTip": "\u6309\u4F4F\u6807\u9898\u680F\u62D6\u52A8 \xB7 \u53CC\u51FB\u6298\u53E0",
+      "monitor.agent.ready": "\u7A7A\u95F2\u5C31\u7EEA",
       "monitor.cpu.title": "CPU \u4F7F\u7528\u7387",
       "monitor.cpu.cores": "\u6838\u5FC3\u5206\u5E03",
       "monitor.cpu.load": "\u7CFB\u7EDF\u8D1F\u8F7D\uFF1A{l1} / {l5} / {l15}",
@@ -9477,6 +9482,7 @@ window.__ModuleLoader__.load({
       "monitor.title": "Monitor Window",
       "monitor.guideTitle": "Monitor Window",
       "monitor.guideDescription": "Real-time host hardware metrics and Agent execution audits",
+      "monitor.tab.overview": "Overview",
       "monitor.tab.hardware": "Hardware Metrics",
       "monitor.tab.agent": "Agent Execution",
       "monitor.server": "Server: ",
@@ -9486,6 +9492,10 @@ window.__ModuleLoader__.load({
       "monitor.hud.toggle": "HUD Overlay",
       "monitor.hud.expand": "Expand",
       "monitor.hud.close": "Close HUD",
+      "monitor.hud.minimize": "Minimize to Pill",
+      "monitor.hud.openSidebar": "Open in Sidebar Pane",
+      "monitor.hud.dragTip": "Drag header to move \xB7 Double-click to collapse",
+      "monitor.agent.ready": "Ready / Idle",
       "monitor.cpu.title": "CPU Usage",
       "monitor.cpu.cores": "Cores",
       "monitor.cpu.load": "Load Average: {l1} / {l5} / {l15}",
@@ -13820,42 +13830,153 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/views/monitorHud.ts
-    var import_react7 = __toESM(require("react"), 1);
+    var import_react7 = require("react");
+    var STORAGE_KEY = "dsh.at-terminal.monitor.hud.pos";
+    function clampPosition(x, y, width, height) {
+      let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, maxX = Math.max(8, winW - width - 8), maxY = Math.max(8, winH - height - 8);
+      return {
+        x: Math.max(8, Math.min(maxX, Math.round(x))),
+        y: Math.max(8, Math.min(maxY, Math.round(y)))
+      };
+    }
+    function loadSavedPosition() {
+      let storage = typeof window < "u" && window.localStorage ? window.localStorage : typeof localStorage < "u" ? localStorage : null;
+      if (!storage) return { x: 800, y: 56 };
+      try {
+        let raw = storage.getItem(STORAGE_KEY);
+        if (raw) {
+          let parsed = JSON.parse(raw);
+          if (typeof parsed?.x == "number" && typeof parsed?.y == "number")
+            return clampPosition(parsed.x, parsed.y, 260, 40);
+        }
+      } catch {
+      }
+      let fallbackX = typeof window < "u" && window.innerWidth ? window.innerWidth - 300 : 800;
+      return clampPosition(fallbackX, 56, 260, 40);
+    }
+    function savePosition(pos) {
+      let storage = typeof window < "u" && window.localStorage ? window.localStorage : typeof localStorage < "u" ? localStorage : null;
+      if (storage)
+        try {
+          storage.setItem(STORAGE_KEY, JSON.stringify(pos));
+        } catch {
+        }
+    }
     function MonitorHudWidget(props) {
-      let { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded);
-      import_react7.default.useEffect(() => {
-        forceExpanded !== void 0 && setExpanded(forceExpanded);
-      }, [forceExpanded]);
-      let cpuPercent = metrics?.cpu.usagePercent ?? 0, memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), isAgentActive = !!snapshot?.currentAction;
+      let { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react7.useState)("overview"), [pos, setPos] = (0, import_react7.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react7.useState)(!1), isDraggingRef = (0, import_react7.useRef)(!1), dragStateRef = (0, import_react7.useRef)(null);
+      (0, import_react7.useEffect)(() => {
+        forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
+      }, [forceExpanded]), (0, import_react7.useEffect)(() => {
+        let onResize = () => {
+          let width = expanded ? 400 : 260, height = expanded ? 520 : 40;
+          setPos((prev) => clampPosition(prev.x, prev.y, width, height));
+        };
+        return window.addEventListener("resize", onResize), () => window.removeEventListener("resize", onResize);
+      }, [expanded]);
+      let handlePointerDown = (e, isPill) => {
+        if (e.button !== 0) return;
+        let target = e.target;
+        if (target?.closest && target.closest("button, input, select, textarea, a, .att-floating-subtabs"))
+          return;
+        let currentWidth = isPill ? 260 : 400, currentHeight = isPill ? 40 : 520;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+        }
+        isDraggingRef.current = !0, dragStateRef.current = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          initialX: pos.x,
+          initialY: pos.y,
+          hasMoved: !1,
+          currentWidth,
+          currentHeight
+        }, setIsDragging(!0);
+      }, handlePointerMove = (e) => {
+        if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId)
+          return;
+        let dx = e.clientX - dragStateRef.current.startX, dy = e.clientY - dragStateRef.current.startY;
+        if (!dragStateRef.current.hasMoved && Math.hypot(dx, dy) >= 3 && (dragStateRef.current.hasMoved = !0), dragStateRef.current.hasMoved) {
+          let newPos = clampPosition(
+            dragStateRef.current.initialX + dx,
+            dragStateRef.current.initialY + dy,
+            dragStateRef.current.currentWidth,
+            dragStateRef.current.currentHeight
+          );
+          setPos(newPos);
+        }
+      }, handlePointerUp = (e, isPill) => {
+        if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId)
+          return;
+        let hadMoved = dragStateRef.current.hasMoved;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+        }
+        if (isDraggingRef.current = !1, dragStateRef.current = null, setIsDragging(!1), hadMoved)
+          savePosition(pos);
+        else if (isPill) {
+          let nextExpanded = !expanded;
+          setExpanded(nextExpanded), nextExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
+        }
+      }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status;
       return h(
         "div",
-        { className: "att-hud-overlay" },
-        // Mini Pill
-        h(
+        {
+          className: `att-hud-overlay ${isDragging ? "is-dragging" : ""}`,
+          style: {
+            left: `${pos.x}px`,
+            top: `${pos.y}px`
+          }
+        },
+        // Mini Draggable Pill
+        !expanded && h(
           "div",
           {
-            className: "att-hud-pill",
+            className: `att-hud-pill ${isDragging ? "is-dragging" : ""}`,
             role: "button",
             tabIndex: 0,
             "aria-label": t("monitor.hud.toggle"),
-            onClick: () => setExpanded(!expanded),
+            title: t("monitor.hud.dragTip"),
+            onPointerDown: (e) => handlePointerDown(e, !0),
+            onPointerMove: handlePointerMove,
+            onPointerUp: (e) => handlePointerUp(e, !0),
+            onPointerCancel: (e) => handlePointerUp(e, !0),
             onKeyDown: (e) => {
-              (e.key === "Enter" || e.key === " ") && setExpanded(!expanded);
+              (e.key === "Enter" || e.key === " ") && (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
             }
           },
-          h("span", null, "\u{1F4CA}"),
-          h("span", { className: "att-badge-pulse-dot", style: { color: isAgentActive ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-state-success-primary)" } }),
-          h("span", null, `CPU ${cpuPercent}% | MEM ${memPercent}%`),
-          isAgentActive && h(
+          h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
+          h("span", { "aria-hidden": !0 }, "\u{1F4CA}"),
+          h(
             "span",
-            { style: { color: "var(--dsw-alias-brand-primary)", fontWeight: 600 } },
-            `\u26A1 ${snapshot?.currentAction?.status === "confirmation_waiting" ? "WAIT" : "RUN"}`
+            { className: "att-hud-pill-chip" },
+            `CPU ${cpuPercent}%`
           ),
+          h(
+            "span",
+            { className: "att-hud-pill-chip" },
+            `MEM ${memPercent}%`
+          ),
+          isAgentActive ? h(
+            "span",
+            {
+              className: `att-badge ${agentStatus === "confirmation_waiting" ? "att-badge-waiting" : "att-badge-running"}`,
+              style: { padding: "1px 6px", fontSize: "10px" }
+            },
+            h("span", { className: "att-badge-pulse-dot" }),
+            agentStatus === "confirmation_waiting" ? "WAIT" : "RUN"
+          ) : h("span", {
+            className: "att-badge-pulse-dot",
+            style: { color: "var(--dsw-alias-state-success-primary)" }
+          }),
+          h("span", { style: { fontSize: "10px", opacity: 0.7 } }, "\u25B2"),
           onCloseHud && h(
             "button",
             {
               className: "att-nav-btn",
-              style: { marginLeft: "4px", padding: "0 4px", fontSize: "10px", opacity: 0.7 },
+              style: { marginLeft: "2px", padding: "0 4px", fontSize: "11px", opacity: 0.7 },
               title: t("monitor.hud.close"),
               "aria-label": t("monitor.hud.close"),
               onClick: (e) => {
@@ -13865,11 +13986,11 @@ window.__ModuleLoader__.load({
             "\u2715"
           )
         ),
-        // Expanded Card
+        // Expanded Draggable Floating Window
         expanded && h(
           "div",
           {
-            className: "att-hud-expanded-card",
+            className: `att-floating-window ${isDragging ? "is-dragging" : ""}`,
             role: "dialog",
             tabIndex: -1,
             "aria-label": t("monitor.title"),
@@ -13877,23 +13998,67 @@ window.__ModuleLoader__.load({
               e.key === "Escape" && setExpanded(!1);
             }
           },
+          // Header / Drag Handle
           h(
             "div",
-            { style: { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--dsw-alias-border-l1)", paddingBottom: "6px" } },
-            h("span", { style: { fontWeight: 600, fontSize: "13px" } }, t("monitor.title")),
+            {
+              className: `att-floating-window-header ${isDragging ? "is-dragging" : ""}`,
+              title: t("monitor.hud.dragTip"),
+              onPointerDown: (e) => handlePointerDown(e, !1),
+              onPointerMove: handlePointerMove,
+              onPointerUp: (e) => handlePointerUp(e, !1),
+              onPointerCancel: (e) => handlePointerUp(e, !1),
+              onDoubleClick: () => setExpanded(!1)
+            },
             h(
               "div",
-              { style: { display: "flex", gap: "4px" } },
+              { className: "att-floating-header-left" },
+              h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
+              h("span", { style: { fontWeight: 600, fontSize: "13px" } }, `\u{1F4CA} ${t("monitor.title")}`),
+              isAgentActive ? h(
+                "span",
+                {
+                  className: `att-badge ${agentStatus === "confirmation_waiting" ? "att-badge-waiting" : "att-badge-running"}`,
+                  style: { fontSize: "10px", padding: "1px 6px" }
+                },
+                h("span", { className: "att-badge-pulse-dot" }),
+                t(agentStatus === "confirmation_waiting" ? "monitor.status.waiting" : "monitor.status.running")
+              ) : h(
+                "span",
+                {
+                  className: "att-badge att-badge-success",
+                  style: { fontSize: "10px", padding: "1px 6px" }
+                },
+                h("span", { className: "att-badge-pulse-dot" }),
+                t("monitor.agent.ready")
+              )
+            ),
+            h(
+              "div",
+              { className: "att-floating-header-actions" },
               h(
                 "button",
                 {
                   className: "att-nav-btn",
                   onClick: () => setExpanded(!1),
-                  title: t("dialog.close"),
-                  "aria-label": t("dialog.close"),
+                  title: t("monitor.hud.minimize"),
+                  "aria-label": t("monitor.hud.minimize"),
                   style: { padding: "2px 6px", fontSize: "11px" }
                 },
                 "\u2014"
+              ),
+              h(
+                "button",
+                {
+                  className: "att-nav-btn",
+                  onClick: () => {
+                    setExpanded(!1), onOpenPane(activeTab === "agent" ? "agent_execution" : "hardware");
+                  },
+                  title: t("monitor.hud.openSidebar"),
+                  "aria-label": t("monitor.hud.openSidebar"),
+                  style: { padding: "2px 6px", fontSize: "11px" }
+                },
+                "\u2197"
               ),
               onCloseHud && h(
                 "button",
@@ -13910,39 +14075,231 @@ window.__ModuleLoader__.load({
               )
             )
           ),
+          // Subtabs Navigation Bar
           h(
             "div",
-            { style: { display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" } },
-            h("div", null, `CPU: ${cpuPercent}% (Load: ${metrics?.cpu.loadAvg.map((l) => l.toFixed(2)).join(" / ") ?? "0"})`),
-            h("div", null, `Memory: ${memPercent}% (${Math.round(memUsedBytes / 1024 / 1024)}MB / ${Math.round(memTotalBytes / 1024 / 1024)}MB)`),
-            h("div", null, `Agent: ${isAgentActive ? snapshot?.currentAction?.command : t("monitor.agent.idle")}`),
-            snapshot && snapshot.activeTransfers.length > 0 && h("div", null, `${t("monitor.agent.transfersTitle")}: ${snapshot.activeTransfers.length}`)
-          ),
-          h(
-            "div",
-            { style: { display: "flex", gap: "8px", marginTop: "6px" } },
+            { className: "att-floating-subtabs" },
             h(
               "button",
               {
-                className: "att-btn att-btn-primary",
-                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
-                onClick: () => {
-                  setExpanded(!1), onOpenPane("hardware");
-                }
+                className: `att-floating-tab-btn ${activeTab === "overview" ? "is-active" : ""}`,
+                onClick: () => setActiveTab("overview")
+              },
+              t("monitor.tab.overview")
+            ),
+            h(
+              "button",
+              {
+                className: `att-floating-tab-btn ${activeTab === "hardware" ? "is-active" : ""}`,
+                onClick: () => setActiveTab("hardware")
               },
               t("monitor.tab.hardware")
             ),
             h(
               "button",
               {
-                className: "att-btn att-btn-secondary",
-                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
-                onClick: () => {
-                  setExpanded(!1), onOpenPane("agent_execution");
-                }
+                className: `att-floating-tab-btn ${activeTab === "agent" ? "is-active" : ""}`,
+                onClick: () => setActiveTab("agent")
               },
               t("monitor.tab.agent")
             )
+          ),
+          // Body Content
+          h(
+            "div",
+            { className: "att-floating-window-body" },
+            activeTab === "overview" && h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+              // Overview 2x2 Grid
+              h(
+                "div",
+                { className: "att-overview-grid" },
+                // CPU Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.cpu.title")),
+                    h("span", { className: "att-overview-metric-value" }, `${cpuPercent}%`)
+                  ),
+                  h(
+                    "div",
+                    { className: "att-monitor-gauge" },
+                    h("div", {
+                      className: "att-monitor-gauge-fill",
+                      "data-level": cpuLevel,
+                      style: { width: `${cpuPercent}%` }
+                    })
+                  ),
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    `Load: ${metrics?.cpu.loadAvg.map((l) => l.toFixed(2)).join("/") ?? "0/0/0"}`
+                  )
+                ),
+                // Memory Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.mem.title")),
+                    h("span", { className: "att-overview-metric-value" }, `${memPercent}%`)
+                  ),
+                  h(
+                    "div",
+                    { className: "att-monitor-gauge" },
+                    h("div", {
+                      className: "att-monitor-gauge-fill",
+                      "data-level": memLevel,
+                      style: { width: `${memPercent}%` }
+                    })
+                  ),
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    `${formatFileSize(memUsedBytes)} / ${formatFileSize(memTotalBytes)}`
+                  )
+                ),
+                // Disk Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.disk.title")),
+                    h("span", { className: "att-overview-metric-value" }, primaryDisk ? `${primaryDisk.usePercent}%` : "-")
+                  ),
+                  h(
+                    "div",
+                    { className: "att-monitor-gauge" },
+                    h("div", {
+                      className: "att-monitor-gauge-fill",
+                      "data-level": diskLevel,
+                      style: { width: `${primaryDisk?.usePercent ?? 0}%` }
+                    })
+                  ),
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    primaryDisk ? `${primaryDisk.mount} (${formatFileSize(primaryDisk.usedBytes)})` : "-"
+                  )
+                ),
+                // Network Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.net.title"))
+                  ),
+                  h(
+                    "div",
+                    { style: { display: "flex", flexDirection: "column", gap: "2px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } },
+                    h("span", null, `\u2193 Rx: ${rxStr}`),
+                    h("span", null, `\u2191 Tx: ${txStr}`)
+                  )
+                )
+              ),
+              // Agent Execution Status Card
+              h(
+                "div",
+                { className: "att-overview-agent-card" },
+                h(
+                  "div",
+                  { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                  h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.agent.actionTitle")),
+                  isAgentActive ? h(
+                    "span",
+                    {
+                      className: `att-badge ${agentStatus === "confirmation_waiting" ? "att-badge-waiting" : "att-badge-running"}`,
+                      style: { fontSize: "10px" }
+                    },
+                    t(agentStatus === "confirmation_waiting" ? "monitor.status.waiting" : "monitor.status.running")
+                  ) : h(
+                    "span",
+                    { style: { fontSize: "11px", color: "var(--dsw-alias-state-success-primary)" } },
+                    `\u25CF ${t("monitor.agent.ready")}`
+                  )
+                ),
+                isAgentActive ? h(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    t("monitor.agent.elapsed", { time: snapshot?.currentAction?.runningTimeMs ?? 0 })
+                  ),
+                  h("div", { className: "att-code-preview", style: { maxHeight: "70px" } }, snapshot?.currentAction?.command),
+                  snapshot && snapshot.activeTransfers.length > 0 && h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-brand-primary)" } }, `${t("monitor.agent.transfersTitle")}: ${snapshot.activeTransfers.length}`)
+                ) : h(
+                  "div",
+                  { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", padding: "4px 0" } },
+                  t("monitor.agent.idle")
+                )
+              ),
+              // Quick Action Navigation Buttons
+              h(
+                "div",
+                { style: { display: "flex", gap: "8px", marginTop: "4px" } },
+                h(
+                  "button",
+                  {
+                    className: "att-btn att-btn-secondary",
+                    style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                    onClick: () => setActiveTab("hardware")
+                  },
+                  t("monitor.tab.hardware")
+                ),
+                h(
+                  "button",
+                  {
+                    className: "att-btn att-btn-secondary",
+                    style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                    onClick: () => setActiveTab("agent")
+                  },
+                  t("monitor.tab.agent")
+                ),
+                h(
+                  "button",
+                  {
+                    className: "att-btn att-btn-primary",
+                    style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                    onClick: () => {
+                      setExpanded(!1), onOpenPane("hardware");
+                    }
+                  },
+                  t("monitor.hud.openSidebar")
+                )
+              )
+            ),
+            activeTab === "hardware" && h(HardwareMonitorView, {
+              t,
+              metrics,
+              loading: !1,
+              onRefresh: () => {
+              }
+            }),
+            activeTab === "agent" && h(AgentMonitorView, {
+              t,
+              snapshot,
+              loading: !1,
+              onRefresh: () => {
+              }
+            })
+          ),
+          // Footer status bar
+          h(
+            "div",
+            { className: "att-floating-window-footer" },
+            h("span", null, t("monitor.hud.dragTip")),
+            h("span", { style: { opacity: 0.8 } }, "AT Terminal")
           )
         )
       );
@@ -15755,49 +16112,214 @@ window.__ModuleLoader__.load({
       color: var(--dsw-alias-label-secondary);
     }
 
-    /* Global HUD Overlay Widget */
+    /* Global Floating HUD & Window Overlay */
     .att-hud-overlay {
       position: fixed;
-      right: 18px;
-      top: 56px;
       z-index: 1000;
       pointer-events: auto;
       font-family: inherit;
+      transition: opacity 0.15s ease;
     }
 
+    .att-hud-overlay.is-dragging {
+      user-select: none;
+    }
+
+    /* Draggable Mini Pill */
     .att-hud-pill {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 8px;
-      background: var(--dsw-alias-bg-layer-2);
+      background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, transparent);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--dsw-alias-border-l2);
-      border-radius: 16px;
-      padding: 4px 12px;
+      border-radius: 20px;
+      padding: 5px 12px;
       font-size: 12px;
-      cursor: pointer;
+      cursor: grab;
       box-shadow: var(--dsw-shadow-lv2);
-      transition: all 0.2s ease;
+      transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
       user-select: none;
+      touch-action: none;
     }
 
     .att-hud-pill:hover {
       border-color: var(--dsw-alias-brand-primary);
-      background: var(--dsw-alias-interactive-bg-hover);
+      background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 85%, transparent);
+      box-shadow: var(--dsw-shadow-lv3);
     }
 
-    .att-hud-expanded-card {
-      position: absolute;
-      right: 0;
-      top: 36px;
-      width: 320px;
-      background: var(--dsw-alias-bg-layer-2);
+    .att-hud-pill:active,
+    .att-hud-pill.is-dragging {
+      cursor: grabbing;
+      border-color: var(--dsw-alias-brand-primary);
+    }
+
+    .att-hud-pill-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 80%, transparent);
+      font-size: 11px;
+      color: var(--dsw-alias-label-secondary);
+    }
+
+    /* Draggable Floating Window */
+    .att-floating-window {
+      width: 400px;
+      max-height: 540px;
+      background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 92%, transparent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--dsw-alias-border-l3);
-      border-radius: 8px;
-      padding: 12px;
+      border-radius: 12px;
       box-shadow: var(--dsw-shadow-lv3);
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+      touch-action: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .att-floating-window.is-dragging {
+      border-color: var(--dsw-alias-brand-primary);
+      box-shadow: var(--dsw-shadow-lv3);
+    }
+
+    .att-floating-window-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 75%, transparent);
+      border-bottom: 1px solid var(--dsw-alias-border-l1);
+      cursor: grab;
+      user-select: none;
+    }
+
+    .att-floating-window-header:active,
+    .att-floating-window-header.is-dragging {
+      cursor: grabbing;
+    }
+
+    .att-floating-header-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .att-floating-drag-grip {
+      color: var(--dsw-alias-label-dimmed);
+      font-size: 14px;
+      line-height: 1;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .att-floating-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .att-floating-subtabs {
+      display: flex;
+      gap: 4px;
+      padding: 6px 12px;
+      background: color-mix(in srgb, var(--dsw-alias-bg-base) 45%, transparent);
+      border-bottom: 1px solid var(--dsw-alias-border-l1);
+    }
+
+    .att-floating-tab-btn {
+      flex: 1;
+      text-align: center;
+      padding: 4px 8px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      background: transparent;
+      color: var(--dsw-alias-label-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .att-floating-tab-btn:hover {
+      background: var(--dsw-alias-interactive-bg-hover);
+      color: var(--dsw-alias-label-primary);
+    }
+
+    .att-floating-tab-btn.is-active {
+      background: var(--dsw-alias-bg-layer-2);
+      border-color: var(--dsw-alias-border-l2);
+      color: var(--dsw-alias-brand-primary);
+      font-weight: 600;
+    }
+
+    .att-floating-window-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 420px;
+      user-select: text;
+    }
+
+    .att-floating-window-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 12px;
+      border-top: 1px solid var(--dsw-alias-border-l1);
+      font-size: 11px;
+      color: var(--dsw-alias-label-caption);
+      background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 40%, transparent);
+    }
+
+    /* Floating Overview Grid & Cards */
+    .att-overview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 8px;
+    }
+
+    .att-overview-metric-card {
+      background: var(--dsw-alias-bg-base);
+      border: 1px solid var(--dsw-alias-border-l1);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .att-overview-metric-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--dsw-alias-label-secondary);
+    }
+
+    .att-overview-metric-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--dsw-alias-label-primary);
+    }
+
+    .att-overview-agent-card {
+      background: var(--dsw-alias-bg-base);
+      border: 1px solid var(--dsw-alias-border-l1);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
 
     @keyframes att-pulse {
