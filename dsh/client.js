@@ -13891,30 +13891,38 @@ window.__ModuleLoader__.load({
         }
     }
     function MonitorHudWidget(props) {
-      let { t, metrics, snapshot, onOpenPane, onCloseHud, activeServerId, activeLabel } = props, [pos, setPos] = (0, import_react7.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react7.useState)(!1), isDraggingRef = (0, import_react7.useRef)(!1), dragStateRef = (0, import_react7.useRef)(null);
+      let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react7.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react7.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react7.useState)(!1), isDraggingRef = (0, import_react7.useRef)(!1), dragStateRef = (0, import_react7.useRef)(null);
       (0, import_react7.useEffect)(() => {
+        forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
+      }, [forceExpanded]), (0, import_react7.useEffect)(() => {
+        initialSubtab && setActiveTab(initialSubtab);
+      }, [initialSubtab]), (0, import_react7.useEffect)(() => {
         let onResize = () => {
-          setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+          let width = expanded ? 400 : 280, height = expanded ? 520 : 40;
+          setPos((prev) => clampPosition(prev.x, prev.y, width, height));
         };
         return window.addEventListener("resize", onResize), () => window.removeEventListener("resize", onResize);
-      }, []);
-      let handlePointerDown = (e) => {
+      }, [expanded]);
+      let handlePointerDown = (e, isPill) => {
         if (e.button !== 0) return;
         let target = e.target;
-        if (!(target?.closest && target.closest("button, input, select, textarea, a"))) {
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-          }
-          isDraggingRef.current = !0, dragStateRef.current = {
-            pointerId: e.pointerId,
-            startX: e.clientX,
-            startY: e.clientY,
-            initialX: pos.x,
-            initialY: pos.y,
-            hasMoved: !1
-          }, setIsDragging(!0);
+        if (target?.closest && target.closest("button, input, select, textarea, a, .att-floating-subtabs"))
+          return;
+        let currentWidth = isPill ? 280 : 400, currentHeight = isPill ? 40 : 520;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
         }
+        isDraggingRef.current = !0, dragStateRef.current = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          initialX: pos.x,
+          initialY: pos.y,
+          hasMoved: !1,
+          currentWidth,
+          currentHeight
+        }, setIsDragging(!0);
       }, handlePointerMove = (e) => {
         if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId)
           return;
@@ -13923,12 +13931,12 @@ window.__ModuleLoader__.load({
           let newPos = clampPosition(
             dragStateRef.current.initialX + dx,
             dragStateRef.current.initialY + dy,
-            280,
-            40
+            dragStateRef.current.currentWidth,
+            dragStateRef.current.currentHeight
           );
           setPos(newPos);
         }
-      }, handlePointerUp = (e) => {
+      }, handlePointerUp = (e, isPill) => {
         if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId)
           return;
         let hadMoved = dragStateRef.current.hasMoved;
@@ -13936,12 +13944,16 @@ window.__ModuleLoader__.load({
           e.currentTarget.releasePointerCapture(e.pointerId);
         } catch {
         }
-        isDraggingRef.current = !1, dragStateRef.current = null, setIsDragging(!1), hadMoved ? savePosition(pos) : onOpenPane("hardware");
-      }, cpuPercent = metrics?.cpu.usagePercent ?? 0, memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, tooltip = [
-        activeLabel || activeServerId ? `[${activeLabel || activeServerId}]` : "",
-        t("monitor.hud.openSidebar"),
-        t("monitor.hud.dragTip")
-      ].filter(Boolean).join(" \xB7 ");
+        if (isDraggingRef.current = !1, dragStateRef.current = null, setIsDragging(!1), hadMoved)
+          savePosition(pos);
+        else if (isPill) {
+          let nextExpanded = !expanded;
+          setExpanded(nextExpanded), nextExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
+        }
+      }, handleHeaderDoubleClick = (e) => {
+        let target = e.target;
+        target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
+      }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status;
       return h(
         "div",
         {
@@ -13951,20 +13963,21 @@ window.__ModuleLoader__.load({
             top: `${pos.y}px`
           }
         },
-        h(
+        // Mini Draggable Pill
+        !expanded && h(
           "div",
           {
             className: `att-hud-pill ${isDragging ? "is-dragging" : ""}`,
             role: "button",
             tabIndex: 0,
             "aria-label": t("monitor.title"),
-            title: tooltip,
-            onPointerDown: handlePointerDown,
+            title: t("monitor.hud.dragTip"),
+            onPointerDown: (e) => handlePointerDown(e, !0),
             onPointerMove: handlePointerMove,
-            onPointerUp: handlePointerUp,
-            onPointerCancel: handlePointerUp,
+            onPointerUp: (e) => handlePointerUp(e, !0),
+            onPointerCancel: (e) => handlePointerUp(e, !0),
             onKeyDown: (e) => {
-              (e.key === "Enter" || e.key === " ") && onOpenPane("hardware");
+              (e.key === "Enter" || e.key === " ") && (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
             }
           },
           h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
@@ -13974,7 +13987,7 @@ window.__ModuleLoader__.load({
             {
               className: "att-hud-pill-chip",
               title: `${t("monitor.server")}${activeLabel || activeServerId}`,
-              style: { maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+              style: { maxWidth: "110px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
             },
             `\u{1F5A5}\uFE0F ${activeLabel || activeServerId}`
           ),
@@ -13982,8 +13995,9 @@ window.__ModuleLoader__.load({
             "span",
             {
               className: "att-hud-pill-chip",
+              title: t("monitor.tab.hardware"),
               onClick: (e) => {
-                e.stopPropagation(), onOpenPane("hardware");
+                e.stopPropagation(), setExpanded(!0), setActiveTab("hardware"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
               }
             },
             `CPU ${cpuPercent}%`
@@ -13992,8 +14006,9 @@ window.__ModuleLoader__.load({
             "span",
             {
               className: "att-hud-pill-chip",
+              title: t("monitor.tab.hardware"),
               onClick: (e) => {
-                e.stopPropagation(), onOpenPane("hardware");
+                e.stopPropagation(), setExpanded(!0), setActiveTab("hardware"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
               }
             },
             `MEM ${memPercent}%`
@@ -14005,7 +14020,7 @@ window.__ModuleLoader__.load({
               style: { padding: "1px 6px", fontSize: "10px", cursor: "pointer" },
               title: `${t("monitor.tab.agent")}: ${agentStatus}`,
               onClick: (e) => {
-                e.stopPropagation(), onOpenPane("agent_execution");
+                e.stopPropagation(), setExpanded(!0), setActiveTab("agent"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
               }
             },
             h("span", { className: "att-badge-pulse-dot" }),
@@ -14017,10 +14032,11 @@ window.__ModuleLoader__.load({
           h(
             "span",
             {
-              style: { fontSize: "11px", opacity: 0.7, padding: "0 2px" },
-              title: t("monitor.hud.openSidebar")
+              className: "att-hud-pill-expand-arrow",
+              title: t("monitor.hud.expand"),
+              style: { fontSize: "10px", opacity: 0.8, cursor: "pointer", padding: "0 2px" }
             },
-            "\u2197"
+            "\u25BC"
           ),
           onCloseHud && h(
             "button",
@@ -14034,6 +14050,324 @@ window.__ModuleLoader__.load({
               }
             },
             "\u2715"
+          )
+        ),
+        // Expanded Draggable Floating Window
+        expanded && h(
+          "div",
+          {
+            className: `att-floating-window ${isDragging ? "is-dragging" : ""}`,
+            role: "dialog",
+            tabIndex: -1,
+            "aria-label": t("monitor.title"),
+            onKeyDown: (e) => {
+              e.key === "Escape" && (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
+            }
+          },
+          // Header / Drag Handle
+          h(
+            "div",
+            {
+              className: `att-floating-window-header ${isDragging ? "is-dragging" : ""}`,
+              title: t("monitor.hud.dragTip"),
+              onPointerDown: (e) => handlePointerDown(e, !1),
+              onPointerMove: handlePointerMove,
+              onPointerUp: (e) => handlePointerUp(e, !1),
+              onPointerCancel: (e) => handlePointerUp(e, !1),
+              onDoubleClick: handleHeaderDoubleClick
+            },
+            h(
+              "div",
+              { className: "att-floating-header-left" },
+              h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
+              h("span", { "aria-hidden": !0 }, "\u{1F4CA}"),
+              h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.title"))
+            ),
+            h(
+              "div",
+              { className: "att-floating-header-actions" },
+              h(
+                "button",
+                {
+                  className: "att-nav-btn",
+                  title: t("monitor.hud.minimize"),
+                  "aria-label": t("monitor.hud.minimize"),
+                  onClick: (e) => {
+                    e.stopPropagation(), setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+                  }
+                },
+                "\u2014"
+              ),
+              onCloseHud && h(
+                "button",
+                {
+                  className: "att-nav-btn",
+                  title: t("monitor.hud.close"),
+                  "aria-label": t("monitor.hud.close"),
+                  onClick: (e) => {
+                    e.stopPropagation(), onCloseHud();
+                  }
+                },
+                "\u2715"
+              )
+            )
+          ),
+          // Server Sub-bar
+          h(
+            "div",
+            {
+              style: {
+                padding: "4px 12px",
+                fontSize: "11px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                color: "var(--dsw-alias-label-secondary)",
+                background: "color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent)",
+                borderBottom: "1px solid var(--dsw-alias-border-l1)"
+              }
+            },
+            h("span", { "aria-hidden": !0 }, "\u{1F5A5}\uFE0F"),
+            h("span", null, t("monitor.server")),
+            h(
+              "span",
+              {
+                style: {
+                  color: "var(--dsw-alias-label-primary)",
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap"
+                }
+              },
+              activeLabel || activeServerId || metrics?.serverId || "Default"
+            )
+          ),
+          // Subtabs Navigation Bar
+          h(
+            "div",
+            { className: "att-floating-subtabs" },
+            h(
+              "button",
+              {
+                className: `att-floating-tab-btn ${activeTab === "overview" ? "is-active" : ""}`,
+                onClick: () => setActiveTab("overview")
+              },
+              t("monitor.tab.overview")
+            ),
+            h(
+              "button",
+              {
+                className: `att-floating-tab-btn ${activeTab === "hardware" ? "is-active" : ""}`,
+                onClick: () => setActiveTab("hardware")
+              },
+              t("monitor.tab.hardware")
+            ),
+            h(
+              "button",
+              {
+                className: `att-floating-tab-btn ${activeTab === "agent" ? "is-active" : ""}`,
+                onClick: () => setActiveTab("agent")
+              },
+              t("monitor.tab.agent")
+            )
+          ),
+          // Body Content
+          h(
+            "div",
+            { className: "att-floating-window-body" },
+            activeTab === "overview" && h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+              // Overview 2x2 Grid
+              h(
+                "div",
+                { className: "att-overview-grid" },
+                // CPU Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.cpu.title")),
+                    h("span", { className: "att-overview-metric-value" }, `${cpuPercent}%`)
+                  ),
+                  h(
+                    "div",
+                    { className: "att-monitor-gauge" },
+                    h("div", {
+                      className: "att-monitor-gauge-fill",
+                      "data-level": cpuLevel,
+                      style: { width: `${cpuPercent}%` }
+                    })
+                  ),
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    `Load: ${metrics?.cpu.loadAvg.map((l) => l.toFixed(2)).join("/") ?? "0/0/0"}`
+                  )
+                ),
+                // Memory Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.mem.title")),
+                    h("span", { className: "att-overview-metric-value" }, `${memPercent}%`)
+                  ),
+                  h(
+                    "div",
+                    { className: "att-monitor-gauge" },
+                    h("div", {
+                      className: "att-monitor-gauge-fill",
+                      "data-level": memLevel,
+                      style: { width: `${memPercent}%` }
+                    })
+                  ),
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    `${formatFileSize(memUsedBytes)} / ${formatFileSize(memTotalBytes)}`
+                  )
+                ),
+                // Disk Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.disk.title")),
+                    h("span", { className: "att-overview-metric-value" }, primaryDisk ? `${primaryDisk.usePercent}%` : "-")
+                  ),
+                  h(
+                    "div",
+                    { className: "att-monitor-gauge" },
+                    h("div", {
+                      className: "att-monitor-gauge-fill",
+                      "data-level": diskLevel,
+                      style: { width: `${primaryDisk?.usePercent ?? 0}%` }
+                    })
+                  ),
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    primaryDisk ? `${primaryDisk.mount} (${formatFileSize(primaryDisk.usedBytes)})` : "-"
+                  )
+                ),
+                // Network Metric Card
+                h(
+                  "div",
+                  { className: "att-overview-metric-card" },
+                  h(
+                    "div",
+                    { className: "att-overview-metric-title" },
+                    h("span", null, t("monitor.net.title"))
+                  ),
+                  h(
+                    "div",
+                    { style: { display: "flex", flexDirection: "column", gap: "2px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } },
+                    h("span", null, `\u2193 Rx: ${rxStr}`),
+                    h("span", null, `\u2191 Tx: ${txStr}`)
+                  )
+                )
+              ),
+              // Agent Execution Status Card
+              h(
+                "div",
+                { className: "att-overview-agent-card" },
+                h(
+                  "div",
+                  { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                  h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.agent.actionTitle")),
+                  isAgentActive ? h(
+                    "span",
+                    {
+                      className: `att-badge ${agentStatus === "confirmation_waiting" ? "att-badge-waiting" : "att-badge-running"}`,
+                      style: { fontSize: "10px" }
+                    },
+                    t(agentStatus === "confirmation_waiting" ? "monitor.status.waiting" : "monitor.status.running")
+                  ) : h(
+                    "span",
+                    { style: { fontSize: "11px", color: "var(--dsw-alias-state-success-primary)" } },
+                    `\u25CF ${t("monitor.agent.ready")}`
+                  )
+                ),
+                isAgentActive ? h(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                  h(
+                    "div",
+                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    t("monitor.agent.elapsed", { time: snapshot?.currentAction?.runningTimeMs ?? 0 })
+                  ),
+                  h("div", { className: "att-code-preview", style: { maxHeight: "70px" } }, snapshot?.currentAction?.command),
+                  snapshot && snapshot.activeTransfers.length > 0 && h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-brand-primary)" } }, `${t("monitor.agent.transfersTitle")}: ${snapshot.activeTransfers.length}`)
+                ) : h(
+                  "div",
+                  { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", padding: "4px 0" } },
+                  t("monitor.agent.idle")
+                )
+              ),
+              // Quick Action Navigation Buttons (ONLY tab switching and minimize, NO openSidebar!)
+              h(
+                "div",
+                { style: { display: "flex", gap: "8px", marginTop: "4px" } },
+                h(
+                  "button",
+                  {
+                    className: "att-btn att-btn-secondary",
+                    style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                    onClick: () => setActiveTab("hardware")
+                  },
+                  t("monitor.tab.hardware")
+                ),
+                h(
+                  "button",
+                  {
+                    className: "att-btn att-btn-secondary",
+                    style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                    onClick: () => setActiveTab("agent")
+                  },
+                  t("monitor.tab.agent")
+                ),
+                h(
+                  "button",
+                  {
+                    className: "att-btn att-btn-secondary",
+                    style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                    onClick: () => {
+                      setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+                    }
+                  },
+                  t("monitor.hud.minimize")
+                )
+              )
+            ),
+            activeTab === "hardware" && h(HardwareMonitorView, {
+              t,
+              metrics,
+              loading: !1,
+              onRefresh: () => {
+              }
+            }),
+            activeTab === "agent" && h(AgentMonitorView, {
+              t,
+              snapshot,
+              loading: !1,
+              onRefresh: () => {
+              }
+            })
+          ),
+          // Footer status bar
+          h(
+            "div",
+            { className: "att-floating-window-footer" },
+            h("span", null, t("monitor.hud.dragTip")),
+            h("span", { style: { opacity: 0.8 } }, "AT Terminal")
           )
         )
       );
@@ -16246,15 +16580,15 @@ window.__ModuleLoader__.load({
       );
     }
     function MonitorHudContainer(props) {
-      let { t, onOpenPane, onRegisterController } = props, [metrics, setMetrics] = (0, import_react8.useState)(null), [snapshot, setSnapshot] = (0, import_react8.useState)(null), [visible, setVisible] = (0, import_react8.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react8.useState)(null), [activeLabel, setActiveLabel] = (0, import_react8.useState)(null);
+      let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react8.useState)(null), [snapshot, setSnapshot] = (0, import_react8.useState)(null), [visible, setVisible] = (0, import_react8.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react8.useState)(null), [activeLabel, setActiveLabel] = (0, import_react8.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react8.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react8.useState)("overview");
       return (0, import_react8.useEffect)(() => {
         if (onRegisterController)
           return onRegisterController({
             open: (target) => {
-              setVisible(!0), target && onOpenPane(target, activeServerId || void 0);
+              setVisible(!0), setForceExpanded(!0), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview");
             },
             close: () => {
-              setVisible(!1);
+              setVisible(!1), setForceExpanded(!1);
             },
             toggle: () => {
               setVisible((prev) => !prev);
@@ -16262,7 +16596,7 @@ window.__ModuleLoader__.load({
           }), () => {
             onRegisterController(null);
           };
-      }, [onRegisterController, activeServerId, onOpenPane]), (0, import_react8.useEffect)(() => {
+      }, [onRegisterController]), (0, import_react8.useEffect)(() => {
         let handleActiveTerminal = (state) => {
           setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? setVisible(!0) : setVisible(!1);
         }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
@@ -16287,9 +16621,10 @@ window.__ModuleLoader__.load({
         t,
         metrics,
         snapshot,
+        forceExpanded,
+        initialSubtab,
         activeServerId,
         activeLabel,
-        onOpenPane: (target) => onOpenPane(target, activeServerId || void 0),
         onCloseHud: () => setVisible(!1)
       }) : null;
     }
@@ -16317,10 +16652,10 @@ window.__ModuleLoader__.load({
         }
       }, hudController = null, openMonitorTab = (options) => {
         try {
-          let mode = options?.mode ?? "tab", target = options?.target ?? "hardware", serverId = options?.serverId;
-          return mode === "hud" ? (hudController?.open(target), !0) : (ctx.sidebarRight.openTab(KIND_MONITOR, { params: { target, serverId } }), !0);
+          let target = options?.target ?? "hardware";
+          return hudController ? (hudController.open(target), !0) : !1;
         } catch (error) {
-          return console.warn("at-terminal: could not open monitor tab", error), !1;
+          return console.warn("at-terminal: could not open monitor floating window", error), !1;
         }
       }, revealAssets = () => {
         try {
@@ -16406,9 +16741,6 @@ window.__ModuleLoader__.load({
           () => ctx.slots.register(
             { name: "shell.overlay", id: "@at-series/dsh-at-terminal/monitor-hud", locale: NS },
             wrapWithLocale(MonitorHudContainer, t, {
-              onOpenPane: (target, serverId) => {
-                openMonitorTab({ target, serverId, mode: "tab" });
-              },
               onRegisterController: (ctrl) => {
                 hudController = ctrl;
               }

@@ -488,25 +488,30 @@ interface HudController {
 
 function MonitorHudContainer(props: {
   t: Translate;
-  onOpenPane: (target: 'hardware' | 'agent_execution', serverId?: string) => void;
   onRegisterController?: (ctrl: HudController | null) => void;
 }) {
-  const { t, onOpenPane, onRegisterController } = props;
+  const { t, onRegisterController } = props;
   const [metrics, setMetrics] = useState<HardwareMetrics | null>(null);
   const [snapshot, setSnapshot] = useState<AgentExecutionSnapshot | null>(null);
   const [visible, setVisible] = useState<boolean>(false);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const [forceExpanded, setForceExpanded] = useState<boolean | undefined>(undefined);
+  const [initialSubtab, setInitialSubtab] = useState<'overview' | 'hardware' | 'agent'>('overview');
 
   useEffect(() => {
     if (onRegisterController) {
       onRegisterController({
         open: (target) => {
           setVisible(true);
-          if (target) onOpenPane(target, activeServerId || undefined);
+          setForceExpanded(true);
+          if (target === 'hardware') setInitialSubtab('hardware');
+          else if (target === 'agent_execution') setInitialSubtab('agent');
+          else setInitialSubtab('overview');
         },
         close: () => {
           setVisible(false);
+          setForceExpanded(false);
         },
         toggle: () => {
           setVisible((prev) => !prev);
@@ -516,7 +521,7 @@ function MonitorHudContainer(props: {
         onRegisterController(null);
       };
     }
-  }, [onRegisterController, activeServerId, onOpenPane]);
+  }, [onRegisterController]);
 
   // Synchronize with active connected terminal session
   useEffect(() => {
@@ -564,9 +569,10 @@ function MonitorHudContainer(props: {
     t,
     metrics,
     snapshot,
+    forceExpanded,
+    initialSubtab,
     activeServerId,
     activeLabel,
-    onOpenPane: (target: 'hardware' | 'agent_execution') => onOpenPane(target, activeServerId || undefined),
     onCloseHud: () => setVisible(false)
   });
 }
@@ -652,24 +658,21 @@ export function apply(ctx: ClientContext): void {
 
   let hudController: HudController | null = null;
 
-  /** Open the monitor tab. */
+  /** Open or toggle the monitor floating window. */
   const openMonitorTab = (options?: {
     target?: 'hardware' | 'agent_execution';
     serverId?: string;
     mode?: 'float' | 'hud' | 'tab';
   }): boolean => {
     try {
-      const mode = options?.mode ?? 'tab';
       const target = options?.target ?? 'hardware';
-      const serverId = options?.serverId;
-      if (mode === 'hud') {
-        hudController?.open(target);
+      if (hudController) {
+        hudController.open(target);
         return true;
       }
-      ctx.sidebarRight.openTab(KIND_MONITOR, { params: { target, serverId } });
-      return true;
+      return false;
     } catch (error) {
-      console.warn('at-terminal: could not open monitor tab', error);
+      console.warn('at-terminal: could not open monitor floating window', error);
       return false;
     }
   };
@@ -844,9 +847,6 @@ export function apply(ctx: ClientContext): void {
         ctx.slots.register(
           { name: 'shell.overlay', id: '@at-series/dsh-at-terminal/monitor-hud', locale: NS },
           wrapWithLocale(MonitorHudContainer, t, {
-            onOpenPane: (target: 'hardware' | 'agent_execution', serverId?: string) => {
-              openMonitorTab({ target, serverId, mode: 'tab' });
-            },
             onRegisterController: (ctrl: HudController | null) => {
               hudController = ctrl;
             }
