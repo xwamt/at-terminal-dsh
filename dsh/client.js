@@ -15976,7 +15976,7 @@ window.__ModuleLoader__.load({
         resolve: () => ({ status: "handled", run: openMonitor })
       };
     }
-    function MonitorCornerButton(props) {
+    function MonitorHeaderButton(props) {
       return h(
         "button",
         {
@@ -16161,17 +16161,22 @@ window.__ModuleLoader__.load({
         "at-terminal: monitor hud overlay"
       ), ctx.effect(
         () => ctx.slots.inject(
-          "conversation.session.header.corner",
+          "conversation.session.header.utilities",
           () => ctx.slots.register(
-            { name: "conversation.session.header.corner", id: "@at-series/dsh-at-terminal/monitor-corner", locale: NS },
-            wrapWithLocale(MonitorCornerButton, t, {
+            {
+              name: "conversation.session.header.utilities",
+              id: "@at-series/dsh-at-terminal/monitor-button",
+              order: 40,
+              locale: NS
+            },
+            wrapWithLocale(MonitorHeaderButton, t, {
               onOpenPane: () => {
                 openMonitorTab({ target: "hardware" });
               }
             })
           )
         ),
-        "at-terminal: monitor corner button"
+        "at-terminal: monitor header button"
       );
     }
 

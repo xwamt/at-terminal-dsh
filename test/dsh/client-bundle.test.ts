@@ -1374,7 +1374,7 @@ describe('client bundle — apply wiring', () => {
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab.title',
       'shell.overlay',
-      'conversation.session.header.corner'
+      'conversation.session.header.utilities'
     ]);
     const bodies = harness.slotRegisters
       .filter((entry) => entry.options.name === 'sidebar.right.pane.tab')

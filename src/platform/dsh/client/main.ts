@@ -458,7 +458,7 @@ function toggleMonitorCommand(t: Translate, openMonitor: () => void): ShortcutCo
   };
 }
 
-function MonitorCornerButton(props: { t: Translate; onOpenPane: () => void }) {
+function MonitorHeaderButton(props: { t: Translate; onOpenPane: () => void }) {
   return h(
     'button',
     {
@@ -838,19 +838,24 @@ export function apply(ctx: ClientContext): void {
     'at-terminal: monitor hud overlay'
   );
 
-  // Session header corner button
+  // Session header utilities button
   ctx.effect(
     () =>
-      ctx.slots.inject('conversation.session.header.corner', () =>
+      ctx.slots.inject('conversation.session.header.utilities', () =>
         ctx.slots.register(
-          { name: 'conversation.session.header.corner', id: '@at-series/dsh-at-terminal/monitor-corner', locale: NS },
-          wrapWithLocale(MonitorCornerButton, t, {
+          {
+            name: 'conversation.session.header.utilities',
+            id: '@at-series/dsh-at-terminal/monitor-button',
+            order: 40,
+            locale: NS
+          },
+          wrapWithLocale(MonitorHeaderButton, t, {
             onOpenPane: () => {
               openMonitorTab({ target: 'hardware' });
             }
           })
         )
       ),
-    'at-terminal: monitor corner button'
+    'at-terminal: monitor header button'
   );
 }
