@@ -16,11 +16,10 @@ export interface AtTerminalMonitorBodyProps {
       navigation?: { params?: { target?: 'hardware' | 'agent_execution'; serverId?: string } };
     };
   };
-  onFloat?: (tabId: string) => void;
 }
 
 export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
-  const { t, useTabInfo, onFloat } = props;
+  const { t, useTabInfo } = props;
   const tabInfo = useTabInfo ? useTabInfo() : undefined;
   const initialTarget = tabInfo?.tab?.navigation?.params?.target ?? 'hardware';
   const initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? '';
@@ -89,12 +88,6 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
     };
   }, [selectedServerId]);
 
-  const handleFloatClick = () => {
-    if (onFloat && tabInfo?.tab?.id) {
-      onFloat(tabInfo.tab.id);
-    }
-  };
-
   return h(
     'div',
     {
@@ -161,18 +154,7 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
             onClick: () => void refresh()
           },
           '🔄'
-        ),
-        onFloat &&
-          h(
-            'button',
-            {
-              className: 'att-nav-btn',
-              title: t('monitor.float'),
-              'aria-label': t('monitor.float'),
-              onClick: handleFloatClick
-            },
-            '⧉'
-          )
+        )
       )
     ),
     // Tab Body Content
