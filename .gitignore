@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+
+# Build and test output
+dist/
+out/
+coverage/
+.vscode-test/
+*.tsbuildinfo
+
+# Packaged extensions
+*.vsix
+.package-work/
+
+# Local workspace state
+.worktrees/
+.superpowers/
+docs/brand/
+docs/superpowers/
+media/terminal.svg
+media/terminal-activity.svg
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.example.json
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+.kiro/
+ATmcp.json
+
+# Binary planning/export artifacts
+*.docx
+
+# Local IDE scratch and site-specific ops notes (not for public repo)
+.kilo/
+ops/
+docs/reviews/
+
+# Scratch directory for the remote-file editor. Holds plaintext copies of files
+# pulled over SFTP, so it must never be committed. See SftpEditSessionManager.
+.ssh-terminal-manager/
+
+# dsh bundle: extracted dependency sandbox used by dsh/scripts/verify.mjs.
+dsh/.cache/
+
+# dsh bundle: runtime dependencies vendored by `npm run vendor:dsh`. They must
+# be committed: the Harness installs this directory with a `link:` dependency,
+# so Node resolves `dsh/index.js`'s bare specifiers from here and can never
+# reach the copies inside the Harness's own app.asar.
+!dsh/node_modules/
+!dsh/node_modules/**

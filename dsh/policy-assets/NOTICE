@@ -1,0 +1,27 @@
+AT Series Command Policy
+Copyright 2026 AT Series contributors
+
+This product includes software developed by AT Series contributors.
+
+Third-party notices
+-------------------
+
+This package bundles parser runtimes and grammar assets. The following
+notices are required by those components.
+
+web-tree-sitter
+Copyright (c) 2018 Max Brunsfeld
+Licensed under the MIT License.
+
+@vscode/tree-sitter-wasm (tree-sitter-bash and tree-sitter-python grammars)
+Copyright (c) Microsoft Corporation
+Licensed under the MIT License.
+
+sqlite3-parser
+Copyright (c) 2026 Jake Teton-Landis
+Licensed under the MIT License.
+
+node-sql-parser
+Copyright (c) node-sql-parser contributors
+Licensed under the Apache License, Version 2.0.
+A copy of the Apache License is included in this repository as LICENSE.

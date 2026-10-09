@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "AT Terminal",
+    "description": "在 DeepSeek Harness 中管理 SSH/SFTP 资产并启动远程 SSH 终端。"
+  }
+}
