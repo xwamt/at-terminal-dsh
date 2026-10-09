@@ -1,0 +1,9 @@
+# AT Terminal — DeepSeek Harness bundle patch.
+#
+# The row id is the plugin's identity inside dsh; the name must match this
+# package's manifest name. A later patch layer that targets the same id
+# replaces this row's config entirely (patch semantics are replace, not merge).
+- insert:
+    - id: at-terminal
+      name: '@at-series/dsh-at-terminal'
+      config: {}

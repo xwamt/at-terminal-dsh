@@ -1,11 +1,29 @@
 {
-  "name": "at-terminal-dsh",
+  "name": "@at-series/dsh-at-terminal",
   "displayName": "AT Terminal (DSH)",
   "description": "AT Terminal plugin for DeepSeek Harness (DSH): SSH/SFTP assets and remote SSH terminals.",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./dsh/index.js",
+  "exports": {
+    ".": "./dsh/index.js",
+    "./client": "./dsh/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-shortcuts"
+      ]
+    }
+  },
   "scripts": {
     "build": "node dsh/esbuild.dsh.mjs",
     "watch": "node dsh/esbuild.dsh.mjs --watch",
