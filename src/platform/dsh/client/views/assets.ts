@@ -75,6 +75,7 @@ export interface AssetsViewProps {
   onImport(): void;
   onExport(): void;
   onRefresh(): void;
+  onOpenMonitor?(server: ServerView): void;
   collapsedGroups?: readonly string[];
   onToggleGroup?(groupKey: string): void;
 }

@@ -223,7 +223,10 @@ describe('dsh Host half — wiring', () => {
       'at_terminal_sftp_create_file',
       'at_terminal_sftp_create_directory',
       'at_terminal_sftp_rename',
-      'at_terminal_sftp_delete'
+      'at_terminal_sftp_delete',
+      'at_terminal_open_monitor',
+      'at_terminal_get_hardware_metrics',
+      'at_terminal_get_agent_execution_status'
     ]);
     expect([...harness.routes.keys()].sort()).toEqual(
       [
@@ -417,7 +420,7 @@ describe('dsh Host half — wiring', () => {
     const harness = createHarness();
     hostHalf.apply(harness.ctx, {});
 
-    expect(harness.tools).toHaveLength(12);
+    expect(harness.tools).toHaveLength(15);
     const pingTool = harness.tools.find((t) => t.name === 'at_terminal_ping');
     expect(pingTool).toBeDefined();
 
@@ -464,6 +467,22 @@ describe('dsh Host half — wiring', () => {
       connectedTerminals: [],
       knownTerminals: []
     });
+
+    // Monitor tools answer cleanly
+    const openMonitorTool = harness.tools.find((t) => t.name === 'at_terminal_open_monitor');
+    expect(openMonitorTool).toBeDefined();
+    const openRes = await openMonitorTool?.execute?.({ target: 'hardware', mode: 'float' }, {});
+    expect(openRes).toMatchObject({ opened: true, target: 'hardware', mode: 'float' });
+
+    const metricsTool = harness.tools.find((t) => t.name === 'at_terminal_get_hardware_metrics');
+    expect(metricsTool).toBeDefined();
+    const metricsRes = await metricsTool?.execute?.({ serverId: listResAfter.servers[0].id }, {});
+    expect(metricsRes).toMatchObject({ cpuUsagePercent: expect.any(Number), memoryTotalBytes: expect.any(Number) });
+
+    const agentStatusTool = harness.tools.find((t) => t.name === 'at_terminal_get_agent_execution_status');
+    expect(agentStatusTool).toBeDefined();
+    const statusRes = await agentStatusTool?.execute?.({ limit: 5 }, {});
+    expect(statusRes).toMatchObject({ recentAudits: expect.any(Array) });
 
     // Disposing releases both routes and registered tools
     for (const dispose of harness.disposers) dispose();

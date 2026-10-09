@@ -470,6 +470,7 @@ type BodyPage = 'assets' | 'session';
 /** The two definition ids the seats are keyed by. Spelled out because they are the contract. */
 const ASSETS_KEY = '@at-series/dsh-at-terminal';
 const SESSION_KEY = '@at-series/dsh-at-terminal/session';
+const MONITOR_KEY = '@at-series/dsh-at-terminal/monitor';
 
 function createHarness(
   options: {
@@ -1095,9 +1096,9 @@ describe('client bundle — apply wiring', () => {
    * exactly one). 终端 is **one per connection**, with no guide entry, because an entry there would
    * offer a nameless door onto an empty terminal; it is opened by the gesture that names a server.
    */
-  it('registers two tab types: one assets manager, one per-connection terminal', () => {
-    expect(harness.tabDefinitions).toHaveLength(2);
-    const [assets, session] = harness.tabDefinitions;
+  it('registers three tab types: assets manager, per-connection terminal, and monitor', () => {
+    expect(harness.tabDefinitions).toHaveLength(3);
+    const [assets, session, monitor] = harness.tabDefinitions;
 
     expect(assets.id).toBe('@at-series/dsh-at-terminal');
     expect(assets.kind).toBe('at-terminal');
@@ -1113,10 +1114,15 @@ describe('client bundle — apply wiring', () => {
     // keeps the terminal kind out of the column's guide and out of the default-page contest.
     expect(session.guide).toBeUndefined();
     expect((session.title as () => string)()).toBe('AT 终端');
+
+    expect(monitor.id).toBe(MONITOR_KEY);
+    expect(monitor.kind).toBe('at-terminal-monitor');
+    expect(monitor.guide).toBeUndefined();
+    expect((monitor.title as () => string)()).toBe('监控悬浮窗');
   });
 
   /**
-   * The two flags that decide how many instances exist and how long they live.
+   * The flags that decide how many instances exist and how long they live.
    *
    * `multiple: true` is what the frame reads to mint a **distinct content address per open**
    * (`definition.multiple === true ? \`${pageAddress(kind)}/${randomUUID()}\` : pageAddress(kind)`),
@@ -1124,18 +1130,20 @@ describe('client bundle — apply wiring', () => {
    * appears beside it". The manager must **not** have it: two copies of one server list in a pane is
    * a defect a user can see, and a fixed address is what makes re-opening it reveal the tab.
    *
-   * `keepMounted: true` is absent from **both** — asserted rather than assumed, because it is the
+   * `keepMounted: true` is absent from all three — asserted rather than assumed, because it is the
    * flag that was tried and made the panel flash once and go blank (the frame moves a retained body
    * into a hidden background subtree). The background instance is kept alive by the *session*
    * registry instead, which is what `keeps the connection when the tab goes to the background` below
    * exercises.
    */
-  it('makes the terminal kind multi-instance, the manager single, and retains neither body', () => {
-    const [assets, session] = harness.tabDefinitions;
+  it('makes the terminal kind multi-instance, the manager and monitor single, and retains no body', () => {
+    const [assets, session, monitor] = harness.tabDefinitions;
     expect(assets.multiple).toBe(false);
     expect(session.multiple).toBe(true);
+    expect(monitor.multiple).toBe(false);
     expect(assets.keepMounted).toBeUndefined();
     expect(session.keepMounted).toBeUndefined();
+    expect(monitor.keepMounted).toBeUndefined();
   });
 
   /**
@@ -1363,17 +1371,20 @@ describe('client bundle — apply wiring', () => {
     expect(harness.slotInjects).toEqual([
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab',
-      'sidebar.right.pane.tab.title'
+      'sidebar.right.pane.tab',
+      'sidebar.right.pane.tab.title',
+      'shell.overlay',
+      'conversation.session.header.corner'
     ]);
     const bodies = harness.slotRegisters
       .filter((entry) => entry.options.name === 'sidebar.right.pane.tab')
       .map((entry) => entry.options.key);
-    expect(bodies).toEqual([ASSETS_KEY, SESSION_KEY]);
+    expect(bodies).toEqual([ASSETS_KEY, SESSION_KEY, MONITOR_KEY]);
     const titles = harness.slotRegisters
       .filter((entry) => entry.options.name === 'sidebar.right.pane.tab.title')
       .map((entry) => entry.options.key);
-    expect(titles).toEqual([ASSETS_KEY, SESSION_KEY]);
-    // Both bodies declare the locale namespace, because both render copy.
+    expect(titles).toEqual([ASSETS_KEY, SESSION_KEY, MONITOR_KEY]);
+    // All bodies declare the locale namespace, because all render copy.
     for (const entry of harness.slotRegisters) {
       if (entry.options.name === 'sidebar.right.pane.tab') {
         expect(entry.options.locale).toBe('atTerminal');

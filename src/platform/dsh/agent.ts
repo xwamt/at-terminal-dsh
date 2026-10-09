@@ -3,6 +3,8 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AgentToolService } from '../../agent/AgentToolService';
+import { HardwareMetricsCollector } from '../../agent/HardwareMetricsCollector';
+import { AgentExecutionBridge } from '../../agent/AgentExecutionBridge';
 import type { RemoteCommandPolicyEvaluator } from '../../agent/loadRemoteCommandPolicy';
 import { RemoteCommandExecutor } from '../../agent/RemoteCommandExecutor';
 import { SftpAgentService } from '../../agent/SftpAgentService';
@@ -22,6 +24,9 @@ export interface DshAgentServiceOptions {
   readonly getCurrentCallContext: () => DshCallContext | undefined;
   readonly terminalContext?: TerminalContextRegistry;
   readonly policyEvaluator?: RemoteCommandPolicyEvaluator;
+  readonly broadcastMonitor?: (event: string, data: unknown) => void;
+  readonly metricsCollector?: HardwareMetricsCollector;
+  readonly executionBridge?: AgentExecutionBridge;
 }
 
 export function resolveDshPolicyAssetDirectory(): string | undefined {
@@ -80,6 +85,8 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
   });
 
   const policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator();
+  const metricsCollector = options.metricsCollector ?? new HardwareMetricsCollector({ executor });
+  const executionBridge = options.executionBridge ?? new AgentExecutionBridge();
 
   return new AgentToolService({
     configManager,
@@ -87,6 +94,9 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
     executor,
     sftp,
     confirmation,
-    policyEvaluator
+    policyEvaluator,
+    metricsCollector,
+    executionBridge,
+    broadcastMonitor: options.broadcastMonitor
   });
 }

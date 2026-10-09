@@ -27,14 +27,31 @@
  *   enable/disable cycles cannot stack copies.
  */
 
-import { announceToHost, ID, ID_SESSION, KIND, KIND_SESSION, installDiagnostics, postDiagnostic } from './channel';
+import React, { useEffect, useState } from 'react';
+import {
+  announceToHost,
+  ID,
+  ID_SESSION,
+  ID_MONITOR,
+  KIND,
+  KIND_SESSION,
+  KIND_MONITOR,
+  installDiagnostics,
+  postDiagnostic,
+  listenMonitorEvents,
+  getHardwareMetricsRpc,
+  getAgentExecutionStatusRpc
+} from './channel';
 import { NS, en, zh } from './i18n';
 import { AtTerminalBody, AtTerminalTitle, wrapWithLocale } from './body';
 import { AtTerminalSessionBody } from './body-session';
+import { AtTerminalMonitorBody, AtTerminalMonitorTitle } from './views/monitorPane';
+import { MonitorHudWidget } from './views/monitorHud';
 import { disposeAllSessions, disposeSession, retainSessions, stashSessionSeed } from './sessions';
 import { ensureStyles } from './styles';
-import type { Translate } from './models';
+import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
+import { h } from './views/shared';
 
 /** The narrow slice of the client context this plugin touches. */
 export interface ClientContext {
@@ -49,25 +66,10 @@ export interface ClientContext {
   sidebarRightTabs: {
     register(definition: Record<string, unknown>): () => void;
   };
-  /**
-   * The frame's navigation face.
-   *
-   * - `openTab` is the same call `sidebar.right`'s own 「new tab」 control makes; it is the only
-   *   way to ask for **another instance** of one of our tab types, and `options.params` is the only
-   *   channel that puts anything *in* the tab it mints.
-   * - `openTabFromTarget` is the placement-aware variant the official `terminal` type uses from a
-   *   shortcut (it replaces the guide in place and honours a captured floating pane).
-   * - `registerCloseHandler` is documented as *"Register resource cleanup before explicit
-   *   removal. Failure preserves the tab."* — our hook for closing an SSH session, and the same
-   *   one the official `terminal` uses.
-   * - `openTabs` is *"open tab metadata across saved and adopted Sessions, **independent of visible
-   *   seats**"*. That independence is the whole reason a background terminal can keep running: a
-   *   body is unmounted the moment another tab is in front, so the body cannot be the thing that
-   *   decides whether a connection lives.
-   */
   sidebarRight: {
-    openTab(kind: string, options?: Record<string, unknown>): void;
+    openTab(kind: string, options?: Record<string, unknown>): unknown;
     openTabFromTarget(kind: string, target: unknown): void;
+    float?(tabId: string, rect?: { width?: number; height?: number; x?: number; y?: number }): void;
     registerCloseHandler(
       kind: string,
       handler: (sessionId: string, tab: { id: string; contentId?: unknown }) => void
@@ -420,6 +422,127 @@ export function sessionDefinition(t: Translate): Record<string, unknown> {
   };
 }
 
+/**
+ * The 监控 tab type: hardware metrics & agent execution monitor.
+ * Single instance, reveals or floats independently.
+ */
+export function monitorDefinition(t: Translate): Record<string, unknown> {
+  return {
+    id: ID_MONITOR,
+    kind: KIND_MONITOR,
+    multiple: false,
+    title: () => t('monitor.title')
+  };
+}
+
+function monitorDefaults(code: string): Record<string, ShortcutBinding> {
+  const binding: ShortcutBinding = { code, modifiers: ['primary', 'shift'] };
+  return {
+    'desktop:macos': binding,
+    'desktop:windows': binding,
+    'desktop:linux': binding,
+    'web:macos': binding,
+    'web:windows': binding
+  };
+}
+
+function toggleMonitorCommand(t: Translate, openMonitor: () => void): ShortcutCommand {
+  return {
+    id: 'atTerminal.toggleMonitor',
+    label: () => t('shortcut.monitor'),
+    aliases: ['at terminal monitor', 'monitor', 'toggle monitor', 'system metrics'],
+    defaults: monitorDefaults('KeyM'),
+    regions: ['page', 'editable', 'terminal'],
+    modals: [],
+    resolve: () => ({ status: 'handled', run: openMonitor })
+  };
+}
+
+function MonitorCornerButton(props: { t: Translate; onOpenPane: () => void }) {
+  return h(
+    'button',
+    {
+      className: 'att-nav-btn',
+      title: props.t('monitor.title'),
+      'aria-label': props.t('monitor.title'),
+      onClick: () => props.onOpenPane(),
+      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
+    },
+    '📊'
+  );
+}
+
+interface HudController {
+  open(target?: 'hardware' | 'agent_execution'): void;
+  close(): void;
+  toggle(): void;
+}
+
+function MonitorHudContainer(props: {
+  t: Translate;
+  onOpenPane: (target: 'hardware' | 'agent_execution') => void;
+  onRegisterController?: (ctrl: HudController | null) => void;
+}) {
+  const { t, onOpenPane, onRegisterController } = props;
+  const [metrics, setMetrics] = useState<HardwareMetrics | null>(null);
+  const [snapshot, setSnapshot] = useState<AgentExecutionSnapshot | null>(null);
+  const [visible, setVisible] = useState<boolean>(true);
+  const [forceExpanded, setForceExpanded] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (onRegisterController) {
+      onRegisterController({
+        open: (_target) => {
+          setVisible(true);
+          setForceExpanded(true);
+        },
+        close: () => {
+          setForceExpanded(false);
+        },
+        toggle: () => {
+          setVisible(true);
+          setForceExpanded((prev) => !prev);
+        }
+      });
+      return () => {
+        onRegisterController(null);
+      };
+    }
+  }, [onRegisterController]);
+
+  useEffect(() => {
+    let unmounted = false;
+    const fetchLatest = () => {
+      Promise.all([
+        getHardwareMetricsRpc().catch(() => null),
+        getAgentExecutionStatusRpc(5).catch(() => null)
+      ]).then(([m, s]) => {
+        if (!unmounted) {
+          if (m) setMetrics(m);
+          if (s) setSnapshot(s);
+        }
+      });
+    };
+    fetchLatest();
+    const interval = setInterval(fetchLatest, 4000);
+    return () => {
+      unmounted = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  if (!visible) return null;
+
+  return h(MonitorHudWidget, {
+    t,
+    metrics,
+    snapshot,
+    forceExpanded,
+    onOpenPane,
+    onCloseHud: () => setVisible(false)
+  });
+}
+
 /* ---------------------------------- apply ------------------------------------ */
 
 /**
@@ -445,6 +568,10 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(
     () => ctx.sidebarRightTabs.register(sessionDefinition(t)),
     'at-terminal: session tab type'
+  );
+  ctx.effect(
+    () => ctx.sidebarRightTabs.register(monitorDefinition(t)),
+    'at-terminal: monitor tab type'
   );
 
   /* ------------------------------- the commands ------------------------------ */
@@ -495,6 +622,36 @@ export function apply(ctx: ClientContext): void {
     }
   };
 
+  let hudController: HudController | null = null;
+
+  /** Open or float the monitor tab. */
+  const openMonitorTab = (options?: {
+    target?: 'hardware' | 'agent_execution';
+    serverId?: string;
+    mode?: 'float' | 'hud';
+  }): boolean => {
+    try {
+      const mode = options?.mode ?? 'float';
+      const target = options?.target ?? 'hardware';
+      const serverId = options?.serverId;
+      if (mode === 'hud') {
+        hudController?.open(target);
+        return true;
+      }
+      const tabResult = ctx.sidebarRight.openTab(KIND_MONITOR, { params: { target, serverId } });
+      const openTabs = ctx.sidebarRight.openTabs?.getSnapshot?.() ?? [];
+      const monitorTab = openTabs.find((tab) => tab.kind === KIND_MONITOR);
+      const tabId = typeof tabResult === 'string' ? tabResult : ((tabResult as any)?.id ?? monitorTab?.tabId);
+      if (mode === 'float' && tabId && ctx.sidebarRight.float) {
+        ctx.sidebarRight.float(String(tabId), { width: 620, height: 480 });
+      }
+      return true;
+    } catch (error) {
+      console.warn('at-terminal: could not open monitor tab', error);
+      return false;
+    }
+  };
+
   /** Reveal the 资产 tab. A `multiple: false` kind, so this focuses it rather than duplicating it. */
   const revealAssets = (): void => {
     try {
@@ -506,6 +663,34 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => ctx.shortcuts.register(newTabCommand(t, openSessionTab)), 'at-terminal: new tab shortcut');
   ctx.effect(() => ctx.shortcuts.register(assetsCommand(t, revealAssets)), 'at-terminal: assets shortcut');
+  ctx.effect(
+    () => ctx.shortcuts.register(toggleMonitorCommand(t, () => void openMonitorTab())),
+    'at-terminal: monitor shortcut'
+  );
+
+  /* --------------------------- monitor sse listener -------------------------- */
+
+  ctx.effect(
+    () =>
+      listenMonitorEvents((msg) => {
+        if (msg.action === 'open') {
+          if (msg.mode === 'hud') {
+            hudController?.open(msg.target);
+          } else {
+            openMonitorTab({
+              target: msg.target,
+              serverId: msg.serverId,
+              mode: msg.mode ?? 'float'
+            });
+          }
+        } else if (msg.action === 'close') {
+          if (msg.mode === 'hud') {
+            hudController?.close();
+          }
+        }
+      }),
+    'at-terminal: monitor sse events'
+  );
 
   /* --------------------------- the session lifetime -------------------------- */
 
@@ -579,7 +764,7 @@ export function apply(ctx: ClientContext): void {
         // whichever registered last.
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID, locale: NS },
-          wrapWithLocale(AtTerminalBody, t, { openSessionTab })
+          wrapWithLocale(AtTerminalBody, t, { openSessionTab, openMonitorTab })
         )
       ),
     'at-terminal: assets pane body'
@@ -590,14 +775,29 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('sidebar.right.pane.tab', () =>
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID_SESSION, locale: NS },
-          wrapWithLocale(AtTerminalSessionBody, t)
+          wrapWithLocale(AtTerminalSessionBody, t, { openMonitorTab })
         )
       ),
     'at-terminal: terminal pane body'
   );
 
-  // One title component for both kinds: it reads the badge for its own tab key and picks its
-  // fallback label from the tab's kind, so the two chips cannot drift apart in what they say.
+  ctx.effect(
+    () =>
+      ctx.slots.inject('sidebar.right.pane.tab', () =>
+        ctx.slots.register(
+          { name: 'sidebar.right.pane.tab', key: ID_MONITOR, locale: NS },
+          wrapWithLocale(AtTerminalMonitorBody, t, {
+            onFloat: (tabId: string) => {
+              if (ctx.sidebarRight.float) ctx.sidebarRight.float(tabId, { width: 620, height: 480 });
+            }
+          })
+        )
+      ),
+    'at-terminal: monitor pane body'
+  );
+
+  // Chip titles: reads the badge for its own tab key and picks its
+  // fallback label from the tab's kind, so the chips cannot drift apart in what they say.
   ctx.effect(
     () =>
       ctx.slots.inject('sidebar.right.pane.tab.title', () => {
@@ -606,11 +806,51 @@ export function apply(ctx: ClientContext): void {
           { name: 'sidebar.right.pane.tab.title', key: ID_SESSION },
           wrapWithLocale(AtTerminalTitle, t)
         );
+        const disposeMonitor = ctx.slots.register(
+          { name: 'sidebar.right.pane.tab.title', key: ID_MONITOR },
+          wrapWithLocale(AtTerminalMonitorTitle, t)
+        );
         return () => {
+          disposeMonitor();
           disposeSession();
           disposeAssets();
         };
       }),
     'at-terminal: chip titles'
+  );
+
+  // HUD floating widget in shell.overlay
+  ctx.effect(
+    () =>
+      ctx.slots.inject('shell.overlay', () =>
+        ctx.slots.register(
+          { name: 'shell.overlay', id: '@at-series/dsh-at-terminal/monitor-hud', locale: NS },
+          wrapWithLocale(MonitorHudContainer, t, {
+            onOpenPane: (target: 'hardware' | 'agent_execution') => {
+              openMonitorTab({ target, mode: 'float' });
+            },
+            onRegisterController: (ctrl: HudController | null) => {
+              hudController = ctrl;
+            }
+          })
+        )
+      ),
+    'at-terminal: monitor hud overlay'
+  );
+
+  // Session header corner button
+  ctx.effect(
+    () =>
+      ctx.slots.inject('conversation.session.header.corner', () =>
+        ctx.slots.register(
+          { name: 'conversation.session.header.corner', id: '@at-series/dsh-at-terminal/monitor-corner', locale: NS },
+          wrapWithLocale(MonitorCornerButton, t, {
+            onOpenPane: () => {
+              openMonitorTab({ target: 'hardware' });
+            }
+          })
+        )
+      ),
+    'at-terminal: monitor corner button'
   );
 }

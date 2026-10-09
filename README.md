@@ -204,6 +204,17 @@ skills/
 
 **跨 Agent 复用价值**：如果在 Claude Code、Codex、Cursor Agent、Antigravity 等其他 Agent 环境中开发任何 DSH 系列插件或扩展，可直接将本目录挂载给 Agent，作为编写 Cordis 插件与设计 Agent 直连工具的权威规范。
 
+### Agent Skills
+
+- [skills/at-terminal-mcp/SKILL.md](skills/at-terminal-mcp/SKILL.md): `$at-terminal-mcp`
+- [skills/writing-ops-documents/SKILL.md](skills/writing-ops-documents/SKILL.md): `$writing-ops-documents`
+
+```bash
+npx skills add xwamt/At-Terminal
+```
+注：Skills 不复制进 VSIX。
+
+
 ---
 
 ## License & 致谢

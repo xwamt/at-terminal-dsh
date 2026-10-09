@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url'
 
 import z from '@deepseek-ai/schemastery'
 
-import { registerChannel } from './channel.js'
+import { broadcastMonitorEvent, registerChannel } from './channel.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
@@ -182,6 +182,7 @@ export function apply(ctx, config = {}) {
           platform: handle.platform,
           terminalContext,
           resolveApproval,
+          broadcastMonitor: (ev, data) => broadcastMonitorEvent(ev, data),
           getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback
         })
 
@@ -233,6 +234,7 @@ export function apply(ctx, config = {}) {
         resolveServers: resolve(() => servers),
         resolveTerminal: resolve(() => terminal),
         resolveSftp: resolve(() => sftp),
+        resolveAgent: resolve(() => agentService),
         // Synchronous and always available: `config` is the resolved row itself, so the
         // terminal page can read the user's font/scrollback/highlight settings (DSH-31)
         // without waiting on — or depending on — the platform assembly.

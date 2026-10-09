@@ -69,6 +69,8 @@ export {
   type DshCallContext
 } from './confirmation';
 export { TerminalContextRegistry } from '../../terminal/TerminalContext';
+export { HardwareMetricsCollector } from '../../agent/HardwareMetricsCollector';
+export { AgentExecutionBridge } from '../../agent/AgentExecutionBridge';
 
 /**
  * The dsh bundle's **single import surface for `src/**`**.

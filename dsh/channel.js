@@ -183,6 +183,19 @@ function serviceUnavailable(what) {
 const unavailableServers = serviceUnavailable('server')
 const unavailableTerminal = serviceUnavailable('terminal')
 const unavailableSftp = serviceUnavailable('SFTP')
+const unavailableAgent = serviceUnavailable('Agent')
+
+let activeBroadcaster = null
+
+/**
+ * Broadcast an SSE event to all connected clients.
+ * Used by agent tools or host events to push monitor-control commands.
+ */
+export function broadcastMonitorEvent(event, data) {
+  if (typeof activeBroadcaster === 'function') {
+    activeBroadcaster(event, data)
+  }
+}
 
 function sendJson(res, status, value) {
   const body = Buffer.from(JSON.stringify(value), 'utf8')
@@ -221,10 +234,33 @@ export function registerChannel(ctx, options) {
   const resolveServers = options.resolveServers ?? unavailableServers
   const resolveTerminal = options.resolveTerminal ?? unavailableTerminal
   const resolveSftp = options.resolveSftp ?? unavailableSftp
+  const resolveAgent = options.resolveAgent ?? unavailableAgent
   const resolveSettings = options.resolveSettings ?? (() => ({}))
   const startedAt = Date.now()
   const disposers = []
   const sseClients = new Set()
+
+  function broadcastSse(event, data) {
+    if (sseClients.size === 0) return
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    for (const res of sseClients) {
+      if (res.destroyed) {
+        sseClients.delete(res)
+        continue
+      }
+      try {
+        res.write(payload)
+      } catch {
+        sseClients.delete(res)
+      }
+    }
+  }
+
+  activeBroadcaster = broadcastSse
+  disposers.push(() => {
+    if (activeBroadcaster === broadcastSse) activeBroadcaster = null
+  })
+
   /** @type {Map<import('node:net').Socket, {pending: Buffer, alive: boolean}>} */
   const wsSockets = new Map()
   let wsSequence = 0
@@ -631,6 +667,32 @@ export function registerChannel(ctx, options) {
         wsUrl: port === null ? null : `ws://127.0.0.1:${port}${PREFIX}/ws`,
         rpcUrl: port === null ? null : `http://127.0.0.1:${port}${PREFIX}/rpc`
       }
+    },
+
+    /* ----------------------------- monitor (Phase 0/1) -------------------------- */
+    async 'monitor.metrics.get'(params = {}) {
+      const agent = requireAgent()
+      return await agent.getHardwareMetrics(params.serverId)
+    },
+
+    async 'monitor.agent.get'(params = {}) {
+      const agent = requireAgent()
+      return await agent.getAgentExecutionStatus(params.limit)
+    },
+
+    async 'monitor.control'(params = {}) {
+      try {
+        const agent = requireAgent()
+        return await agent.openMonitor(params)
+      } catch {
+        broadcastSse('monitor-control', {
+          action: params.action ?? 'open',
+          target: params.target ?? 'hardware',
+          serverId: params.serverId,
+          mode: params.mode ?? 'float'
+        })
+        return { ok: true }
+      }
     }
   }
 
@@ -642,6 +704,11 @@ export function registerChannel(ctx, options) {
   /** Resolve the SFTP face the same way — its own error names what is missing. */
   function requireSftp() {
     return resolveSftp()
+  }
+
+  /** Resolve the Agent service face. */
+  function requireAgent() {
+    return resolveAgent()
   }
 
   /* ------------------------------- exact: health ------------------------------ */

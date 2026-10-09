@@ -15,7 +15,23 @@ describe('dsh/tools.js createTools', () => {
       sftpCreateFile: vi.fn().mockResolvedValue({ serverId: 's1', path: '/x' }),
       sftpCreateDirectory: vi.fn().mockResolvedValue({ serverId: 's1', path: '/dir' }),
       sftpRename: vi.fn().mockResolvedValue({ serverId: 's1', path: '/a', newPath: '/b' }),
-      sftpDelete: vi.fn().mockResolvedValue({ serverId: 's1', path: '/x', deleted: true })
+      sftpDelete: vi.fn().mockResolvedValue({ serverId: 's1', path: '/x', deleted: true }),
+      openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'float' }),
+      getHardwareMetrics: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        timestamp: 1000,
+        cpu: { usagePercent: 20, cores: [20], loadAvg: [0.1, 0.2, 0.3] },
+        memory: { totalBytes: 8000, usedBytes: 4000, freeBytes: 4000 },
+        disk: { mounts: [] },
+        network: { rxBytesPerSec: 100, txBytesPerSec: 50 },
+        processes: [{ pid: 1, user: 'root', cpuPercent: 1.0, memPercent: 1.0, command: 'test' }]
+      }),
+      getAgentExecutionStatus: vi.fn().mockResolvedValue({
+        timestamp: 1000,
+        currentAction: { id: 'act-1', command: 'echo 1', runningTimeMs: 10, status: 'running' },
+        recentAudits: [],
+        activeTransfers: []
+      })
     };
 
     const tools = createTools({
@@ -24,7 +40,7 @@ describe('dsh/tools.js createTools', () => {
       resolveAgentService: () => mockService
     });
 
-    expect(tools.length).toBe(12);
+    expect(tools.length).toBe(15);
     const names = tools.map((t: any) => t.name);
     expect(names).toEqual([
       'at_terminal_ping',
@@ -38,7 +54,10 @@ describe('dsh/tools.js createTools', () => {
       'at_terminal_sftp_create_file',
       'at_terminal_sftp_create_directory',
       'at_terminal_sftp_rename',
-      'at_terminal_sftp_delete'
+      'at_terminal_sftp_delete',
+      'at_terminal_open_monitor',
+      'at_terminal_get_hardware_metrics',
+      'at_terminal_get_agent_execution_status'
     ]);
   });
 
@@ -239,5 +258,69 @@ describe('dsh/tools.js createTools', () => {
     expect(capturedContexts).toHaveLength(1);
     expect(capturedContexts[0]).toMatchObject({ agent: 'agent-custom', callId: 'c-42' });
   });
+
+  it('exercises at_terminal_open_monitor and broadcasts event', async () => {
+    const broadcastFn = vi.fn();
+    const mockService = {
+      openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'float' })
+    };
+    const tools = createTools({
+      version: '0.1.0',
+      resolveAgentService: () => mockService,
+      broadcastMonitor: broadcastFn
+    });
+    const tool = tools.find((t: any) => t.name === 'at_terminal_open_monitor')!;
+    const res = await tool.execute({ target: 'hardware', serverId: 's1', mode: 'float' });
+    expect(res).toEqual({ opened: true, target: 'hardware', serverId: 's1', mode: 'float' });
+    expect(mockService.openMonitor).toHaveBeenCalledWith({ target: 'hardware', serverId: 's1', mode: 'float' });
+    expect(broadcastFn).toHaveBeenCalledWith('monitor-control', {
+      action: 'open',
+      target: 'hardware',
+      serverId: 's1',
+      mode: 'float'
+    });
+    const rendered = tool.output.render({ target: 'hardware' }, res);
+    expect(rendered[0].text).toContain('Opened hardware monitor (float) for server: s1');
+  });
+
+  it('exercises at_terminal_get_hardware_metrics and get_agent_execution_status', async () => {
+    const mockService = {
+      getHardwareMetrics: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        timestamp: 1000,
+        cpu: { usagePercent: 25, cores: [25], loadAvg: [0.5, 0.6, 0.7] },
+        memory: { totalBytes: 8192, usedBytes: 4096, freeBytes: 4096 },
+        disk: { mounts: [] },
+        network: { rxBytesPerSec: 1000, txBytesPerSec: 500 },
+        processes: [{ pid: 123, user: 'root', cpuPercent: 5.5, memPercent: 2.1, command: 'nginx' }]
+      }),
+      getAgentExecutionStatus: vi.fn().mockResolvedValue({
+        timestamp: 2000,
+        currentAction: { id: 'act-1', command: 'df -h', runningTimeMs: 40, status: 'running' },
+        recentAudits: [{ id: 'a1', timestamp: 1900, command: 'ls', decision: 'allowed', riskLevel: 'low' }],
+        activeTransfers: [{ id: 't1', type: 'download', filename: 'file.tar', progressPercent: 50, bytesPerSec: 1024 }]
+      })
+    };
+    const tools = createTools({
+      version: '0.1.0',
+      resolveAgentService: () => mockService
+    });
+
+    const hwTool = tools.find((t: any) => t.name === 'at_terminal_get_hardware_metrics')!;
+    const hwRes = await hwTool.execute({ serverId: 's1' });
+    expect(hwRes.cpuUsagePercent).toBe(25);
+    expect(hwRes.topProcesses[0].command).toBe('nginx');
+    const hwRendered = hwTool.output.render({}, hwRes);
+    expect(hwRendered[0].text).toContain('Hardware Metrics (s1): CPU 25%');
+
+    const agentTool = tools.find((t: any) => t.name === 'at_terminal_get_agent_execution_status')!;
+    const agentRes = await agentTool.execute({ limit: 5 });
+    expect(agentRes.hasActiveAction).toBe(true);
+    expect(agentRes.currentCommand).toBe('df -h');
+    expect(agentRes.activeTransfersCount).toBe(1);
+    const agentRendered = agentTool.output.render({}, agentRes);
+    expect(agentRendered[0].text).toContain('Running [df -h]');
+  });
 });
+
 

@@ -8347,9 +8347,11 @@ window.__ModuleLoader__.load({
       apply: () => apply,
       definition: () => definition,
       inject: () => inject,
+      monitorDefinition: () => monitorDefinition,
       sessionDefinition: () => sessionDefinition
     });
     module.exports = __toCommonJS(main_exports);
+    var import_react8 = require("react");
 
     // src/sftp/FileSize.ts
     var UNITS = ["B", "KB", "MB", "GB", "TB"];
@@ -8708,9 +8710,12 @@ window.__ModuleLoader__.load({
       }
       return { kind: "none" };
     }
+    function formatThroughput(bytesPerSec) {
+      return !Number.isFinite(bytesPerSec) || bytesPerSec <= 0 ? "0 B/s" : bytesPerSec < 1024 ? `${Math.round(bytesPerSec)} B/s` : bytesPerSec < 1024 * 1024 ? `${(bytesPerSec / 1024).toFixed(1)} KB/s` : `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+    }
 
     // src/platform/dsh/client/channel.ts
-    var CHANNEL_PREFIX = "/dsh-at-terminal", KIND = "at-terminal", KIND_SESSION = "at-terminal-session", ID = "@at-series/dsh-at-terminal", ID_SESSION = "@at-series/dsh-at-terminal/session", requestSeq = 0;
+    var CHANNEL_PREFIX = "/dsh-at-terminal", KIND = "at-terminal", KIND_SESSION = "at-terminal-session", KIND_MONITOR = "at-terminal-monitor", ID = "@at-series/dsh-at-terminal", ID_SESSION = "@at-series/dsh-at-terminal/session", ID_MONITOR = "@at-series/dsh-at-terminal/monitor", requestSeq = 0;
     async function callRpc(method, params, options) {
       requestSeq += 1;
       let payload = JSON.stringify({ id: requestSeq, method, params });
@@ -8786,6 +8791,31 @@ window.__ModuleLoader__.load({
         );
       }
       return body.result;
+    }
+    async function getHardwareMetricsRpc(serverId) {
+      return await callRpc("monitor.metrics.get", { serverId });
+    }
+    async function getAgentExecutionStatusRpc(limit) {
+      return await callRpc("monitor.agent.get", { limit });
+    }
+    function listenMonitorEvents(onControl) {
+      if (typeof EventSource > "u") return () => {
+      };
+      try {
+        let es = new EventSource(`${CHANNEL_PREFIX}/events`), handler = (event) => {
+          try {
+            let data = JSON.parse(event.data);
+            onControl(data);
+          } catch {
+          }
+        };
+        return es.addEventListener("monitor-control", handler), () => {
+          es.removeEventListener("monitor-control", handler), es.close();
+        };
+      } catch {
+        return () => {
+        };
+      }
     }
     function postDiagnostic(level, message, source, line, stack) {
       try {
@@ -9145,7 +9175,58 @@ window.__ModuleLoader__.load({
       "error.sftpConflict": "\u8FDC\u7AEF\u6587\u4EF6\u5728\u672C\u6B21\u64CD\u4F5C\u671F\u95F4\u88AB\u6539\u52A8\u8FC7\uFF08\u5185\u5BB9\u6216\u65F6\u95F4\u6233\u4E0D\u4E00\u81F4\uFF09\u3002\u786E\u8BA4\u8981\u8986\u76D6\u65F6\u518D\u9009\u300C\u8986\u76D6\u300D\uFF0C\u6216\u91CD\u65B0\u8BFB\u53D6\u540E\u91CD\u505A\u4FEE\u6539\u3002",
       "error.sftpWriteFailed": "\u5199\u5165\u8FDC\u7AEF\u6587\u4EF6\u5931\u8D25\u3002\u53EF\u91CD\u8BD5\uFF1B\u82E5\u4E00\u76F4\u5931\u8D25\uFF0C\u8BF7\u5230\u300C\u7EC8\u7AEF\u300D\u9875\u786E\u8BA4\u8BE5\u4F1A\u8BDD\u4ECD\u7136\u6B63\u5E38\u3002",
       "error.sftpBadParams": "\u6587\u4EF6\u64CD\u4F5C\u7F3A\u5C11\u5FC5\u8981\u53C2\u6570\uFF08\u8DEF\u5F84\u6216\u5185\u5BB9\uFF09\u3002",
-      "error.noFileReader": "\u5F53\u524D\u9875\u9762\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6587\u4EF6\uFF08\u7F3A\u5C11 FileReader \u652F\u6301\uFF09\uFF0C\u56E0\u6B64\u4E0D\u80FD\u4E0A\u4F20\u3002"
+      "error.noFileReader": "\u5F53\u524D\u9875\u9762\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6587\u4EF6\uFF08\u7F3A\u5C11 FileReader \u652F\u6301\uFF09\uFF0C\u56E0\u6B64\u4E0D\u80FD\u4E0A\u4F20\u3002",
+      "monitor.title": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
+      "monitor.guideTitle": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
+      "monitor.guideDescription": "\u5B9E\u65F6\u67E5\u770B\u4E3B\u673A\u786C\u4EF6\u6307\u6807\u4E0E Agent \u6267\u884C\u5BA1\u8BA1",
+      "monitor.tab.hardware": "\u786C\u4EF6\u6307\u6807",
+      "monitor.tab.agent": "Agent \u6267\u884C",
+      "monitor.server": "\u76EE\u6807\u670D\u52A1\u5668\uFF1A",
+      "monitor.refresh": "\u5237\u65B0\u6307\u6807",
+      "monitor.float": "\u72EC\u7ACB\u60AC\u6D6E",
+      "monitor.dock": "\u5438\u9644\u505C\u9760",
+      "monitor.hud.toggle": "HUD \u60AC\u6D6E\u7A97",
+      "monitor.hud.expand": "\u5C55\u5F00\u8BE6\u60C5",
+      "monitor.hud.close": "\u5173\u95ED HUD",
+      "monitor.cpu.title": "CPU \u4F7F\u7528\u7387",
+      "monitor.cpu.cores": "\u6838\u5FC3\u5206\u5E03",
+      "monitor.cpu.load": "\u7CFB\u7EDF\u8D1F\u8F7D\uFF1A{l1} / {l5} / {l15}",
+      "monitor.mem.title": "\u7269\u7406\u5185\u5B58",
+      "monitor.mem.detail": "{used} \u5DF2\u7528 / {total} \u603B\u8BA1",
+      "monitor.mem.cached": "\u7F13\u5B58\uFF1A{cached}",
+      "monitor.mem.swap": "\u4EA4\u6362\u5206\u533A\uFF1A{used} / {total}",
+      "monitor.disk.title": "\u78C1\u76D8\u5206\u533A",
+      "monitor.disk.empty": "\u672A\u68C0\u6D4B\u5230\u78C1\u76D8\u6302\u8F7D\u4FE1\u606F",
+      "monitor.net.title": "\u5B9E\u65F6\u7F51\u7EDC",
+      "monitor.net.rx": "\u63A5\u6536 (Rx)\uFF1A{speed}",
+      "monitor.net.tx": "\u53D1\u9001 (Tx)\uFF1A{speed}",
+      "monitor.ps.title": "Top 5 \u8FDB\u7A0B",
+      "monitor.ps.pid": "PID",
+      "monitor.ps.user": "\u7528\u6237",
+      "monitor.ps.cpu": "CPU %",
+      "monitor.ps.mem": "\u5185\u5B58 %",
+      "monitor.ps.command": "\u547D\u4EE4",
+      "monitor.agent.actionTitle": "\u6B63\u5728\u6267\u884C\u7684\u6307\u4EE4",
+      "monitor.agent.idle": "\u5F53\u524D\u65E0\u6B63\u5728\u6267\u884C\u7684 Agent \u6307\u4EE4",
+      "monitor.agent.elapsed": "\u8017\u65F6\uFF1A{time}ms",
+      "monitor.agent.output": "\u8F93\u51FA\u5FAE\u7F29\u6D41",
+      "monitor.agent.outputEmpty": "\u6682\u65E0\u8F93\u51FA",
+      "monitor.agent.transfersTitle": "\u540E\u53F0\u6587\u4EF6\u4F20\u8F93",
+      "monitor.agent.transfersEmpty": "\u65E0\u8FDB\u884C\u4E2D\u7684\u4F20\u8F93\u4EFB\u52A1",
+      "monitor.agent.auditsTitle": "\u5BA1\u8BA1\u4E0E\u653E\u884C\u6D41\u6C34",
+      "monitor.agent.auditsEmpty": "\u6682\u65E0\u5BA1\u8BA1\u6D41\u6C34\u8BB0\u5F55",
+      "monitor.status.running": "\u6267\u884C\u4E2D",
+      "monitor.status.waiting": "\u7B49\u5F85\u786E\u8BA4",
+      "monitor.status.success": "\u6267\u884C\u6210\u529F",
+      "monitor.status.denied": "\u5DF2\u62E6\u622A",
+      "monitor.decision.allowed": "\u7B56\u7565\u653E\u884C",
+      "monitor.decision.confirmed": "\u4EBA\u5DE5\u786E\u8BA4",
+      "monitor.decision.denied": "\u62E6\u622A\u963B\u65AD",
+      "monitor.audit.time": "\u65F6\u95F4",
+      "monitor.audit.decision": "\u51B3\u7B56",
+      "monitor.audit.risk": "\u98CE\u9669",
+      "monitor.audit.command": "\u547D\u4EE4",
+      "shortcut.monitor": "\u5207\u6362\u76D1\u63A7\u60AC\u6D6E\u7A97"
     }, en = {
       "type.label": "AT Terminal",
       "session.label": "AT Terminal",
@@ -9392,7 +9473,58 @@ window.__ModuleLoader__.load({
       "error.sftpConflict": "The remote file changed during this operation (its size or timestamp no longer matches). Choose Overwrite to replace it, or reload and redo the edit.",
       "error.sftpWriteFailed": "Writing the remote file failed. Retrying may work; if it keeps failing, confirm the session on the Terminal page is still healthy.",
       "error.sftpBadParams": "The file operation is missing a required parameter (a path or the content).",
-      "error.noFileReader": "This page cannot read local files (no FileReader support), so uploading is not possible."
+      "error.noFileReader": "This page cannot read local files (no FileReader support), so uploading is not possible.",
+      "monitor.title": "Monitor Window",
+      "monitor.guideTitle": "Monitor Window",
+      "monitor.guideDescription": "Real-time host hardware metrics and Agent execution audits",
+      "monitor.tab.hardware": "Hardware Metrics",
+      "monitor.tab.agent": "Agent Execution",
+      "monitor.server": "Server: ",
+      "monitor.refresh": "Refresh Metrics",
+      "monitor.float": "Float Window",
+      "monitor.dock": "Dock to Sidebar",
+      "monitor.hud.toggle": "HUD Overlay",
+      "monitor.hud.expand": "Expand",
+      "monitor.hud.close": "Close HUD",
+      "monitor.cpu.title": "CPU Usage",
+      "monitor.cpu.cores": "Cores",
+      "monitor.cpu.load": "Load Average: {l1} / {l5} / {l15}",
+      "monitor.mem.title": "Memory",
+      "monitor.mem.detail": "{used} used / {total} total",
+      "monitor.mem.cached": "Cached: {cached}",
+      "monitor.mem.swap": "Swap: {used} / {total}",
+      "monitor.disk.title": "Disk Partitions",
+      "monitor.disk.empty": "No disk mount information",
+      "monitor.net.title": "Network",
+      "monitor.net.rx": "Rx: {speed}",
+      "monitor.net.tx": "Tx: {speed}",
+      "monitor.ps.title": "Top 5 Processes",
+      "monitor.ps.pid": "PID",
+      "monitor.ps.user": "User",
+      "monitor.ps.cpu": "CPU %",
+      "monitor.ps.mem": "Mem %",
+      "monitor.ps.command": "Command",
+      "monitor.agent.actionTitle": "Live Action",
+      "monitor.agent.idle": "No active Agent command",
+      "monitor.agent.elapsed": "Elapsed: {time}ms",
+      "monitor.agent.output": "Output Stream",
+      "monitor.agent.outputEmpty": "No output",
+      "monitor.agent.transfersTitle": "Active Transfers",
+      "monitor.agent.transfersEmpty": "No active transfers",
+      "monitor.agent.auditsTitle": "Audit & Authorization Stream",
+      "monitor.agent.auditsEmpty": "No audit records",
+      "monitor.status.running": "RUNNING",
+      "monitor.status.waiting": "CONFIRMATION_WAITING",
+      "monitor.status.success": "SUCCESS",
+      "monitor.status.denied": "DENIED",
+      "monitor.decision.allowed": "Allowed",
+      "monitor.decision.confirmed": "Confirmed",
+      "monitor.decision.denied": "Denied",
+      "monitor.audit.time": "Time",
+      "monitor.audit.decision": "Decision",
+      "monitor.audit.risk": "Risk",
+      "monitor.audit.command": "Command",
+      "shortcut.monitor": "Toggle Monitor Window"
     };
 
     // src/platform/dsh/client/body.ts
@@ -10805,7 +10937,7 @@ window.__ModuleLoader__.load({
     }, BodyLocale = import_react3.default.createContext((key) => key);
     function wrapWithLocale(Component, t, extras = { openSessionTab: () => !1 }) {
       return function(props) {
-        return h(BodyLocale.Provider, { value: t }, h(Component, { ...extras, ...props }));
+        return h(BodyLocale.Provider, { value: t }, h(Component, { t, ...extras, ...props }));
       };
     }
     function tabRecord(props) {
@@ -10924,7 +11056,7 @@ window.__ModuleLoader__.load({
       }, [method, revision, enabled, paramKey]), state;
     }
     function AtTerminalBody(props = {}) {
-      let t = import_react3.default.useContext(BodyLocale), tabId = readTabId(props), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, [formOpen, setFormOpen] = import_react3.default.useState(!1), [dialog, setDialog] = import_react3.default.useState("none"), [menu, setMenu] = import_react3.default.useState(null), [copied, setCopied] = import_react3.default.useState(null), [listSelectedId, setListSelectedId] = import_react3.default.useState(""), [notice, setNotice] = import_react3.default.useState(null), [summaryRevision, setSummaryRevision] = import_react3.default.useState(0), [serversRevision, setServersRevision] = import_react3.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react3.default.useState(emptyForm), [formError, setFormError] = import_react3.default.useState(null), [saveState, setSaveState] = import_react3.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react3.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react3.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react3.default.useState(!1), [includePasswords, setIncludePasswords] = import_react3.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react3.default.useState(!1), [exportPassword, setExportPassword] = import_react3.default.useState(""), [exportState, setExportState] = import_react3.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react3.default.useState(null), [importPassword, setImportPassword] = import_react3.default.useState(""), [importStrategy, setImportStrategy] = import_react3.default.useState("skip"), [importState, setImportState] = import_react3.default.useState({ kind: "idle" }), importReadRef = import_react3.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react3.default.useState([]);
+      let t = import_react3.default.useContext(BodyLocale), tabId = readTabId(props), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, [formOpen, setFormOpen] = import_react3.default.useState(!1), [dialog, setDialog] = import_react3.default.useState("none"), [menu, setMenu] = import_react3.default.useState(null), [copied, setCopied] = import_react3.default.useState(null), [listSelectedId, setListSelectedId] = import_react3.default.useState(""), [notice, setNotice] = import_react3.default.useState(null), [summaryRevision, setSummaryRevision] = import_react3.default.useState(0), [serversRevision, setServersRevision] = import_react3.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react3.default.useState(emptyForm), [formError, setFormError] = import_react3.default.useState(null), [saveState, setSaveState] = import_react3.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react3.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react3.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react3.default.useState(!1), [includePasswords, setIncludePasswords] = import_react3.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react3.default.useState(!1), [exportPassword, setExportPassword] = import_react3.default.useState(""), [exportState, setExportState] = import_react3.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react3.default.useState(null), [importPassword, setImportPassword] = import_react3.default.useState(""), [importStrategy, setImportStrategy] = import_react3.default.useState("skip"), [importState, setImportState] = import_react3.default.useState({ kind: "idle" }), importReadRef = import_react3.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react3.default.useState([]);
       import_react3.default.useEffect(() => {
         if (menu === null) return;
         let close = () => setMenu(null), onKeydown = (event) => {
@@ -11085,6 +11217,7 @@ window.__ModuleLoader__.load({
           onRefresh: () => {
             setServersRevision((value) => value + 1), setSummaryRevision((value) => value + 1);
           },
+          onOpenMonitor: openMonitorTab ? (server) => openMonitorTab({ serverId: text(server.id), target: "hardware" }) : void 0,
           collapsedGroups,
           onToggleGroup: (groupKey) => {
             setCollapsedGroups(
@@ -11148,6 +11281,11 @@ window.__ModuleLoader__.load({
             // body has no terminal to connect *in*. The label says so rather than promising a
             // connection that would have nowhere to appear.
             item("connect", "menu.connect", () => openAssetInSessionTab(menu.server)),
+            ...openMonitorTab ? [
+              item("monitor", "monitor.title", () => {
+                setMenu(null), openMonitorTab({ serverId: text(menu.server.id), target: "hardware" });
+              })
+            ] : [],
             item("edit", "menu.edit", () => {
               setMenu(null), startEdit(menu.server);
             }),
@@ -12463,6 +12601,18 @@ window.__ModuleLoader__.load({
             t("terminal.connect")
           ),
           h("div", { className: "att-spacer" }),
+          props.onOpenMonitor ? h(
+            "button",
+            {
+              type: "button",
+              className: "att-nav-btn",
+              title: t("monitor.title"),
+              "aria-label": t("monitor.title"),
+              onClick: props.onOpenMonitor,
+              "data-at-terminal-action": "term-monitor"
+            },
+            "\u{1F4CA}"
+          ) : null,
           /**
            * No 「新建终端」 button here any more.
            *
@@ -12572,7 +12722,7 @@ window.__ModuleLoader__.load({
     }
     var ANONYMOUS_KEY = "anonymous";
     function AtTerminalSessionBody(props = {}) {
-      let t = import_react5.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
+      let t = import_react5.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
       import_react5.default.useEffect(() => {
         retainSessionSignal(session, signal);
       }, [session, signal]);
@@ -13215,7 +13365,8 @@ window.__ModuleLoader__.load({
           settingsVersion,
           encoding: chosen?.encoding,
           hooks,
-          onEngine
+          onEngine,
+          onOpenMonitor: openMonitorTab ? () => openMonitorTab({ serverId: session.serverId, target: "hardware" }) : void 0
         })
       ), banners.length > 0 && children.push(
         h(
@@ -13229,6 +13380,572 @@ window.__ModuleLoader__.load({
     }
     function postBodyRendered(key, page) {
       postDiagnostic("info", `at-terminal body rendered tab=${key} page=${page}`, "body", null, null);
+    }
+
+    // src/platform/dsh/client/views/monitorPane.ts
+    var import_react6 = require("react");
+
+    // src/platform/dsh/client/views/monitorHardware.ts
+    function HardwareMonitorView(props) {
+      let { t, metrics, loading, onRefresh } = props;
+      if (!metrics && loading)
+        return h(
+          "div",
+          { className: "att-monitor-card", role: "region", "aria-label": t("monitor.tab.hardware") },
+          h("div", null, t("servers.pending"))
+        );
+      let cpu = metrics?.cpu ?? { usagePercent: 0, cores: [0], loadAvg: [0, 0, 0] }, memory = metrics?.memory ?? { totalBytes: 0, usedBytes: 0, freeBytes: 0 }, disk = metrics?.disk ?? { mounts: [] }, network = metrics?.network ?? { rxBytesPerSec: 0, txBytesPerSec: 0 }, processes = metrics?.processes ?? [], memUsedPercent = memory.totalBytes > 0 ? Math.min(100, Math.round(memory.usedBytes / memory.totalBytes * 100)) : 0, cpuWarnLevel = cpu.usagePercent > 85 ? "error" : cpu.usagePercent > 70 ? "warn" : "normal", memWarnLevel = memUsedPercent > 85 ? "error" : memUsedPercent > 70 ? "warn" : "normal";
+      return h(
+        "div",
+        { className: "att-monitor-grid", role: "region", "aria-label": t("monitor.tab.hardware") },
+        // CPU Card
+        h(
+          "div",
+          { className: "att-monitor-card" },
+          h(
+            "div",
+            { className: "att-monitor-card-header" },
+            h("span", null, t("monitor.cpu.title")),
+            h("span", null, `${cpu.usagePercent}%`)
+          ),
+          h(
+            "div",
+            { className: "att-monitor-gauge" },
+            h("div", {
+              className: "att-monitor-gauge-fill",
+              "data-level": cpuWarnLevel,
+              style: { width: `${cpu.usagePercent}%` }
+            })
+          ),
+          h(
+            "div",
+            { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+            t("monitor.cpu.load", {
+              l1: cpu.loadAvg[0]?.toFixed(2) ?? "0.00",
+              l5: cpu.loadAvg[1]?.toFixed(2) ?? "0.00",
+              l15: cpu.loadAvg[2]?.toFixed(2) ?? "0.00"
+            })
+          )
+        ),
+        // Memory Card
+        h(
+          "div",
+          { className: "att-monitor-card" },
+          h(
+            "div",
+            { className: "att-monitor-card-header" },
+            h("span", null, t("monitor.mem.title")),
+            h("span", null, `${memUsedPercent}%`)
+          ),
+          h(
+            "div",
+            { className: "att-monitor-gauge" },
+            h("div", {
+              className: "att-monitor-gauge-fill",
+              "data-level": memWarnLevel,
+              style: { width: `${memUsedPercent}%` }
+            })
+          ),
+          h(
+            "div",
+            { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+            t("monitor.mem.detail", {
+              used: formatFileSize(memory.usedBytes),
+              total: formatFileSize(memory.totalBytes)
+            })
+          ),
+          memory.cachedBytes !== void 0 && h(
+            "div",
+            { style: { fontSize: "10px", color: "var(--dsw-alias-label-caption)" } },
+            t("monitor.mem.cached", { cached: formatFileSize(memory.cachedBytes) })
+          )
+        ),
+        // Network Card
+        h(
+          "div",
+          { className: "att-monitor-card" },
+          h("div", { className: "att-monitor-card-header" }, h("span", null, t("monitor.net.title"))),
+          h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px" } },
+            h(
+              "div",
+              null,
+              t("monitor.net.rx", { speed: formatThroughput(network.rxBytesPerSec) })
+            ),
+            h(
+              "div",
+              null,
+              t("monitor.net.tx", { speed: formatThroughput(network.txBytesPerSec) })
+            )
+          )
+        ),
+        // Disk Partitions Card
+        h(
+          "div",
+          { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
+          h("div", { className: "att-monitor-card-header" }, h("span", null, t("monitor.disk.title"))),
+          disk.mounts.length === 0 ? h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, t("monitor.disk.empty")) : h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+            ...disk.mounts.map((mount) => {
+              let diskLevel = mount.usePercent > 90 ? "error" : mount.usePercent > 75 ? "warn" : "normal";
+              return h(
+                "div",
+                { key: mount.mount, style: { display: "flex", flexDirection: "column", gap: "2px" } },
+                h(
+                  "div",
+                  { style: { display: "flex", justifyContent: "space-between", fontSize: "11px" } },
+                  h("span", { style: { fontWeight: 500 } }, `${mount.mount} (${mount.fs})`),
+                  h(
+                    "span",
+                    { color: "var(--dsw-alias-label-secondary)" },
+                    `${mount.usePercent}% (${formatFileSize(mount.usedBytes)} / ${formatFileSize(mount.totalBytes)})`
+                  )
+                ),
+                h(
+                  "div",
+                  { className: "att-monitor-gauge" },
+                  h("div", {
+                    className: "att-monitor-gauge-fill",
+                    "data-level": diskLevel,
+                    style: { width: `${mount.usePercent}%` }
+                  })
+                )
+              );
+            })
+          )
+        ),
+        // Top 5 Processes Card
+        h(
+          "div",
+          { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
+          h("div", { className: "att-monitor-card-header" }, h("span", null, t("monitor.ps.title"))),
+          h(
+            "table",
+            { className: "att-monitor-table", "aria-label": t("monitor.ps.title") },
+            h(
+              "thead",
+              null,
+              h(
+                "tr",
+                null,
+                h("th", null, t("monitor.ps.pid")),
+                h("th", null, t("monitor.ps.user")),
+                h("th", null, t("monitor.ps.cpu")),
+                h("th", null, t("monitor.ps.mem")),
+                h("th", null, t("monitor.ps.command"))
+              )
+            ),
+            h(
+              "tbody",
+              null,
+              ...processes.slice(0, 5).map(
+                (proc) => h(
+                  "tr",
+                  { key: `${proc.pid}-${proc.command}` },
+                  h("td", null, String(proc.pid)),
+                  h("td", null, proc.user),
+                  h("td", null, `${proc.cpuPercent.toFixed(1)}%`),
+                  h("td", null, `${proc.memPercent.toFixed(1)}%`),
+                  h("td", { style: { fontFamily: "monospace" } }, proc.command)
+                )
+              )
+            )
+          )
+        )
+      );
+    }
+
+    // src/platform/dsh/client/views/monitorAgent.ts
+    function AgentMonitorView(props) {
+      let { t, snapshot, loading, onRefresh } = props;
+      if (!snapshot && loading)
+        return h(
+          "div",
+          { className: "att-monitor-card", role: "region", "aria-label": t("monitor.tab.agent") },
+          h("div", null, t("servers.pending"))
+        );
+      let current = snapshot?.currentAction, recentAudits = snapshot?.recentAudits ?? [], activeTransfers = snapshot?.activeTransfers ?? [];
+      return h(
+        "div",
+        { className: "att-monitor-grid", role: "region", "aria-label": t("monitor.tab.agent") },
+        // Live Action Card
+        h(
+          "div",
+          { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
+          h(
+            "div",
+            { className: "att-monitor-card-header" },
+            h("span", null, t("monitor.agent.actionTitle")),
+            current && h(
+              "span",
+              {
+                className: `att-badge ${current.status === "running" ? "att-badge-running" : current.status === "confirmation_waiting" ? "att-badge-waiting" : current.status === "success" ? "att-badge-success" : "att-badge-denied"}`
+              },
+              current.status === "running" && h("span", { className: "att-badge-pulse-dot" }),
+              t(`monitor.status.${current.status === "confirmation_waiting" ? "waiting" : current.status}`)
+            )
+          ),
+          current ? h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+            h(
+              "div",
+              { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+              h("span", null, `Server: ${current.serverId ?? "default"}`),
+              h("span", null, t("monitor.agent.elapsed", { time: current.runningTimeMs }))
+            ),
+            h(
+              "div",
+              { className: "att-code-preview" },
+              current.command
+            ),
+            current.outputTail && h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+              h("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, t("monitor.agent.output")),
+              h("div", { className: "att-code-preview" }, current.outputTail)
+            )
+          ) : h(
+            "div",
+            { style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)", padding: "12px 0" } },
+            t("monitor.agent.idle")
+          )
+        ),
+        // Active Transfers Card
+        h(
+          "div",
+          { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
+          h("div", { className: "att-monitor-card-header" }, h("span", null, t("monitor.agent.transfersTitle"))),
+          activeTransfers.length === 0 ? h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, t("monitor.agent.transfersEmpty")) : h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+            ...activeTransfers.map(
+              (tx) => h(
+                "div",
+                { key: tx.id, style: { display: "flex", flexDirection: "column", gap: "4px" } },
+                h(
+                  "div",
+                  { style: { display: "flex", justifyContent: "space-between", fontSize: "11px" } },
+                  h("span", null, `[${tx.type.toUpperCase()}] ${tx.filename}`),
+                  h("span", { color: "var(--dsw-alias-label-secondary)" }, `${tx.progressPercent}% (${formatThroughput(tx.bytesPerSec)})`)
+                ),
+                h(
+                  "div",
+                  { className: "att-monitor-gauge" },
+                  h("div", {
+                    className: "att-monitor-gauge-fill",
+                    style: { width: `${tx.progressPercent}%` }
+                  })
+                )
+              )
+            )
+          )
+        ),
+        // Recent Audits Card
+        h(
+          "div",
+          { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
+          h("div", { className: "att-monitor-card-header" }, h("span", null, t("monitor.agent.auditsTitle"))),
+          recentAudits.length === 0 ? h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, t("monitor.agent.auditsEmpty")) : h(
+            "table",
+            { className: "att-monitor-table", "aria-label": t("monitor.agent.auditsTitle") },
+            h(
+              "thead",
+              null,
+              h(
+                "tr",
+                null,
+                h("th", null, t("monitor.audit.time")),
+                h("th", null, t("monitor.audit.decision")),
+                h("th", null, t("monitor.audit.risk")),
+                h("th", null, t("monitor.audit.command"))
+              )
+            ),
+            h(
+              "tbody",
+              null,
+              ...recentAudits.map((audit) => {
+                let decisionClass = audit.decision === "denied" ? "att-badge-denied" : audit.decision === "confirmed" ? "att-badge-waiting" : "att-badge-success";
+                return h(
+                  "tr",
+                  { key: audit.id },
+                  h("td", { style: { whiteSpace: "nowrap", color: "var(--dsw-alias-label-caption)" } }, new Date(audit.timestamp).toLocaleTimeString()),
+                  h(
+                    "td",
+                    null,
+                    h("span", { className: `att-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
+                  ),
+                  h("td", { style: { textTransform: "uppercase", fontSize: "10px" } }, audit.riskLevel ?? "normal"),
+                  h("td", { style: { fontFamily: "monospace", maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, audit.command)
+                );
+              })
+            )
+          )
+        )
+      );
+    }
+
+    // src/platform/dsh/client/views/monitorPane.ts
+    function AtTerminalMonitorBody(props) {
+      let { t, useTabInfo, onFloat } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react6.useState)(initialTarget), [servers, setServers] = (0, import_react6.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react6.useState)(initialServerId), [metrics, setMetrics] = (0, import_react6.useState)(null), [snapshot, setSnapshot] = (0, import_react6.useState)(null), [loading, setLoading] = (0, import_react6.useState)(!0);
+      (0, import_react6.useEffect)(() => {
+        let unmounted = !1;
+        return callRpc("servers.list", {}).then((res) => {
+          !unmounted && res?.servers && (setServers(res.servers), !selectedServerId && res.servers.length > 0 && setSelectedServerId(res.servers[0].id));
+        }).catch(() => {
+        }), () => {
+          unmounted = !0;
+        };
+      }, []), (0, import_react6.useEffect)(() => {
+        let navTarget = tabInfo?.tab?.navigation?.params?.target;
+        (navTarget === "hardware" || navTarget === "agent_execution") && setActiveTab(navTarget);
+        let navServerId = tabInfo?.tab?.navigation?.params?.serverId;
+        navServerId && setSelectedServerId(navServerId);
+      }, [tabInfo?.tab?.navigation?.params?.target, tabInfo?.tab?.navigation?.params?.serverId]);
+      let refresh = async () => {
+        !metrics && !snapshot && setLoading(!0);
+        try {
+          let [m, s] = await Promise.all([
+            getHardwareMetricsRpc(selectedServerId || void 0).catch(() => null),
+            getAgentExecutionStatusRpc(10).catch(() => null)
+          ]);
+          setMetrics(m), setSnapshot(s);
+        } finally {
+          setLoading(!1);
+        }
+      };
+      (0, import_react6.useEffect)(() => {
+        refresh();
+        let timer = setInterval(() => {
+          refresh();
+        }, 3e3);
+        return () => {
+          clearInterval(timer);
+        };
+      }, [selectedServerId]);
+      let handleFloatClick = () => {
+        onFloat && tabInfo?.tab?.id && onFloat(tabInfo.tab.id);
+      };
+      return h(
+        "div",
+        {
+          className: "att-monitor-container",
+          role: "region",
+          "aria-label": t("monitor.title")
+        },
+        // Toolbar Header
+        h(
+          "div",
+          { className: "att-monitor-header" },
+          h(
+            "div",
+            { className: "att-monitor-nav", role: "tablist" },
+            h(
+              "button",
+              {
+                className: "att-monitor-tab-btn",
+                role: "tab",
+                "aria-selected": activeTab === "hardware",
+                "data-active": activeTab === "hardware" ? "true" : "false",
+                onClick: () => setActiveTab("hardware")
+              },
+              `\u{1F4CA} ${t("monitor.tab.hardware")}`
+            ),
+            h(
+              "button",
+              {
+                className: "att-monitor-tab-btn",
+                role: "tab",
+                "aria-selected": activeTab === "agent_execution",
+                "data-active": activeTab === "agent_execution" ? "true" : "false",
+                onClick: () => setActiveTab("agent_execution")
+              },
+              `\u26A1 ${t("monitor.tab.agent")}`
+            )
+          ),
+          h(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: "8px" } },
+            activeTab === "hardware" && servers.length > 0 && h(
+              "label",
+              { style: { fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" } },
+              t("monitor.server"),
+              h(
+                "select",
+                {
+                  className: "att-input",
+                  style: { padding: "2px 6px", fontSize: "12px" },
+                  value: selectedServerId,
+                  onChange: (e) => setSelectedServerId(e.target.value)
+                },
+                ...servers.map((s) => h("option", { key: s.id, value: s.id }, s.label || s.host))
+              )
+            ),
+            h(
+              "button",
+              {
+                className: "att-nav-btn",
+                title: t("monitor.refresh"),
+                "aria-label": t("monitor.refresh"),
+                onClick: () => void refresh()
+              },
+              "\u{1F504}"
+            ),
+            onFloat && h(
+              "button",
+              {
+                className: "att-nav-btn",
+                title: t("monitor.float"),
+                "aria-label": t("monitor.float"),
+                onClick: handleFloatClick
+              },
+              "\u29C9"
+            )
+          )
+        ),
+        // Tab Body Content
+        activeTab === "hardware" ? h(HardwareMonitorView, { t, metrics, loading, onRefresh: refresh }) : h(AgentMonitorView, { t, snapshot, loading, onRefresh: refresh })
+      );
+    }
+    function AtTerminalMonitorTitle(props) {
+      let { t } = props;
+      return h(
+        "span",
+        { style: { display: "flex", alignItems: "center", gap: "4px" } },
+        h("span", null, "\u{1F4CA}"),
+        h("span", null, t("monitor.title"))
+      );
+    }
+
+    // src/platform/dsh/client/views/monitorHud.ts
+    var import_react7 = __toESM(require("react"), 1);
+    function MonitorHudWidget(props) {
+      let { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded);
+      import_react7.default.useEffect(() => {
+        forceExpanded !== void 0 && setExpanded(forceExpanded);
+      }, [forceExpanded]);
+      let cpuPercent = metrics?.cpu.usagePercent ?? 0, memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), isAgentActive = !!snapshot?.currentAction;
+      return h(
+        "div",
+        { className: "att-hud-overlay" },
+        // Mini Pill
+        h(
+          "div",
+          {
+            className: "att-hud-pill",
+            role: "button",
+            tabIndex: 0,
+            "aria-label": t("monitor.hud.toggle"),
+            onClick: () => setExpanded(!expanded),
+            onKeyDown: (e) => {
+              (e.key === "Enter" || e.key === " ") && setExpanded(!expanded);
+            }
+          },
+          h("span", null, "\u{1F4CA}"),
+          h("span", { className: "att-badge-pulse-dot", style: { color: isAgentActive ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-state-success-primary)" } }),
+          h("span", null, `CPU ${cpuPercent}% | MEM ${memPercent}%`),
+          isAgentActive && h(
+            "span",
+            { style: { color: "var(--dsw-alias-brand-primary)", fontWeight: 600 } },
+            `\u26A1 ${snapshot?.currentAction?.status === "confirmation_waiting" ? "WAIT" : "RUN"}`
+          ),
+          onCloseHud && h(
+            "button",
+            {
+              className: "att-nav-btn",
+              style: { marginLeft: "4px", padding: "0 4px", fontSize: "10px", opacity: 0.7 },
+              title: t("monitor.hud.close"),
+              "aria-label": t("monitor.hud.close"),
+              onClick: (e) => {
+                e.stopPropagation(), onCloseHud();
+              }
+            },
+            "\u2715"
+          )
+        ),
+        // Expanded Card
+        expanded && h(
+          "div",
+          {
+            className: "att-hud-expanded-card",
+            role: "dialog",
+            tabIndex: -1,
+            "aria-label": t("monitor.title"),
+            onKeyDown: (e) => {
+              e.key === "Escape" && setExpanded(!1);
+            }
+          },
+          h(
+            "div",
+            { style: { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--dsw-alias-border-l1)", paddingBottom: "6px" } },
+            h("span", { style: { fontWeight: 600, fontSize: "13px" } }, t("monitor.title")),
+            h(
+              "div",
+              { style: { display: "flex", gap: "4px" } },
+              h(
+                "button",
+                {
+                  className: "att-nav-btn",
+                  onClick: () => setExpanded(!1),
+                  title: t("dialog.close"),
+                  "aria-label": t("dialog.close"),
+                  style: { padding: "2px 6px", fontSize: "11px" }
+                },
+                "\u2014"
+              ),
+              onCloseHud && h(
+                "button",
+                {
+                  className: "att-nav-btn",
+                  onClick: () => {
+                    setExpanded(!1), onCloseHud();
+                  },
+                  title: t("monitor.hud.close"),
+                  "aria-label": t("monitor.hud.close"),
+                  style: { padding: "2px 6px", fontSize: "11px" }
+                },
+                "\u2715"
+              )
+            )
+          ),
+          h(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" } },
+            h("div", null, `CPU: ${cpuPercent}% (Load: ${metrics?.cpu.loadAvg.map((l) => l.toFixed(2)).join(" / ") ?? "0"})`),
+            h("div", null, `Memory: ${memPercent}% (${Math.round(memUsedBytes / 1024 / 1024)}MB / ${Math.round(memTotalBytes / 1024 / 1024)}MB)`),
+            h("div", null, `Agent: ${isAgentActive ? snapshot?.currentAction?.command : t("monitor.agent.idle")}`),
+            snapshot && snapshot.activeTransfers.length > 0 && h("div", null, `${t("monitor.agent.transfersTitle")}: ${snapshot.activeTransfers.length}`)
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "8px", marginTop: "6px" } },
+            h(
+              "button",
+              {
+                className: "att-btn att-btn-primary",
+                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                onClick: () => {
+                  setExpanded(!1), onOpenPane("hardware");
+                }
+              },
+              t("monitor.tab.hardware")
+            ),
+            h(
+              "button",
+              {
+                className: "att-btn att-btn-secondary",
+                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
+                onClick: () => {
+                  setExpanded(!1), onOpenPane("agent_execution");
+                }
+              },
+              t("monitor.tab.agent")
+            )
+          )
+        )
+      );
     }
 
     // node_modules/@xterm/xterm/css/xterm.css
@@ -14862,6 +15579,232 @@ window.__ModuleLoader__.load({
         mask-image: linear-gradient(to right, transparent 0, currentColor 16px);
       }
     }
+
+    /* --------------------------- Monitor & HUD Styles -------------------------- */
+    .att-monitor-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      width: 100%;
+      overflow-y: auto;
+      padding: 12px;
+      box-sizing: border-box;
+      gap: 12px;
+      background: var(--dsw-alias-bg-layer-1);
+      color: var(--dsw-alias-label-primary);
+    }
+
+    .att-monitor-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--dsw-alias-border-l1);
+      padding-bottom: 8px;
+    }
+
+    .att-monitor-nav {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .att-monitor-tab-btn {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--dsw-alias-label-secondary);
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: 4px 4px 0 0;
+      transition: all 0.15s ease;
+    }
+
+    .att-monitor-tab-btn:hover {
+      color: var(--dsw-alias-label-primary);
+      background: var(--dsw-alias-interactive-bg-hover);
+    }
+
+    .att-monitor-tab-btn[data-active="true"] {
+      color: var(--dsw-alias-brand-primary);
+      border-bottom-color: var(--dsw-alias-brand-primary);
+      font-weight: 600;
+    }
+
+    .att-monitor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .att-monitor-card {
+      background: var(--dsw-alias-bg-layer-2);
+      border: 1px solid var(--dsw-alias-border-l1);
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .att-monitor-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--dsw-alias-label-primary);
+      border-bottom: 1px solid var(--dsw-alias-border-l1);
+      padding-bottom: 4px;
+    }
+
+    .att-monitor-gauge {
+      height: 8px;
+      width: 100%;
+      background: var(--dsw-alias-bg-base);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .att-monitor-gauge-fill {
+      height: 100%;
+      background: var(--dsw-alias-brand-primary);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    .att-monitor-gauge-fill[data-level="warn"] {
+      background: var(--dsw-alias-state-warn-primary);
+    }
+
+    .att-monitor-gauge-fill[data-level="error"] {
+      background: var(--dsw-alias-state-error-primary);
+    }
+
+    .att-monitor-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    .att-monitor-table th {
+      text-align: left;
+      color: var(--dsw-alias-label-secondary);
+      border-bottom: 1px solid var(--dsw-alias-border-l1);
+      padding: 4px 6px;
+    }
+
+    .att-monitor-table td {
+      padding: 4px 6px;
+      border-bottom: 1px solid var(--dsw-alias-border-l1);
+    }
+
+    .att-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .att-badge-running {
+      background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+      color: var(--dsw-alias-brand-primary);
+    }
+
+    .att-badge-pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: att-pulse 1.5s infinite ease-in-out;
+    }
+
+    .att-badge-waiting {
+      background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
+      color: var(--dsw-alias-state-warn-primary);
+    }
+
+    .att-badge-success {
+      background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
+      color: var(--dsw-alias-state-success-primary);
+    }
+
+    .att-badge-denied {
+      background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
+      color: var(--dsw-alias-state-error-primary);
+    }
+
+    .att-code-preview {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+      background: var(--dsw-alias-bg-base);
+      border: 1px solid var(--dsw-alias-border-l1);
+      border-radius: 4px;
+      padding: 8px;
+      max-height: 140px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--dsw-alias-label-secondary);
+    }
+
+    /* Global HUD Overlay Widget */
+    .att-hud-overlay {
+      position: fixed;
+      right: 18px;
+      top: 56px;
+      z-index: 1000;
+      pointer-events: auto;
+      font-family: inherit;
+    }
+
+    .att-hud-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--dsw-alias-bg-layer-2);
+      border: 1px solid var(--dsw-alias-border-l2);
+      border-radius: 16px;
+      padding: 4px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      box-shadow: var(--dsw-shadow-lv2);
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+
+    .att-hud-pill:hover {
+      border-color: var(--dsw-alias-brand-primary);
+      background: var(--dsw-alias-interactive-bg-hover);
+    }
+
+    .att-hud-expanded-card {
+      position: absolute;
+      right: 0;
+      top: 36px;
+      width: 320px;
+      background: var(--dsw-alias-bg-layer-2);
+      border: 1px solid var(--dsw-alias-border-l3);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: var(--dsw-shadow-lv3);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    @keyframes att-pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(1.15); }
+      100% { opacity: 1; transform: scale(1); }
+    }
     `, DEFAULT_SOURCES = {
       xterm: xterm_default,
       terminal: terminal_default,
@@ -15004,12 +15947,97 @@ window.__ModuleLoader__.load({
         title: () => t("session.label")
       };
     }
+    function monitorDefinition(t) {
+      return {
+        id: ID_MONITOR,
+        kind: KIND_MONITOR,
+        multiple: !1,
+        title: () => t("monitor.title")
+      };
+    }
+    function monitorDefaults(code) {
+      let binding = { code, modifiers: ["primary", "shift"] };
+      return {
+        "desktop:macos": binding,
+        "desktop:windows": binding,
+        "desktop:linux": binding,
+        "web:macos": binding,
+        "web:windows": binding
+      };
+    }
+    function toggleMonitorCommand(t, openMonitor) {
+      return {
+        id: "atTerminal.toggleMonitor",
+        label: () => t("shortcut.monitor"),
+        aliases: ["at terminal monitor", "monitor", "toggle monitor", "system metrics"],
+        defaults: monitorDefaults("KeyM"),
+        regions: ["page", "editable", "terminal"],
+        modals: [],
+        resolve: () => ({ status: "handled", run: openMonitor })
+      };
+    }
+    function MonitorCornerButton(props) {
+      return h(
+        "button",
+        {
+          className: "att-nav-btn",
+          title: props.t("monitor.title"),
+          "aria-label": props.t("monitor.title"),
+          onClick: () => props.onOpenPane(),
+          style: { display: "inline-flex", alignItems: "center", justifyContent: "center" }
+        },
+        "\u{1F4CA}"
+      );
+    }
+    function MonitorHudContainer(props) {
+      let { t, onOpenPane, onRegisterController } = props, [metrics, setMetrics] = (0, import_react8.useState)(null), [snapshot, setSnapshot] = (0, import_react8.useState)(null), [visible, setVisible] = (0, import_react8.useState)(!0), [forceExpanded, setForceExpanded] = (0, import_react8.useState)(void 0);
+      return (0, import_react8.useEffect)(() => {
+        if (onRegisterController)
+          return onRegisterController({
+            open: (_target) => {
+              setVisible(!0), setForceExpanded(!0);
+            },
+            close: () => {
+              setForceExpanded(!1);
+            },
+            toggle: () => {
+              setVisible(!0), setForceExpanded((prev) => !prev);
+            }
+          }), () => {
+            onRegisterController(null);
+          };
+      }, [onRegisterController]), (0, import_react8.useEffect)(() => {
+        let unmounted = !1, fetchLatest = () => {
+          Promise.all([
+            getHardwareMetricsRpc().catch(() => null),
+            getAgentExecutionStatusRpc(5).catch(() => null)
+          ]).then(([m, s]) => {
+            unmounted || (m && setMetrics(m), s && setSnapshot(s));
+          });
+        };
+        fetchLatest();
+        let interval = setInterval(fetchLatest, 4e3);
+        return () => {
+          unmounted = !0, clearInterval(interval);
+        };
+      }, []), visible ? h(MonitorHudWidget, {
+        t,
+        metrics,
+        snapshot,
+        forceExpanded,
+        onOpenPane,
+        onCloseHud: () => setVisible(!1)
+      }) : null;
+    }
     var inject = ["slots", "sidebarRightTabs", "locale", "shortcuts", "sidebarRight"];
     function apply(ctx) {
       let t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "at-terminal: dictionaries"), ctx.effect(() => ensureStyles(document), "at-terminal: styles"), ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), "at-terminal: assets tab type"), ctx.effect(
         () => ctx.sidebarRightTabs.register(sessionDefinition(t)),
         "at-terminal: session tab type"
+      ), ctx.effect(
+        () => ctx.sidebarRightTabs.register(monitorDefinition(t)),
+        "at-terminal: monitor tab type"
       );
       for (let { mode, digit } of MODE_COMMANDS)
         ctx.effect(
@@ -15023,6 +16051,16 @@ window.__ModuleLoader__.load({
         } catch (error) {
           return console.warn("at-terminal: could not open a terminal tab", error), !1;
         }
+      }, hudController = null, openMonitorTab = (options) => {
+        try {
+          let mode = options?.mode ?? "float", target = options?.target ?? "hardware", serverId = options?.serverId;
+          if (mode === "hud")
+            return hudController?.open(target), !0;
+          let tabResult = ctx.sidebarRight.openTab(KIND_MONITOR, { params: { target, serverId } }), monitorTab = (ctx.sidebarRight.openTabs?.getSnapshot?.() ?? []).find((tab) => tab.kind === KIND_MONITOR), tabId = typeof tabResult == "string" ? tabResult : tabResult?.id ?? monitorTab?.tabId;
+          return mode === "float" && tabId && ctx.sidebarRight.float && ctx.sidebarRight.float(String(tabId), { width: 620, height: 480 }), !0;
+        } catch (error) {
+          return console.warn("at-terminal: could not open monitor tab", error), !1;
+        }
       }, revealAssets = () => {
         try {
           ctx.sidebarRight.openTab(KIND);
@@ -15031,6 +16069,18 @@ window.__ModuleLoader__.load({
         }
       };
       ctx.effect(() => ctx.shortcuts.register(newTabCommand(t, openSessionTab)), "at-terminal: new tab shortcut"), ctx.effect(() => ctx.shortcuts.register(assetsCommand(t, revealAssets)), "at-terminal: assets shortcut"), ctx.effect(
+        () => ctx.shortcuts.register(toggleMonitorCommand(t, () => void openMonitorTab())),
+        "at-terminal: monitor shortcut"
+      ), ctx.effect(
+        () => listenMonitorEvents((msg) => {
+          msg.action === "open" ? msg.mode === "hud" ? hudController?.open(msg.target) : openMonitorTab({
+            target: msg.target,
+            serverId: msg.serverId,
+            mode: msg.mode ?? "float"
+          }) : msg.action === "close" && msg.mode === "hud" && hudController?.close();
+        }),
+        "at-terminal: monitor sse events"
+      ), ctx.effect(
         () => ctx.sidebarRight.registerCloseHandler(KIND_SESSION, (_sessionId, tab) => {
           let contentId = tab?.contentId, key = typeof contentId == "string" && contentId !== "" ? contentId : String(tab?.id ?? "");
           key !== "" && disposeSession(key, !0, "close-handler");
@@ -15052,7 +16102,7 @@ window.__ModuleLoader__.load({
             // whichever registered last.
             ctx.slots.register(
               { name: "sidebar.right.pane.tab", key: ID, locale: NS },
-              wrapWithLocale(AtTerminalBody, t, { openSessionTab })
+              wrapWithLocale(AtTerminalBody, t, { openSessionTab, openMonitorTab })
             )
           )
         ),
@@ -15062,21 +16112,66 @@ window.__ModuleLoader__.load({
           "sidebar.right.pane.tab",
           () => ctx.slots.register(
             { name: "sidebar.right.pane.tab", key: ID_SESSION, locale: NS },
-            wrapWithLocale(AtTerminalSessionBody, t)
+            wrapWithLocale(AtTerminalSessionBody, t, { openMonitorTab })
           )
         ),
         "at-terminal: terminal pane body"
+      ), ctx.effect(
+        () => ctx.slots.inject(
+          "sidebar.right.pane.tab",
+          () => ctx.slots.register(
+            { name: "sidebar.right.pane.tab", key: ID_MONITOR, locale: NS },
+            wrapWithLocale(AtTerminalMonitorBody, t, {
+              onFloat: (tabId) => {
+                ctx.sidebarRight.float && ctx.sidebarRight.float(tabId, { width: 620, height: 480 });
+              }
+            })
+          )
+        ),
+        "at-terminal: monitor pane body"
       ), ctx.effect(
         () => ctx.slots.inject("sidebar.right.pane.tab.title", () => {
           let disposeAssets = ctx.slots.register({ name: "sidebar.right.pane.tab.title", key: ID }, wrapWithLocale(AtTerminalTitle, t)), disposeSession2 = ctx.slots.register(
             { name: "sidebar.right.pane.tab.title", key: ID_SESSION },
             wrapWithLocale(AtTerminalTitle, t)
+          ), disposeMonitor = ctx.slots.register(
+            { name: "sidebar.right.pane.tab.title", key: ID_MONITOR },
+            wrapWithLocale(AtTerminalMonitorTitle, t)
           );
           return () => {
-            disposeSession2(), disposeAssets();
+            disposeMonitor(), disposeSession2(), disposeAssets();
           };
         }),
         "at-terminal: chip titles"
+      ), ctx.effect(
+        () => ctx.slots.inject(
+          "shell.overlay",
+          () => ctx.slots.register(
+            { name: "shell.overlay", id: "@at-series/dsh-at-terminal/monitor-hud", locale: NS },
+            wrapWithLocale(MonitorHudContainer, t, {
+              onOpenPane: (target) => {
+                openMonitorTab({ target, mode: "float" });
+              },
+              onRegisterController: (ctrl) => {
+                hudController = ctrl;
+              }
+            })
+          )
+        ),
+        "at-terminal: monitor hud overlay"
+      ), ctx.effect(
+        () => ctx.slots.inject(
+          "conversation.session.header.corner",
+          () => ctx.slots.register(
+            { name: "conversation.session.header.corner", id: "@at-series/dsh-at-terminal/monitor-corner", locale: NS },
+            wrapWithLocale(MonitorCornerButton, t, {
+              onOpenPane: () => {
+                openMonitorTab({ target: "hardware" });
+              }
+            })
+          )
+        ),
+        "at-terminal: monitor corner button"
       );
     }
 

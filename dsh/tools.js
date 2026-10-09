@@ -36,7 +36,7 @@ export const AT_TERMINAL_BUNDLE_NAME = '@at-series/dsh-at-terminal'
  * What this build can actually do. Kept honest per milestone: a capability is
  * listed only once its code path exists and has been verified.
  */
-export const CAPABILITIES = Object.freeze(['plugin-skeleton', 'direct-agent-tools'])
+export const CAPABILITIES = Object.freeze(['plugin-skeleton', 'direct-agent-tools', 'monitor-floating-window'])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
 const SETTINGS_JSON_TYPES = Object.freeze({
@@ -858,11 +858,248 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
   }
 }
 
+export function createOpenMonitorTool({ resolveAgentService, broadcastMonitor, runInContext } = {}) {
+  return {
+    name: 'at_terminal_open_monitor',
+    description: 'Open the AT Terminal monitoring window (floating pane or HUD overlay) for asset hardware metrics or live agent execution status.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        target: {
+          type: 'string',
+          enum: ['hardware', 'agent_execution'],
+          description: 'Monitor target: "hardware" for CPU/memory/disk/network/processes, "agent_execution" for live commands, audits and SFTP transfers.'
+        },
+        serverId: {
+          type: 'string',
+          description: 'SSH server id to monitor (optional; defaults to the active server).'
+        },
+        mode: {
+          type: 'string',
+          enum: ['float', 'hud'],
+          description: 'Display mode: "float" for a DockKit native floating pane window, "hud" for the global HUD overlay.'
+        }
+      },
+      required: ['target']
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          opened: { type: 'boolean' },
+          target: { type: 'string' },
+          serverId: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          mode: { type: 'string' }
+        }
+      },
+      render(_args, val) {
+        return [
+          {
+            type: 'text',
+            text: `Opened ${val.target} monitor (${val.mode}) for server: ${val.serverId ?? 'active'}`
+          }
+        ]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
+      const run = runInContext ?? ((_ctx, fn) => fn())
+      return run(callCtx, async () => {
+        const service = resolveAgentService()
+        const res = await service.openMonitor({
+          target: args.target,
+          serverId: args.serverId,
+          mode: args.mode
+        })
+        if (typeof broadcastMonitor === 'function') {
+          broadcastMonitor('monitor-control', {
+            action: 'open',
+            target: res.target,
+            serverId: res.serverId,
+            mode: res.mode
+          })
+        }
+        return {
+          opened: Boolean(res.opened),
+          target: res.target,
+          serverId: res.serverId ?? null,
+          mode: res.mode
+        }
+      })
+    }
+  }
+}
+
+export function createGetHardwareMetricsTool({ resolveAgentService, runInContext } = {}) {
+  return {
+    name: 'at_terminal_get_hardware_metrics',
+    description: 'Retrieve real-time hardware metrics (CPU, memory, disk, network throughput, top processes) for an SSH server.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        serverId: {
+          type: 'string',
+          description: 'Configured AT Terminal SSH server id (optional; defaults to the active server).'
+        }
+      }
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          serverId: { type: 'string' },
+          timestamp: { type: 'integer' },
+          cpuUsagePercent: { type: 'number' },
+          loadAvg: {
+            type: 'array',
+            items: { type: 'number' }
+          },
+          memoryTotalBytes: { type: 'integer' },
+          memoryUsedBytes: { type: 'integer' },
+          memoryFreeBytes: { type: 'integer' },
+          netRxBytesPerSec: { type: 'integer' },
+          netTxBytesPerSec: { type: 'integer' },
+          topProcesses: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                pid: { type: 'integer' },
+                user: { type: 'string' },
+                cpu: { type: 'number' },
+                mem: { type: 'number' },
+                command: { type: 'string' }
+              }
+            }
+          }
+        }
+      },
+      render(_args, val) {
+        return [
+          {
+            type: 'text',
+            text: `Hardware Metrics (${val.serverId}): CPU ${val.cpuUsagePercent}%, Mem ${(val.memoryUsedBytes / 1024 / 1024).toFixed(0)}MB / ${(val.memoryTotalBytes / 1024 / 1024).toFixed(0)}MB`
+          }
+        ]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
+      const run = runInContext ?? ((_ctx, fn) => fn())
+      return run(callCtx, async () => {
+        const service = resolveAgentService()
+        const res = await service.getHardwareMetrics(args.serverId)
+        return {
+          serverId: res.serverId,
+          timestamp: res.timestamp,
+          cpuUsagePercent: res.cpu.usagePercent,
+          loadAvg: res.cpu.loadAvg,
+          memoryTotalBytes: res.memory.totalBytes,
+          memoryUsedBytes: res.memory.usedBytes,
+          memoryFreeBytes: res.memory.freeBytes,
+          netRxBytesPerSec: res.network.rxBytesPerSec,
+          netTxBytesPerSec: res.network.txBytesPerSec,
+          topProcesses: (res.processes || []).map((p) => ({
+            pid: p.pid,
+            user: p.user,
+            cpu: p.cpuPercent,
+            mem: p.memPercent,
+            command: p.command
+          }))
+        }
+      })
+    }
+  }
+}
+
+export function createGetAgentExecutionStatusTool({ resolveAgentService, runInContext } = {}) {
+  return {
+    name: 'at_terminal_get_agent_execution_status',
+    description: 'Retrieve current agent execution status snapshot, including live running action, recent audit entries, and active SFTP file transfers.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        limit: {
+          type: 'integer',
+          description: 'Maximum number of recent audit records to retrieve (default: 5).'
+        }
+      }
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          timestamp: { type: 'integer' },
+          hasActiveAction: { type: 'boolean' },
+          currentCommand: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          currentStatus: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          activeTransfersCount: { type: 'integer' },
+          recentAudits: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string' },
+                timestamp: { type: 'integer' },
+                command: { type: 'string' },
+                decision: { type: 'string' },
+                riskLevel: { oneOf: [{ type: 'string' }, { type: 'null' }] }
+              }
+            }
+          }
+        }
+      },
+      render(_args, val) {
+        return [
+          {
+            type: 'text',
+            text: `Agent Status: ${val.hasActiveAction ? `Running [${val.currentCommand}]` : 'Idle'}, ${val.activeTransfersCount} transfers, ${val.recentAudits.length} recent audits`
+          }
+        ]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
+      const run = runInContext ?? ((_ctx, fn) => fn())
+      return run(callCtx, async () => {
+        const service = resolveAgentService()
+        const res = await service.getAgentExecutionStatus(args.limit ?? 5)
+        return {
+          timestamp: res.timestamp,
+          hasActiveAction: Boolean(res.currentAction),
+          currentCommand: res.currentAction ? res.currentAction.command : null,
+          currentStatus: res.currentAction ? res.currentAction.status : null,
+          activeTransfersCount: res.activeTransfers ? res.activeTransfers.length : 0,
+          recentAudits: (res.recentAudits || []).map((a) => ({
+            id: a.id,
+            timestamp: a.timestamp,
+            command: a.command,
+            decision: a.decision,
+            riskLevel: a.riskLevel ?? null
+          }))
+        }
+      })
+    }
+  }
+}
+
 /** Every tool this bundle contributes, in registration order. */
 export function createTools({
   version,
   config,
   resolveAgentService,
+  broadcastMonitor,
   setCurrentCallContext,
   runWithCallContext,
   now
@@ -873,7 +1110,7 @@ export function createTools({
         setCurrentCallContext?.(ctx)
         return fn()
       }
-  const shared = { version, config, resolveAgentService, setCurrentCallContext, runInContext }
+  const shared = { version, config, resolveAgentService, broadcastMonitor, setCurrentCallContext, runInContext }
   return [
     createPingTool({ version, config, now }),
     createListSshServersTool(shared),
@@ -886,8 +1123,12 @@ export function createTools({
     createSftpCreateFileTool(shared),
     createSftpCreateDirectoryTool(shared),
     createSftpRenameTool(shared),
-    createSftpDeleteTool(shared)
+    createSftpDeleteTool(shared),
+    createOpenMonitorTool(shared),
+    createGetHardwareMetricsTool(shared),
+    createGetAgentExecutionStatusTool(shared)
   ]
 }
+
 
 

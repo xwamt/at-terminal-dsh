@@ -643,7 +643,10 @@ if (sandboxSkipReason !== null) {
       at_terminal_sftp_create_file: { path: '/tmp/test.txt' },
       at_terminal_sftp_create_directory: { path: '/tmp/testdir' },
       at_terminal_sftp_rename: { path: '/tmp/a', newPath: '/tmp/b' },
-      at_terminal_sftp_delete: { path: '/tmp/test.txt' }
+      at_terminal_sftp_delete: { path: '/tmp/test.txt' },
+      at_terminal_open_monitor: { target: 'hardware', serverId: 'srv-1', mode: 'float' },
+      at_terminal_get_hardware_metrics: { serverId: 'srv-1' },
+      at_terminal_get_agent_execution_status: { limit: 5 }
     }
 
     const mockService = {
@@ -779,11 +782,38 @@ if (sandboxSkipReason !== null) {
           path: input.path,
           deleted: true
         }
+      },
+      async openMonitor(input) {
+        return {
+          opened: true,
+          target: input.target,
+          serverId: input.serverId || 'srv-1',
+          mode: input.mode || 'float'
+        }
+      },
+      async getHardwareMetrics(serverId) {
+        return {
+          serverId: serverId || 'srv-1',
+          timestamp: 1700000000000,
+          cpu: { usagePercent: 15, cores: [15], loadAvg: [0.5, 0.4, 0.3] },
+          memory: { totalBytes: 8192, usedBytes: 4096, freeBytes: 4096 },
+          disk: { mounts: [] },
+          network: { rxBytesPerSec: 100, txBytesPerSec: 50 },
+          processes: [{ pid: 1, user: 'root', cpuPercent: 1.0, memPercent: 1.0, command: 'init' }]
+        }
+      },
+      async getAgentExecutionStatus(limit) {
+        return {
+          timestamp: 1700000000000,
+          currentAction: { id: 'act-1', command: 'echo test', runningTimeMs: 100, status: 'running' },
+          recentAudits: [{ id: 'a1', timestamp: 1700000000000, command: 'echo test', decision: 'allowed', riskLevel: 'low' }],
+          activeTransfers: []
+        }
       }
     }
 
     const definitions = createTools({ version: manifest.version, resolveAgentService: () => mockService })
-    assert.equal(definitions.length, 12, 'bundle must contribute exactly 12 tools')
+    assert.equal(definitions.length, 15, 'bundle must contribute exactly 15 tools')
 
     const seen = new Set()
     for (const definition of definitions) {

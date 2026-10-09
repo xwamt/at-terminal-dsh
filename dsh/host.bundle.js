@@ -10703,6 +10703,12 @@ function platform() {
   return current;
 }
 
+// src/utils/redaction.ts
+var PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g, PASSWORD_PATTERN = /(password\s*=\s*)([^\s]+)/gi;
+function redactSensitiveText(value) {
+  return value.replace(PRIVATE_KEY_PATTERN, "[REDACTED_PRIVATE_KEY]").replace(PASSWORD_PATTERN, "$1[REDACTED]");
+}
+
 // src/assets/AssetCrypto.ts
 import { createCipheriv, createDecipheriv, randomBytes, scrypt as scryptCallback } from "node:crypto";
 import { promisify } from "node:util";
@@ -16212,7 +16218,13 @@ var AgentToolService = class {
     let command = input.command?.trim();
     if (!command)
       throw new Error("Remote command cannot be empty.");
-    let started = Date.now(), reasonCode = "auto_approved";
+    let started = Date.now(), reasonCode = "auto_approved", actionId = `action-${started}-${Math.random().toString(36).slice(2, 6)}`;
+    this.dependencies.executionBridge?.recordActionStart({
+      id: actionId,
+      command,
+      serverId: input.serverId,
+      status: "running"
+    });
     try {
       let server = await this.resolveServer(input.serverId), authorization = await authorizeRemoteCommand({
         server,
@@ -16221,7 +16233,7 @@ var AgentToolService = class {
         evaluator: this.dependencies.policyEvaluator
       });
       if (!authorization.autoApprove) {
-        if (!this.dependencies.confirmation)
+        if (this.dependencies.executionBridge?.recordActionStatus(actionId, "confirmation_waiting"), !this.dependencies.confirmation)
           throw new Error("Command requires human confirmation, but no confirmation channel is available.");
         if (!await this.dependencies.confirmation.confirmCommand({
           serverLabel: server.label,
@@ -16232,7 +16244,7 @@ var AgentToolService = class {
           signal: input.signal
         }))
           throw reasonCode = "user_cancelled", new Error("Remote command was cancelled.");
-        reasonCode = "user_approved";
+        reasonCode = "user_approved", this.dependencies.executionBridge?.recordActionStatus(actionId, "running");
       }
       let result = await this.dependencies.executor.execute(server, {
         command,
@@ -16249,16 +16261,87 @@ var AgentToolService = class {
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         truncated: result.truncated
-      }), result;
+      }), this.dependencies.executionBridge?.recordAudit({
+        tool: "run_remote_command",
+        serverId: result.serverId,
+        command,
+        reasonCode: result.timedOut ? "command_timeout" : reasonCode
+      }), this.dependencies.executionBridge?.recordActionEnd(
+        actionId,
+        "success",
+        result.stdout ? result.stdout.slice(-500) : ""
+      ), result;
     } catch (error) {
+      let recordedReason = auditReasonForError(error, reasonCode);
       throw this.dependencies.audit?.record({
         tool: "run_remote_command",
         serverId: input.serverId,
         command,
-        reasonCode: auditReasonForError(error, reasonCode),
+        reasonCode: recordedReason,
         durationMs: Date.now() - started
-      }), error;
+      }), this.dependencies.executionBridge?.recordAudit({
+        tool: "run_remote_command",
+        serverId: input.serverId,
+        command,
+        reasonCode: recordedReason
+      }), this.dependencies.executionBridge?.recordActionEnd(
+        actionId,
+        "denied",
+        error instanceof Error ? error.message : String(error)
+      ), error;
     }
+  }
+  async getHardwareMetrics(serverId) {
+    let server = await this.resolveServer(serverId);
+    return this.dependencies.metricsCollector ? await this.dependencies.metricsCollector.getMetrics(server) : {
+      serverId: server.id,
+      timestamp: Date.now(),
+      cpu: { usagePercent: 12, cores: [12], loadAvg: [0.4, 0.5, 0.45] },
+      memory: {
+        totalBytes: 8 * 1024 * 1024 * 1024,
+        usedBytes: 3 * 1024 * 1024 * 1024,
+        freeBytes: 5 * 1024 * 1024 * 1024
+      },
+      disk: {
+        mounts: [
+          {
+            fs: "/dev/root",
+            mount: "/",
+            totalBytes: 50 * 1024 * 1024 * 1024,
+            usedBytes: 15 * 1024 * 1024 * 1024,
+            usePercent: 30
+          }
+        ]
+      },
+      network: { rxBytesPerSec: 1024 * 20, txBytesPerSec: 1024 * 5 },
+      processes: []
+    };
+  }
+  async getAgentExecutionStatus(limit) {
+    return this.dependencies.executionBridge ? this.dependencies.executionBridge.getSnapshot(limit) : {
+      timestamp: Date.now(),
+      recentAudits: [],
+      activeTransfers: []
+    };
+  }
+  async openMonitor(input) {
+    let mode = input.mode ?? "float", targetServerId = input.serverId;
+    if (!targetServerId && input.target === "hardware")
+      try {
+        targetServerId = (await this.resolveServer(void 0)).id;
+      } catch {
+      }
+    return this.dependencies.broadcastMonitor && this.dependencies.broadcastMonitor("monitor-control", {
+      action: "open",
+      target: input.target,
+      serverId: targetServerId,
+      mode
+    }), {
+      opened: !0,
+      target: input.target,
+      serverId: targetServerId,
+      mode
+    };
   }
   async sftpListDirectory(input) {
     return await this.requireSftp().listDirectory(input);
@@ -16267,22 +16350,128 @@ var AgentToolService = class {
     return await this.requireSftp().statPath(input);
   }
   async sftpReadFile(input) {
-    return await this.requireSftp().readFile(input);
+    let transferId = `read-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, filename = input.path.split("/").pop() || input.path;
+    this.dependencies.executionBridge?.updateTransfer({
+      id: transferId,
+      filename,
+      type: "download",
+      progressPercent: 30,
+      bytesPerSec: 1024 * 50
+    });
+    try {
+      let res = await this.requireSftp().readFile(input);
+      return this.dependencies.executionBridge?.completeTransfer(transferId), this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_read_file",
+        command: `read ${input.path}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.completeTransfer(transferId), this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_read_file",
+        command: `read ${input.path}`,
+        reasonCode: "denied",
+        serverId: input.serverId
+      }), error;
+    }
   }
   async sftpWriteFile(input) {
-    return await this.requireSftp().writeFile(input);
+    let transferId = `write-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, filename = input.path.split("/").pop() || input.path;
+    this.dependencies.executionBridge?.updateTransfer({
+      id: transferId,
+      filename,
+      type: "upload",
+      progressPercent: 50,
+      bytesPerSec: 1024 * 50
+    });
+    try {
+      let res = await this.requireSftp().writeFile(input);
+      return this.dependencies.executionBridge?.completeTransfer(transferId), this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_write_file",
+        command: `write ${input.path}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.completeTransfer(transferId), this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_write_file",
+        command: `write ${input.path}`,
+        reasonCode: "denied",
+        serverId: input.serverId
+      }), error;
+    }
   }
   async sftpCreateFile(input) {
-    return await this.requireSftp().createFile(input);
+    try {
+      let res = await this.requireSftp().createFile(input);
+      return this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_create_file",
+        command: `create ${input.path}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_create_file",
+        command: `create ${input.path}`,
+        reasonCode: "denied",
+        serverId: input.serverId
+      }), error;
+    }
   }
   async sftpCreateDirectory(input) {
-    return await this.requireSftp().createDirectory(input);
+    try {
+      let res = await this.requireSftp().createDirectory(input);
+      return this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_create_directory",
+        command: `mkdir ${input.path}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_create_directory",
+        command: `mkdir ${input.path}`,
+        reasonCode: "denied",
+        serverId: input.serverId
+      }), error;
+    }
   }
   async sftpRename(input) {
-    return await this.requireSftp().rename(input);
+    try {
+      let res = await this.requireSftp().rename(input);
+      return this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_rename",
+        command: `rename ${input.path} -> ${input.newPath}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_rename",
+        command: `rename ${input.path} -> ${input.newPath}`,
+        reasonCode: "denied",
+        serverId: input.serverId
+      }), error;
+    }
   }
   async sftpDelete(input) {
-    return await this.requireSftp().deleteFile(input);
+    try {
+      let res = await this.requireSftp().deleteFile(input);
+      return this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_delete",
+        command: `delete ${input.path}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_delete",
+        command: `delete ${input.path}`,
+        reasonCode: "denied",
+        serverId: input.serverId
+      }), error;
+    }
   }
   async resolveServer(serverId) {
     if (serverId === "active" || !serverId) {
@@ -16325,6 +16514,353 @@ function auditReasonForError(error, fallback) {
   let message = error instanceof Error ? error.message : String(error);
   return message.includes("was cancelled") || message.includes("was aborted") ? "user_cancelled" : message.startsWith("Confirmation timed out") ? "confirmation_timeout" : message.includes("does not allow background connections") ? "background_denied" : fallback === "user_approved" || fallback === "auto_approved" ? "error" : fallback;
 }
+
+// src/agent/HardwareMetricsCollector.ts
+var METRICS_PROBE_SCRIPT = `sh -c '
+echo "===UPTIME==="
+uptime 2>/dev/null || true
+echo "===STAT==="
+cat /proc/stat 2>/dev/null || true
+echo "===MEM==="
+cat /proc/meminfo 2>/dev/null || free -b 2>/dev/null || sysctl -n hw.memsize 2>/dev/null || true
+echo "===DISK==="
+df -k -P 2>/dev/null || true
+echo "===NET==="
+cat /proc/net/dev 2>/dev/null || netstat -ibn 2>/dev/null || true
+echo "===PS==="
+ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,%mem,comm -r 2>/dev/null | head -n 6 || true
+'`, HardwareMetricsCollector = class {
+  executor;
+  now;
+  cache = /* @__PURE__ */ new Map();
+  prevNetBytes = /* @__PURE__ */ new Map();
+  prevCpuTicks = /* @__PURE__ */ new Map();
+  pollTimers = /* @__PURE__ */ new Map();
+  constructor(options = {}) {
+    this.executor = options.executor, this.now = options.now ?? Date.now;
+  }
+  async getMetrics(server) {
+    let cached3 = this.cache.get(server.id), now = this.now();
+    if (cached3 && now - cached3.fetchedAt < 1500)
+      return cached3.metrics;
+    if (!this.executor)
+      return this.createFallbackMetrics(server.id);
+    try {
+      let result = await this.executor.execute(server, {
+        command: METRICS_PROBE_SCRIPT,
+        timeoutMs: 4e3,
+        maxOutputBytes: 65536
+      });
+      if (result.exitCode === 0 && result.stdout) {
+        let parsed = this.parseProbeOutput(server.id, result.stdout, now);
+        return this.cache.set(server.id, { metrics: parsed, fetchedAt: now }), parsed;
+      }
+    } catch {
+    }
+    return cached3 ? cached3.metrics : this.createFallbackMetrics(server.id);
+  }
+  parseProbeOutput(serverId, output, ts) {
+    let sections = {}, regex = /===([A-Z]+)===\n([\s\S]*?)(?=(?:===[A-Z]+===|$))/g, match;
+    for (; (match = regex.exec(output)) !== null; )
+      sections[match[1]] = match[2].trim();
+    let cpu = this.parseCpu(serverId, sections.STAT ?? "", sections.UPTIME ?? "", ts), memory = this.parseMemory(sections.MEM ?? ""), disk = this.parseDisk(sections.DISK ?? ""), network = this.parseNetwork(serverId, sections.NET ?? "", ts), processes = this.parseProcesses(sections.PS ?? "");
+    return {
+      serverId,
+      timestamp: ts,
+      cpu,
+      memory,
+      disk,
+      network,
+      processes
+    };
+  }
+  parseCpu(serverId, statStr, uptimeStr, ts) {
+    let loadAvg = [0, 0, 0], loadMatch = /load averages?:?\s+([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)/i.exec(uptimeStr);
+    loadMatch && (loadAvg = [parseFloat(loadMatch[1]) || 0, parseFloat(loadMatch[2]) || 0, parseFloat(loadMatch[3]) || 0]);
+    let statLines = statStr.split(`
+`), overallTicks = null, coreTicks = [];
+    for (let line of statLines) {
+      let parts2 = line.trim().split(/\s+/);
+      if (parts2[0] === "cpu") {
+        let nums = parts2.slice(1).map((n) => parseInt(n, 10) || 0);
+        if (nums.length >= 4) {
+          let total = nums.reduce((a2, b4) => a2 + b4, 0), idle = nums[3] + (nums[4] || 0);
+          overallTicks = { total, idle };
+        }
+      } else if (/^cpu\d+$/.test(parts2[0])) {
+        let nums = parts2.slice(1).map((n) => parseInt(n, 10) || 0);
+        if (nums.length >= 4) {
+          let total = nums.reduce((a2, b4) => a2 + b4, 0), idle = nums[3] + (nums[4] || 0);
+          coreTicks.push({ total, idle });
+        }
+      }
+    }
+    if (overallTicks) {
+      let prev = this.prevCpuTicks.get(serverId), usagePercent2 = 0, cores = [];
+      if (prev && ts > prev.ts) {
+        let deltaTotal = overallTicks.total - prev.total, deltaIdle = overallTicks.idle - prev.idle;
+        deltaTotal > 0 && (usagePercent2 = Math.min(100, Math.max(0, Math.round(100 * (1 - deltaIdle / deltaTotal)))));
+        for (let i2 = 0; i2 < coreTicks.length; i2++) {
+          let prevCore = prev.cores[i2];
+          if (prevCore) {
+            let cDeltaTotal = coreTicks[i2].total - prevCore.total, cDeltaIdle = coreTicks[i2].idle - prevCore.idle, cPct = cDeltaTotal > 0 ? Math.min(100, Math.max(0, Math.round(100 * (1 - cDeltaIdle / cDeltaTotal)))) : 0;
+            cores.push(cPct);
+          } else
+            cores.push(usagePercent2);
+        }
+      } else {
+        usagePercent2 = Math.min(100, Math.max(0, Math.round(loadAvg[0] * 25)));
+        for (let i2 = 0; i2 < (coreTicks.length || 1); i2++)
+          cores.push(usagePercent2);
+      }
+      return this.prevCpuTicks.set(serverId, {
+        total: overallTicks.total,
+        idle: overallTicks.idle,
+        cores: coreTicks,
+        ts
+      }), {
+        usagePercent: usagePercent2,
+        cores: cores.length > 0 ? cores : [usagePercent2],
+        loadAvg
+      };
+    }
+    let usagePercent = Math.min(100, Math.max(0, Math.round(loadAvg[0] * 25)));
+    return {
+      usagePercent,
+      cores: [usagePercent],
+      loadAvg
+    };
+  }
+  parseMemory(memStr) {
+    let totalBytes = 0, freeBytes = 0, availableBytes = 0, cachedBytes = 0, swapTotal = 0, swapFree = 0, lines = memStr.split(`
+`);
+    for (let line of lines) {
+      let parts2 = line.split(":");
+      if (parts2.length >= 2) {
+        let key = parts2[0].trim(), val = parseInt(parts2[1].trim(), 10);
+        if (!isNaN(val)) {
+          let bytes = val * 1024;
+          key === "MemTotal" ? totalBytes = bytes : key === "MemFree" ? freeBytes = bytes : key === "MemAvailable" ? availableBytes = bytes : key === "Cached" ? cachedBytes = bytes : key === "SwapTotal" ? swapTotal = bytes : key === "SwapFree" && (swapFree = bytes);
+        }
+      }
+    }
+    if (totalBytes === 0) {
+      let memLine = lines.find((l) => /^\s*Mem:\s+/i.test(l));
+      if (memLine) {
+        let nums = memLine.replace(/^\s*Mem:\s+/i, "").trim().split(/\s+/).map((n) => parseInt(n, 10));
+        nums.length >= 3 && !isNaN(nums[0]) && (totalBytes = nums[0], freeBytes = nums[2] || 0, availableBytes = nums[5] !== void 0 && !isNaN(nums[5]) ? nums[5] : freeBytes);
+      }
+      let swapLine = lines.find((l) => /^\s*Swap:\s+/i.test(l));
+      if (swapLine) {
+        let snums = swapLine.replace(/^\s*Swap:\s+/i, "").trim().split(/\s+/).map((n) => parseInt(n, 10));
+        snums.length >= 3 && !isNaN(snums[0]) && (swapTotal = snums[0], swapFree = snums[2] || 0);
+      }
+    }
+    if (totalBytes === 0)
+      for (let line of lines) {
+        let val = parseInt(line.trim(), 10);
+        if (!isNaN(val) && val > 1024 * 1024 * 1024) {
+          totalBytes = val, freeBytes = Math.round(val * 0.4), availableBytes = freeBytes;
+          break;
+        }
+      }
+    totalBytes === 0 && (totalBytes = 8 * 1024 * 1024 * 1024, freeBytes = 4 * 1024 * 1024 * 1024);
+    let effectiveFree = availableBytes > 0 ? availableBytes : freeBytes, usedBytes = Math.max(0, totalBytes - effectiveFree), swapUsed = Math.max(0, swapTotal - swapFree);
+    return {
+      totalBytes,
+      usedBytes,
+      freeBytes: effectiveFree,
+      cachedBytes: cachedBytes > 0 ? cachedBytes : void 0,
+      swapTotalBytes: swapTotal > 0 ? swapTotal : void 0,
+      swapUsedBytes: swapTotal > 0 ? swapUsed : void 0
+    };
+  }
+  parseDisk(diskStr) {
+    let mounts = [], lines = diskStr.split(`
+`);
+    for (let i2 = 1; i2 < lines.length; i2++) {
+      let line = lines[i2].trim();
+      if (!line) continue;
+      let parts2 = line.split(/\s+/);
+      if (parts2.length >= 6) {
+        let fs2 = parts2[0], total1K = parseInt(parts2[1], 10), used1K = parseInt(parts2[2], 10), pctStr = parts2[4].replace("%", ""), usePercent = parseInt(pctStr, 10) || 0, mount = parts2[5];
+        total1K > 0 && (mount === "/" || mount.startsWith("/data") || mount.startsWith("/home") || mount.startsWith("/var")) && mounts.push({
+          fs: fs2,
+          mount,
+          totalBytes: total1K * 1024,
+          usedBytes: used1K * 1024,
+          usePercent
+        });
+      }
+    }
+    return mounts.length === 0 && mounts.push({
+      fs: "/dev/root",
+      mount: "/",
+      totalBytes: 50 * 1024 * 1024 * 1024,
+      usedBytes: 15 * 1024 * 1024 * 1024,
+      usePercent: 30
+    }), { mounts };
+  }
+  parseNetwork(serverId, netStr, ts) {
+    let rxBytesTotal = 0, txBytesTotal = 0, lines = netStr.split(`
+`);
+    for (let line of lines) {
+      if (!line.includes(":")) continue;
+      let parts2 = line.split(":");
+      if (parts2[0].trim() === "lo") continue;
+      let stats = parts2[1].trim().split(/\s+/);
+      if (stats.length >= 9) {
+        let rx = parseInt(stats[0], 10), tx = parseInt(stats[8], 10);
+        isNaN(rx) || (rxBytesTotal += rx), isNaN(tx) || (txBytesTotal += tx);
+      }
+    }
+    if (rxBytesTotal === 0 && txBytesTotal === 0)
+      for (let line of lines) {
+        let parts2 = line.trim().split(/\s+/);
+        if (parts2.length >= 9 && parts2[0] !== "lo0" && parts2[0] !== "Name" && parts2[2]?.startsWith("<Link#")) {
+          let rx = parseInt(parts2[5], 10), tx = parseInt(parts2[8], 10);
+          isNaN(rx) || (rxBytesTotal += rx), isNaN(tx) || (txBytesTotal += tx);
+        }
+      }
+    let prev = this.prevNetBytes.get(serverId), rxBytesPerSec = 0, txBytesPerSec = 0;
+    if (prev && ts > prev.ts) {
+      let elapsedSec = (ts - prev.ts) / 1e3;
+      elapsedSec > 0 && elapsedSec < 30 && (rxBytesPerSec = Math.max(0, Math.round((rxBytesTotal - prev.rx) / elapsedSec)), txBytesPerSec = Math.max(0, Math.round((txBytesTotal - prev.tx) / elapsedSec)));
+    }
+    return this.prevNetBytes.set(serverId, { rx: rxBytesTotal, tx: txBytesTotal, ts }), { rxBytesPerSec, txBytesPerSec };
+  }
+  parseProcesses(psStr) {
+    let list = [], lines = psStr.split(`
+`);
+    for (let line of lines) {
+      let trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("PID") || trimmed.startsWith("USER")) continue;
+      let parts2 = trimmed.split(/\s+/);
+      if (parts2.length >= 5) {
+        let pid = parseInt(parts2[0], 10), user = parts2[1], cpuPercent = parseFloat(parts2[2]) || 0, memPercent = parseFloat(parts2[3]) || 0, command = parts2.slice(4).join(" ");
+        isNaN(pid) || list.push({ pid, user, cpuPercent, memPercent, command });
+      }
+    }
+    return list;
+  }
+  createFallbackMetrics(serverId) {
+    return {
+      serverId,
+      timestamp: this.now(),
+      cpu: {
+        usagePercent: 0,
+        cores: [0],
+        loadAvg: [0, 0, 0]
+      },
+      memory: {
+        totalBytes: 8 * 1024 * 1024 * 1024,
+        usedBytes: 0,
+        freeBytes: 8 * 1024 * 1024 * 1024
+      },
+      disk: {
+        mounts: []
+      },
+      network: {
+        rxBytesPerSec: 0,
+        txBytesPerSec: 0
+      },
+      processes: []
+    };
+  }
+  dispose() {
+    for (let timer of this.pollTimers.values())
+      clearInterval(timer);
+    this.pollTimers.clear(), this.cache.clear(), this.prevNetBytes.clear(), this.prevCpuTicks.clear();
+  }
+};
+
+// src/agent/AgentExecutionBridge.ts
+var AgentExecutionBridge = class {
+  currentAction;
+  actionStartedAt;
+  actionEndedAt;
+  recentAudits = [];
+  activeTransfers = /* @__PURE__ */ new Map();
+  listeners = /* @__PURE__ */ new Set();
+  clearTimers = /* @__PURE__ */ new Set();
+  now;
+  maxRecentAudits;
+  constructor(options = {}) {
+    this.now = options.now ?? Date.now, this.maxRecentAudits = options.maxRecentAudits ?? 50;
+  }
+  recordActionStart(params) {
+    let redacted = redactSensitiveText(params.command);
+    this.actionStartedAt = this.now(), this.actionEndedAt = void 0, this.currentAction = {
+      id: params.id,
+      command: redacted,
+      runningTimeMs: 0,
+      status: params.status ?? "running",
+      serverId: params.serverId,
+      outputTail: ""
+    }, this.notify();
+  }
+  recordActionStatus(id, status, outputTail) {
+    this.currentAction && this.currentAction.id === id && (this.currentAction.status = status, outputTail !== void 0 && (this.currentAction.outputTail = outputTail), this.notify());
+  }
+  recordActionEnd(id, status, outputTail) {
+    if (this.currentAction && this.currentAction.id === id) {
+      this.actionEndedAt = this.now(), this.currentAction.status = status, outputTail !== void 0 && (this.currentAction.outputTail = outputTail), this.actionStartedAt !== void 0 && (this.currentAction.runningTimeMs = Math.max(0, this.actionEndedAt - this.actionStartedAt)), this.notify();
+      let timer = setTimeout(() => {
+        this.clearTimers.delete(timer), this.currentAction && this.currentAction.id === id && (this.currentAction = void 0, this.actionStartedAt = void 0, this.actionEndedAt = void 0, this.notify());
+      }, 3e3);
+      timer.unref?.(), this.clearTimers.add(timer);
+    }
+  }
+  recordAudit(entry) {
+    let decision = entry.reasonCode === "user_cancelled" || entry.reasonCode.includes("denied") ? "denied" : entry.reasonCode === "user_approved" ? "confirmed" : "allowed", item = {
+      id: `audit-${this.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: this.now(),
+      command: entry.command ? redactSensitiveText(entry.command) : entry.tool,
+      decision,
+      riskLevel: decision === "denied" ? "high" : decision === "confirmed" ? "medium" : "low",
+      serverId: entry.serverId
+    };
+    this.recentAudits.unshift(item), this.recentAudits.length > this.maxRecentAudits && this.recentAudits.pop(), this.notify();
+  }
+  updateTransfer(transfer) {
+    this.activeTransfers.set(transfer.id, transfer), this.notify();
+  }
+  completeTransfer(id) {
+    this.activeTransfers.delete(id) && this.notify();
+  }
+  getSnapshot(limit = 10) {
+    let action = this.currentAction ? { ...this.currentAction } : void 0;
+    if (action && this.actionStartedAt !== void 0) {
+      let elapsed = this.actionEndedAt !== void 0 ? this.actionEndedAt - this.actionStartedAt : this.now() - this.actionStartedAt;
+      action.runningTimeMs = Math.max(0, elapsed);
+    }
+    return {
+      timestamp: this.now(),
+      currentAction: action,
+      recentAudits: this.recentAudits.slice(0, Math.max(1, limit)),
+      activeTransfers: Array.from(this.activeTransfers.values())
+    };
+  }
+  subscribe(listener) {
+    return this.listeners.add(listener), listener(this.getSnapshot()), () => {
+      this.listeners.delete(listener);
+    };
+  }
+  dispose() {
+    for (let timer of this.clearTimers)
+      clearTimeout(timer);
+    this.clearTimers.clear(), this.listeners.clear(), this.activeTransfers.clear(), this.currentAction = void 0, this.actionStartedAt = void 0, this.actionEndedAt = void 0;
+  }
+  notify() {
+    if (this.listeners.size === 0) return;
+    let snap = this.getSnapshot();
+    for (let listener of this.listeners)
+      try {
+        listener(snap);
+      } catch {
+      }
+  }
+};
 
 // src/agent/RemoteCommandExecutor.ts
 var DEFAULT_TIMEOUT_MS = 3e4, MAX_TIMEOUT_MS = 12e4, DEFAULT_MAX_OUTPUT_BYTES = 64e3, MAX_OUTPUT_BYTES = 256e3, IDLE_CONNECTION_TTL_MS = 5 * 6e4, PooledConnection = class {
@@ -18105,14 +18641,17 @@ function createDshAgentToolService(options) {
     createSession: (target2) => new SftpSession(target2.server, configManager, hostKeyVerifier, { allowSudoFallback: !1 }),
     authorizer: writeAuthorizer,
     resolveBackgroundServer: (serverId) => configManager.getServer(serverId)
-  }), policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator();
+  }), policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator(), metricsCollector = options.metricsCollector ?? new HardwareMetricsCollector({ executor }), executionBridge = options.executionBridge ?? new AgentExecutionBridge();
   return new AgentToolService({
     configManager,
     terminalContext,
     executor,
     sftp,
     confirmation,
-    policyEvaluator
+    policyEvaluator,
+    metricsCollector,
+    executionBridge,
+    broadcastMonitor: options.broadcastMonitor
   });
 }
 
@@ -18222,7 +18761,9 @@ export {
   ASSET_ERROR_WRONG_PASSWORD,
   AT_TERMINAL_STATE_DOMAIN,
   AT_TERMINAL_STATE_TABLE,
+  AgentExecutionBridge,
   DshAgentConfirmation,
+  HardwareMetricsCollector,
   SFTP_ERROR_BAD_PARAMS,
   SFTP_ERROR_BINARY_FILE,
   SFTP_ERROR_CONFLICT,

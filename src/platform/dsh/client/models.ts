@@ -993,3 +993,106 @@ export function sftpTreeKeyAction(
 
   return { kind: 'none' };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Monitor Models (Hardware & Agent Execution)                                */
+/* -------------------------------------------------------------------------- */
+
+export interface CpuMetrics {
+  usagePercent: number;
+  cores: number[];
+  loadAvg: [number, number, number];
+}
+
+export interface MemoryMetrics {
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  cachedBytes?: number;
+  swapTotalBytes?: number;
+  swapUsedBytes?: number;
+}
+
+export interface DiskMountMetrics {
+  fs: string;
+  mount: string;
+  totalBytes: number;
+  usedBytes: number;
+  usePercent: number;
+}
+
+export interface DiskMetrics {
+  mounts: DiskMountMetrics[];
+}
+
+export interface NetworkMetrics {
+  rxBytesPerSec: number;
+  txBytesPerSec: number;
+}
+
+export interface ProcessMetrics {
+  pid: number;
+  user: string;
+  cpuPercent: number;
+  memPercent: number;
+  command: string;
+}
+
+export interface HardwareMetrics {
+  serverId: string;
+  timestamp: number;
+  cpu: CpuMetrics;
+  memory: MemoryMetrics;
+  disk: DiskMetrics;
+  network: NetworkMetrics;
+  processes: ProcessMetrics[];
+}
+
+export type AgentActionStatus = 'running' | 'confirmation_waiting' | 'success' | 'denied';
+
+export interface AgentActionSnapshot {
+  id: string;
+  command: string;
+  runningTimeMs: number;
+  status: AgentActionStatus;
+  outputTail?: string;
+  serverId?: string;
+}
+
+export interface AgentAuditSummary {
+  id: string;
+  timestamp: number;
+  command: string;
+  decision: 'allowed' | 'confirmed' | 'denied';
+  riskLevel?: string;
+  serverId?: string;
+}
+
+export interface TransferProgressSnapshot {
+  id: string;
+  type: 'upload' | 'download';
+  filename: string;
+  progressPercent: number;
+  bytesPerSec: number;
+}
+
+export interface AgentExecutionSnapshot {
+  timestamp: number;
+  currentAction?: AgentActionSnapshot;
+  recentAudits: AgentAuditSummary[];
+  activeTransfers: TransferProgressSnapshot[];
+}
+
+export interface MonitorControlMessage {
+  action: 'open' | 'close' | 'focus' | 'set-target';
+  target: 'hardware' | 'agent_execution';
+  serverId?: string;
+  mode?: 'float' | 'hud';
+}
+
+export function formatThroughput(bytesPerSec: number): string {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 B/s';
+  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}

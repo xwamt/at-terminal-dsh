@@ -116,6 +116,10 @@ const ANONYMOUS_KEY = 'anonymous';
 export function AtTerminalSessionBody(props: Record<string, unknown> = {}): ReactElement {
   const t = React.useContext(BodyLocale);
   const key = readTabKey(props) || ANONYMOUS_KEY;
+  const openMonitorTab =
+    typeof props.openMonitorTab === 'function'
+      ? (props.openMonitorTab as (options?: { serverId?: string; target?: 'hardware' | 'agent_execution' }) => boolean)
+      : undefined;
   // Live, not a one-shot read. The frame records the opener's `params` in its own `onCommitted`
   // callback, so a body whose first render beats that write would otherwise never see what it was
   // opened for — and a terminal tab with no target is the "double-click did not connect" report.
@@ -1145,7 +1149,10 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
       settingsVersion,
       encoding: chosen?.encoding,
       hooks,
-      onEngine
+      onEngine,
+      onOpenMonitor: openMonitorTab
+        ? () => openMonitorTab({ serverId: session.serverId, target: 'hardware' })
+        : undefined
     })
   );
 

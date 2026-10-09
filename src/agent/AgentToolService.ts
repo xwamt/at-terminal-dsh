@@ -7,6 +7,13 @@ import type { RemoteCommandExecutor, RemoteCommandResult } from './RemoteCommand
 import { authorizeRemoteCommand, resolveAgentCommandTrust } from './agentCommandTrust';
 import type { RemoteCommandPolicyEvaluator } from './loadRemoteCommandPolicy';
 import type { SftpAgentService } from './SftpAgentService';
+import type { HardwareMetricsCollector } from './HardwareMetricsCollector';
+import type { AgentExecutionBridge } from './AgentExecutionBridge';
+import type {
+  AgentExecutionSnapshot,
+  HardwareMetrics,
+  MonitorControlMessage
+} from '../platform/dsh/client/models';
 
 export interface AgentToolServiceDependencies {
   configManager: ConfigManager;
@@ -16,6 +23,9 @@ export interface AgentToolServiceDependencies {
   sftp?: SftpAgentService;
   audit?: AgentAuditRecorder;
   policyEvaluator?: RemoteCommandPolicyEvaluator;
+  metricsCollector?: HardwareMetricsCollector;
+  executionBridge?: AgentExecutionBridge;
+  broadcastMonitor?: (event: string, data: unknown) => void;
 }
 
 export interface RunRemoteCommandInput {
@@ -70,6 +80,13 @@ export class AgentToolService {
     }
     const started = Date.now();
     let reasonCode = 'auto_approved';
+    const actionId = `action-${started}-${Math.random().toString(36).slice(2, 6)}`;
+    this.dependencies.executionBridge?.recordActionStart({
+      id: actionId,
+      command,
+      serverId: input.serverId,
+      status: 'running'
+    });
     try {
       const server = await this.resolveServer(input.serverId);
       const authorization = await authorizeRemoteCommand({
@@ -79,6 +96,7 @@ export class AgentToolService {
         evaluator: this.dependencies.policyEvaluator
       });
       if (!authorization.autoApprove) {
+        this.dependencies.executionBridge?.recordActionStatus(actionId, 'confirmation_waiting');
         if (!this.dependencies.confirmation) {
           throw new Error('Command requires human confirmation, but no confirmation channel is available.');
         }
@@ -95,6 +113,7 @@ export class AgentToolService {
           throw new Error('Remote command was cancelled.');
         }
         reasonCode = 'user_approved';
+        this.dependencies.executionBridge?.recordActionStatus(actionId, 'running');
       }
       const result = await this.dependencies.executor.execute(server, {
         command,
@@ -112,17 +131,110 @@ export class AgentToolService {
         durationMs: result.durationMs,
         truncated: result.truncated
       });
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'run_remote_command',
+        serverId: result.serverId,
+        command,
+        reasonCode: result.timedOut ? 'command_timeout' : reasonCode
+      });
+      this.dependencies.executionBridge?.recordActionEnd(
+        actionId,
+        'success',
+        result.stdout ? result.stdout.slice(-500) : ''
+      );
       return result;
     } catch (error) {
+      const recordedReason = auditReasonForError(error, reasonCode);
       this.dependencies.audit?.record({
         tool: 'run_remote_command',
         serverId: input.serverId,
         command,
-        reasonCode: auditReasonForError(error, reasonCode),
+        reasonCode: recordedReason,
         durationMs: Date.now() - started
       });
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'run_remote_command',
+        serverId: input.serverId,
+        command,
+        reasonCode: recordedReason
+      });
+      this.dependencies.executionBridge?.recordActionEnd(
+        actionId,
+        'denied',
+        error instanceof Error ? error.message : String(error)
+      );
       throw error;
     }
+  }
+
+  async getHardwareMetrics(serverId?: string): Promise<HardwareMetrics> {
+    const server = await this.resolveServer(serverId);
+    if (this.dependencies.metricsCollector) {
+      return await this.dependencies.metricsCollector.getMetrics(server);
+    }
+    return {
+      serverId: server.id,
+      timestamp: Date.now(),
+      cpu: { usagePercent: 12, cores: [12], loadAvg: [0.4, 0.5, 0.45] },
+      memory: {
+        totalBytes: 8 * 1024 * 1024 * 1024,
+        usedBytes: 3 * 1024 * 1024 * 1024,
+        freeBytes: 5 * 1024 * 1024 * 1024
+      },
+      disk: {
+        mounts: [
+          {
+            fs: '/dev/root',
+            mount: '/',
+            totalBytes: 50 * 1024 * 1024 * 1024,
+            usedBytes: 15 * 1024 * 1024 * 1024,
+            usePercent: 30
+          }
+        ]
+      },
+      network: { rxBytesPerSec: 1024 * 20, txBytesPerSec: 1024 * 5 },
+      processes: []
+    };
+  }
+
+  async getAgentExecutionStatus(limit?: number): Promise<AgentExecutionSnapshot> {
+    if (this.dependencies.executionBridge) {
+      return this.dependencies.executionBridge.getSnapshot(limit);
+    }
+    return {
+      timestamp: Date.now(),
+      recentAudits: [],
+      activeTransfers: []
+    };
+  }
+
+  async openMonitor(input: {
+    target: 'hardware' | 'agent_execution';
+    serverId?: string;
+    mode?: 'float' | 'hud';
+  }): Promise<{ opened: boolean; target: string; serverId?: string; mode: string }> {
+    const mode = input.mode ?? 'float';
+    let targetServerId = input.serverId;
+    if (!targetServerId && input.target === 'hardware') {
+      try {
+        const srv = await this.resolveServer(undefined);
+        targetServerId = srv.id;
+      } catch {}
+    }
+    if (this.dependencies.broadcastMonitor) {
+      this.dependencies.broadcastMonitor('monitor-control', {
+        action: 'open',
+        target: input.target,
+        serverId: targetServerId,
+        mode
+      });
+    }
+    return {
+      opened: true,
+      target: input.target,
+      serverId: targetServerId,
+      mode
+    };
   }
 
   async sftpListDirectory(input: {
@@ -146,7 +258,35 @@ export class AgentToolService {
     maxBytes?: number;
     offset?: number;
   }) {
-    return await this.requireSftp().readFile(input);
+    const transferId = `read-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const filename = input.path.split('/').pop() || input.path;
+    this.dependencies.executionBridge?.updateTransfer({
+      id: transferId,
+      filename,
+      type: 'download',
+      progressPercent: 30,
+      bytesPerSec: 1024 * 50
+    });
+    try {
+      const res = await this.requireSftp().readFile(input);
+      this.dependencies.executionBridge?.completeTransfer(transferId);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_read_file',
+        command: `read ${input.path}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.completeTransfer(transferId);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_read_file',
+        command: `read ${input.path}`,
+        reasonCode: 'denied',
+        serverId: input.serverId
+      });
+      throw error;
+    }
   }
 
   async sftpWriteFile(input: {
@@ -156,23 +296,119 @@ export class AgentToolService {
     content: string;
     overwrite?: boolean;
   }) {
-    return await this.requireSftp().writeFile(input);
+    const transferId = `write-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const filename = input.path.split('/').pop() || input.path;
+    this.dependencies.executionBridge?.updateTransfer({
+      id: transferId,
+      filename,
+      type: 'upload',
+      progressPercent: 50,
+      bytesPerSec: 1024 * 50
+    });
+    try {
+      const res = await this.requireSftp().writeFile(input);
+      this.dependencies.executionBridge?.completeTransfer(transferId);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_write_file',
+        command: `write ${input.path}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.completeTransfer(transferId);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_write_file',
+        command: `write ${input.path}`,
+        reasonCode: 'denied',
+        serverId: input.serverId
+      });
+      throw error;
+    }
   }
 
   async sftpCreateFile(input: { terminalId?: string; serverId?: string; path: string; content?: string }) {
-    return await this.requireSftp().createFile(input);
+    try {
+      const res = await this.requireSftp().createFile(input);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_create_file',
+        command: `create ${input.path}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_create_file',
+        command: `create ${input.path}`,
+        reasonCode: 'denied',
+        serverId: input.serverId
+      });
+      throw error;
+    }
   }
 
   async sftpCreateDirectory(input: { terminalId?: string; serverId?: string; path: string }) {
-    return await this.requireSftp().createDirectory(input);
+    try {
+      const res = await this.requireSftp().createDirectory(input);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_create_directory',
+        command: `mkdir ${input.path}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_create_directory',
+        command: `mkdir ${input.path}`,
+        reasonCode: 'denied',
+        serverId: input.serverId
+      });
+      throw error;
+    }
   }
 
   async sftpRename(input: { terminalId?: string; serverId?: string; path: string; newPath: string }) {
-    return await this.requireSftp().rename(input);
+    try {
+      const res = await this.requireSftp().rename(input);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_rename',
+        command: `rename ${input.path} -> ${input.newPath}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_rename',
+        command: `rename ${input.path} -> ${input.newPath}`,
+        reasonCode: 'denied',
+        serverId: input.serverId
+      });
+      throw error;
+    }
   }
 
   async sftpDelete(input: { terminalId?: string; serverId?: string; path: string }) {
-    return await this.requireSftp().deleteFile(input);
+    try {
+      const res = await this.requireSftp().deleteFile(input);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_delete',
+        command: `delete ${input.path}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_delete',
+        command: `delete ${input.path}`,
+        reasonCode: 'denied',
+        serverId: input.serverId
+      });
+      throw error;
+    }
   }
 
   private async resolveServer(serverId: string | undefined): Promise<ServerConfig> {

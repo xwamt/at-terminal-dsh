@@ -38,6 +38,7 @@ export interface TerminalViewProps {
   encoding: string | undefined;
   hooks: TerminalEngineHooks;
   onEngine(engine: TerminalEngine | null): void;
+  onOpenMonitor?(): void;
 }
 
 function statusText(t: Translate, termState: TerminalSessionState): string {
@@ -179,6 +180,20 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
             t('terminal.connect')
           ),
       h('div', { className: 'att-spacer' }),
+      props.onOpenMonitor
+        ? h(
+            'button',
+            {
+              type: 'button',
+              className: 'att-nav-btn',
+              title: t('monitor.title'),
+              'aria-label': t('monitor.title'),
+              onClick: props.onOpenMonitor,
+              'data-at-terminal-action': 'term-monitor'
+            },
+            '📊'
+          )
+        : null,
       /**
        * No 「新建终端」 button here any more.
        *

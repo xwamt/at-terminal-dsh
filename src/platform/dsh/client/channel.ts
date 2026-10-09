@@ -10,7 +10,12 @@
  * fails diagnosably on neither.
  */
 
-import { rpcError } from './models';
+import {
+  type AgentExecutionSnapshot,
+  type HardwareMetrics,
+  type MonitorControlMessage,
+  rpcError
+} from './models';
 
 /** The channel's route prefix, mirroring `dsh/channel.js`'s `PREFIX`. */
 export const CHANNEL_PREFIX = '/dsh-at-terminal';
@@ -20,31 +25,26 @@ export const KIND = 'at-terminal';
 
 /**
  * The second tab kind: **one live terminal**, its file tree, and nothing else.
- *
- * Two kinds rather than one kind with a page flag, because the two tabs differ in every
- * property the registry cares about:
- *
- * | | 资产 (`KIND`) | 终端 (`KIND_SESSION`) |
- * |---|---|---|
- * | instances | **one per pane** — it is a manager, and two copies of the same list is a bug a user can see | **one per connection** (`multiple: true`) |
- * | guide entry | yes — it is what the column opens by default | **no** — reached by double-clicking a row, and a nameless entry there would only open an empty tab |
- * | lifetime | the plugin's | tied to a session in `sessions.ts`, with a close handler and a reaper |
- *
- * A single kind could not express the first two at once: `multiple` is per definition, and the
- * guide list is read off the registered types.
  */
 export const KIND_SESSION = 'at-terminal-session';
+
+/**
+ * The third tab kind: **monitor floating pane** for hardware metrics & agent status.
+ */
+export const KIND_MONITOR = 'at-terminal-monitor';
 
 /** This implementation's identity, and the key the tab-type registry holds it under. */
 export const ID = '@at-series/dsh-at-terminal';
 
 /**
  * The session kind's registry id, and therefore the slot key its body and chip register under.
- *
- * The key is the definition's `id`, not its kind (`entryKey: definition?.id ?? tab.kind`), so a
- * second type needs a second id or both seats would resolve to whichever registered last.
  */
 export const ID_SESSION = '@at-series/dsh-at-terminal/session';
+
+/**
+ * The monitor kind's registry id, and slot key for monitor body and chip.
+ */
+export const ID_MONITOR = '@at-series/dsh-at-terminal/monitor';
 
 let requestSeq = 0;
 
@@ -181,6 +181,46 @@ export async function callRpc(
     );
   }
   return body.result;
+}
+
+/** Fetch real-time hardware metrics from the Host. */
+export async function getHardwareMetricsRpc(serverId?: string): Promise<HardwareMetrics> {
+  return (await callRpc('monitor.metrics.get', { serverId })) as HardwareMetrics;
+}
+
+/** Fetch agent execution status snapshot from the Host. */
+export async function getAgentExecutionStatusRpc(limit?: number): Promise<AgentExecutionSnapshot> {
+  return (await callRpc('monitor.agent.get', { limit })) as AgentExecutionSnapshot;
+}
+
+/** Send monitor control command to all clients. */
+export async function sendMonitorControlRpc(params: MonitorControlMessage): Promise<void> {
+  await callRpc('monitor.control', params as unknown as Record<string, unknown>);
+}
+
+/**
+ * Listen for `monitor-control` SSE events pushed by Host or Agent.
+ */
+export function listenMonitorEvents(
+  onControl: (message: MonitorControlMessage) => void
+): () => void {
+  if (typeof EventSource === 'undefined') return () => {};
+  try {
+    const es = new EventSource(`${CHANNEL_PREFIX}/events`);
+    const handler = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        onControl(data);
+      } catch {}
+    };
+    es.addEventListener('monitor-control', handler as EventListener);
+    return () => {
+      es.removeEventListener('monitor-control', handler as EventListener);
+      es.close();
+    };
+  } catch {
+    return () => {};
+  }
 }
 
 /**

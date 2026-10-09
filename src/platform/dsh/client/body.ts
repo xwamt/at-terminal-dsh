@@ -67,23 +67,10 @@ export const BodyLocale = React.createContext<Translate>((key) => key);
 
 /** What `apply` lends a body beyond copy: the one action a body cannot perform itself. */
 export interface BodyExtras {
-  /**
-   * Ask the frame for a **terminal tab for one named server**.
-   *
-   * A body has no route to the frame — `ctx` lives in `apply` — so the capability is handed in as
-   * a prop rather than reached for. Injected **first** so a framework prop (`useTabInfo`,
-   * `useStore`, …) always wins over ours: the framework's view of a tab is authoritative and must
-   * not be shadowed by a same-named key of ours.
-   *
-   * `serverId` is required, and that is the whole point of the signature: the frame's `openTab`
-   * can only open a tab, it cannot put anything *in* it (`params` is the only channel, and a body
-   * is what reads it). A nameless call is how the old 「新建终端」 button landed the user on an
-   * empty tab that read as a button which did nothing.
-   *
-   * Returns whether the frame accepted the request. It throws when no session surface is mounted
-   * to place a tab into, and the caller must say so rather than leave a double-click silent.
-   */
-  openSessionTab: (serverId: string) => boolean;
+  openSessionTab?: (serverId: string) => boolean;
+  openMonitorTab?: (options?: { serverId?: string; target?: 'hardware' | 'agent_execution'; mode?: 'float' | 'hud' }) => boolean;
+  onFloat?: (tabId: string) => void;
+  [key: string]: unknown;
 }
 
 /**
@@ -91,13 +78,13 @@ export interface BodyExtras {
  *
  * `extras` are merged **before** `props`, never after — see `BodyExtras`.
  */
-export function wrapWithLocale(
-  Component: (props: Record<string, unknown>) => ReactElement,
+export function wrapWithLocale<P = any>(
+  Component: (props: P) => any,
   t: Translate,
   extras: BodyExtras = { openSessionTab: () => false }
 ): (props: Record<string, unknown>) => ReactElement {
   return function LocaleBoundBody(props: Record<string, unknown>): ReactElement {
-    return h(BodyLocale.Provider, { value: t }, h(Component, { ...extras, ...props }));
+    return h(BodyLocale.Provider, { value: t }, h(Component as any, { t, ...extras, ...props }));
   };
 }
 
@@ -425,6 +412,11 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
       ? (props.openSessionTab as (serverId: string) => boolean)
       : () => false;
 
+  const openMonitorTab =
+    typeof props.openMonitorTab === 'function'
+      ? (props.openMonitorTab as (options?: { serverId?: string; target?: 'hardware' | 'agent_execution' }) => boolean)
+      : undefined;
+
   const [formOpen, setFormOpen] = React.useState(false);
   const [dialog, setDialog] = React.useState<'none' | 'import' | 'export'>('none');
   const [menu, setMenu] = React.useState<MenuState | null>(null);
@@ -725,6 +717,9 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         setServersRevision((value) => value + 1);
         setSummaryRevision((value) => value + 1);
       },
+      onOpenMonitor: openMonitorTab
+        ? (server) => openMonitorTab({ serverId: text(server.id), target: 'hardware' })
+        : undefined,
       collapsedGroups,
       onToggleGroup: (groupKey: string) => {
         setCollapsedGroups((prev) =>
@@ -799,6 +794,14 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         // body has no terminal to connect *in*. The label says so rather than promising a
         // connection that would have nowhere to appear.
         item('connect', 'menu.connect', () => openAssetInSessionTab(menu.server)),
+        ...(openMonitorTab
+          ? [
+              item('monitor', 'monitor.title', () => {
+                setMenu(null);
+                openMonitorTab({ serverId: text(menu.server.id), target: 'hardware' });
+              })
+            ]
+          : []),
         item('edit', 'menu.edit', () => {
           setMenu(null);
           startEdit(menu.server);
