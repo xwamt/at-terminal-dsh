@@ -61,10 +61,12 @@ export interface MonitorHudWidgetProps {
   onOpenPane: (target: 'hardware' | 'agent_execution') => void;
   onCloseHud?: () => void;
   forceExpanded?: boolean;
+  activeServerId?: string | null;
+  activeLabel?: string | null;
 }
 
 export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
-  const { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded } = props;
+  const { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded, activeServerId, activeLabel } = props;
   const [expanded, setExpanded] = useState(Boolean(forceExpanded));
   const [activeTab, setActiveTab] = useState<'overview' | 'hardware' | 'agent'>('overview');
   const [pos, setPos] = useState<{ x: number; y: number }>(() => loadSavedPosition());
@@ -222,6 +224,16 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
         },
         h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, '⠿'),
         h('span', { 'aria-hidden': true }, '📊'),
+        (activeLabel || activeServerId) &&
+          h(
+            'span',
+            {
+              className: 'att-hud-pill-chip',
+              title: `${t('monitor.server')}${activeLabel || activeServerId}`,
+              style: { maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+            },
+            `🖥️ ${activeLabel || activeServerId}`
+          ),
         h(
           'span',
           { className: 'att-hud-pill-chip' },
@@ -357,6 +369,38 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 },
                 '✕'
               )
+          )
+        ),
+
+        // Target Server Indicator
+        h(
+          'div',
+          {
+            style: {
+              padding: '4px 12px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              color: 'var(--dsw-alias-label-secondary)',
+              background: 'color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent)',
+              borderBottom: '1px solid var(--dsw-alias-border-l1)'
+            }
+          },
+          h('span', { 'aria-hidden': true }, '🖥️'),
+          h('span', null, t('monitor.server')),
+          h(
+            'span',
+            {
+              style: {
+                color: 'var(--dsw-alias-label-primary)',
+                fontWeight: 600,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }
+            },
+            activeLabel || activeServerId || metrics?.serverId || 'Default'
           )
         ),
 

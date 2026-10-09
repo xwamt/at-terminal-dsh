@@ -9634,9 +9634,46 @@ window.__ModuleLoader__.load({
     // src/platform/dsh/client/sessions.ts
     var TERMINAL_ID = "at-terminal-pane", RETAIN_LIMIT_BYTES = 4 * 1024 * 1024, RETAIN_LIMIT_CHUNKS = 2e4, RESET_BYTES = new Uint8Array(
       [..."\x1B[0m\x1B[2J\x1B[3J\x1B[H"].map((char) => char.charCodeAt(0))
-    ), sessions = /* @__PURE__ */ new Map();
+    ), sessions = /* @__PURE__ */ new Map(), activeSessionKey = null, lastKnownConnectedServerId = null, lastKnownConnectedLabel = null, activeTerminalListeners = /* @__PURE__ */ new Set();
+    function getActiveTerminalState() {
+      let active = activeSessionKey ? sessions.get(activeSessionKey) : null, allSessions = Array.from(sessions.values()), hasAnyConnected = allSessions.some((s) => s.state.kind === "connected");
+      if (active && active.state.kind === "connected")
+        lastKnownConnectedServerId = active.serverId, lastKnownConnectedLabel = badges.get(active.key)?.label || active.serverId;
+      else if (!active && hasAnyConnected) {
+        let connectedSession = allSessions.find((s) => s.state.kind === "connected");
+        connectedSession && (active = connectedSession, lastKnownConnectedServerId = connectedSession.serverId, lastKnownConnectedLabel = badges.get(connectedSession.key)?.label || connectedSession.serverId);
+      }
+      let activeKey = active?.key ?? (hasAnyConnected ? allSessions.find((s) => s.state.kind === "connected")?.key ?? null : null), activeServerId = active?.serverId ?? lastKnownConnectedServerId, activeLabel = (activeKey ? badges.get(activeKey)?.label : null) ?? lastKnownConnectedLabel, isConnected = !!(active && active.state.kind === "connected");
+      return {
+        activeKey,
+        activeServerId,
+        activeLabel,
+        isConnected,
+        hasAnyConnected
+      };
+    }
+    function subscribeActiveTerminal(listener) {
+      return activeTerminalListeners.add(listener), () => {
+        activeTerminalListeners.delete(listener);
+      };
+    }
+    function notifyActiveTerminal() {
+      let state = getActiveTerminalState();
+      for (let listener of activeTerminalListeners)
+        try {
+          listener(state);
+        } catch {
+        }
+    }
+    function markSessionActive(key) {
+      key && activeSessionKey !== key && (activeSessionKey = key, notifyActiveTerminal());
+    }
+    function unmarkSessionActive(key) {
+      key && activeSessionKey === key && (activeSessionKey = null, notifyActiveTerminal());
+    }
     function notify(session) {
       for (let listener of session.listeners) listener();
+      notifyActiveTerminal();
     }
     var badges = /* @__PURE__ */ new Map(), badgeListeners = /* @__PURE__ */ new Set();
     function publishTabBadge(key, badge) {
@@ -9645,11 +9682,14 @@ window.__ModuleLoader__.load({
       if (!(current !== void 0 && current.label === badge.label && current.kind === badge.kind)) {
         badges.set(key, badge);
         for (let listener of badgeListeners) listener();
+        notifyActiveTerminal();
       }
     }
     function clearTabBadge(key) {
-      if (!(key === "" || !badges.delete(key)))
+      if (!(key === "" || !badges.delete(key))) {
         for (let listener of badgeListeners) listener();
+        notifyActiveTerminal();
+      }
     }
     function useTabBadge(key) {
       let [, bump] = import_react.default.useReducer((value) => value + 1, 0);
@@ -9772,7 +9812,7 @@ window.__ModuleLoader__.load({
           null
         ), sessions.delete(key), teardown(session, notifyHost), clearTabBadge(key);
         for (let listener of session.listeners) listener();
-        session.listeners.clear();
+        session.listeners.clear(), notifyActiveTerminal();
       }
     }
     function disposeAllSessions(why = "unload") {
@@ -12735,7 +12775,9 @@ window.__ModuleLoader__.load({
       let t = import_react5.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
       import_react5.default.useEffect(() => {
         retainSessionSignal(session, signal);
-      }, [session, signal]);
+      }, [session, signal]), import_react5.default.useEffect(() => (markSessionActive(key), () => {
+        unmarkSessionActive(key);
+      }), [key]);
       let requested = requestedServerId(params);
       import_react5.default.useEffect(() => {
         if (requested !== "") {
@@ -13863,7 +13905,7 @@ window.__ModuleLoader__.load({
         }
     }
     function MonitorHudWidget(props) {
-      let { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react7.useState)("overview"), [pos, setPos] = (0, import_react7.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react7.useState)(!1), isDraggingRef = (0, import_react7.useRef)(!1), dragStateRef = (0, import_react7.useRef)(null);
+      let { t, metrics, snapshot, onOpenPane, onCloseHud, forceExpanded, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react7.useState)("overview"), [pos, setPos] = (0, import_react7.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react7.useState)(!1), isDraggingRef = (0, import_react7.useRef)(!1), dragStateRef = (0, import_react7.useRef)(null);
       (0, import_react7.useEffect)(() => {
         forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
       }, [forceExpanded]), (0, import_react7.useEffect)(() => {
@@ -13949,6 +13991,15 @@ window.__ModuleLoader__.load({
           },
           h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
           h("span", { "aria-hidden": !0 }, "\u{1F4CA}"),
+          (activeLabel || activeServerId) && h(
+            "span",
+            {
+              className: "att-hud-pill-chip",
+              title: `${t("monitor.server")}${activeLabel || activeServerId}`,
+              style: { maxWidth: "110px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+            },
+            `\u{1F5A5}\uFE0F ${activeLabel || activeServerId}`
+          ),
           h(
             "span",
             { className: "att-hud-pill-chip" },
@@ -14073,6 +14124,37 @@ window.__ModuleLoader__.load({
                 },
                 "\u2715"
               )
+            )
+          ),
+          // Target Server Indicator
+          h(
+            "div",
+            {
+              style: {
+                padding: "4px 12px",
+                fontSize: "11px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                color: "var(--dsw-alias-label-secondary)",
+                background: "color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent)",
+                borderBottom: "1px solid var(--dsw-alias-border-l1)"
+              }
+            },
+            h("span", { "aria-hidden": !0 }, "\u{1F5A5}\uFE0F"),
+            h("span", null, t("monitor.server")),
+            h(
+              "span",
+              {
+                style: {
+                  color: "var(--dsw-alias-label-primary)",
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap"
+                }
+              },
+              activeLabel || activeServerId || metrics?.serverId || "Default"
             )
           ),
           // Subtabs Navigation Bar
@@ -16512,7 +16594,7 @@ window.__ModuleLoader__.load({
       );
     }
     function MonitorHudContainer(props) {
-      let { t, onOpenPane, onRegisterController } = props, [metrics, setMetrics] = (0, import_react8.useState)(null), [snapshot, setSnapshot] = (0, import_react8.useState)(null), [visible, setVisible] = (0, import_react8.useState)(!0), [forceExpanded, setForceExpanded] = (0, import_react8.useState)(void 0);
+      let { t, onOpenPane, onRegisterController } = props, [metrics, setMetrics] = (0, import_react8.useState)(null), [snapshot, setSnapshot] = (0, import_react8.useState)(null), [visible, setVisible] = (0, import_react8.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react8.useState)(null), [activeLabel, setActiveLabel] = (0, import_react8.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react8.useState)(void 0);
       return (0, import_react8.useEffect)(() => {
         if (onRegisterController)
           return onRegisterController({
@@ -16523,15 +16605,22 @@ window.__ModuleLoader__.load({
               setForceExpanded(!1);
             },
             toggle: () => {
-              setVisible(!0), setForceExpanded((prev) => !prev);
+              setVisible((prev) => !prev);
             }
           }), () => {
             onRegisterController(null);
           };
       }, [onRegisterController]), (0, import_react8.useEffect)(() => {
+        let handleActiveTerminal = (state) => {
+          setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? setVisible(!0) : setVisible(!1);
+        }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
+        return handleActiveTerminal(getActiveTerminalState()), () => {
+          unsubscribe();
+        };
+      }, []), (0, import_react8.useEffect)(() => {
         let unmounted = !1, fetchLatest = () => {
           Promise.all([
-            getHardwareMetricsRpc().catch(() => null),
+            getHardwareMetricsRpc(activeServerId || void 0).catch(() => null),
             getAgentExecutionStatusRpc(5).catch(() => null)
           ]).then(([m, s]) => {
             unmounted || (m && setMetrics(m), s && setSnapshot(s));
@@ -16542,12 +16631,14 @@ window.__ModuleLoader__.load({
         return () => {
           unmounted = !0, clearInterval(interval);
         };
-      }, []), visible ? h(MonitorHudWidget, {
+      }, [activeServerId]), visible ? h(MonitorHudWidget, {
         t,
         metrics,
         snapshot,
         forceExpanded,
-        onOpenPane,
+        activeServerId,
+        activeLabel,
+        onOpenPane: (target) => onOpenPane(target, activeServerId || void 0),
         onCloseHud: () => setVisible(!1)
       }) : null;
     }
@@ -16671,8 +16762,8 @@ window.__ModuleLoader__.load({
           () => ctx.slots.register(
             { name: "shell.overlay", id: "@at-series/dsh-at-terminal/monitor-hud", locale: NS },
             wrapWithLocale(MonitorHudContainer, t, {
-              onOpenPane: (target) => {
-                openMonitorTab({ target, mode: "float" });
+              onOpenPane: (target, serverId) => {
+                openMonitorTab({ target, serverId, mode: "float" });
               },
               onRegisterController: (ctrl) => {
                 hudController = ctrl;

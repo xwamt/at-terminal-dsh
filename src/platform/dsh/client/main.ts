@@ -47,7 +47,15 @@ import { AtTerminalBody, AtTerminalTitle, wrapWithLocale } from './body';
 import { AtTerminalSessionBody } from './body-session';
 import { AtTerminalMonitorBody, AtTerminalMonitorTitle } from './views/monitorPane';
 import { MonitorHudWidget } from './views/monitorHud';
-import { disposeAllSessions, disposeSession, retainSessions, stashSessionSeed } from './sessions';
+import {
+  disposeAllSessions,
+  disposeSession,
+  retainSessions,
+  stashSessionSeed,
+  subscribeActiveTerminal,
+  getActiveTerminalState,
+  type ActiveTerminalState
+} from './sessions';
 import { ensureStyles } from './styles';
 import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
@@ -480,13 +488,15 @@ interface HudController {
 
 function MonitorHudContainer(props: {
   t: Translate;
-  onOpenPane: (target: 'hardware' | 'agent_execution') => void;
+  onOpenPane: (target: 'hardware' | 'agent_execution', serverId?: string) => void;
   onRegisterController?: (ctrl: HudController | null) => void;
 }) {
   const { t, onOpenPane, onRegisterController } = props;
   const [metrics, setMetrics] = useState<HardwareMetrics | null>(null);
   const [snapshot, setSnapshot] = useState<AgentExecutionSnapshot | null>(null);
-  const [visible, setVisible] = useState<boolean>(true);
+  const [visible, setVisible] = useState<boolean>(false);
+  const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [forceExpanded, setForceExpanded] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
@@ -500,8 +510,7 @@ function MonitorHudContainer(props: {
           setForceExpanded(false);
         },
         toggle: () => {
-          setVisible(true);
-          setForceExpanded((prev) => !prev);
+          setVisible((prev) => !prev);
         }
       });
       return () => {
@@ -510,11 +519,30 @@ function MonitorHudContainer(props: {
     }
   }, [onRegisterController]);
 
+  // Synchronize with active connected terminal session
+  useEffect(() => {
+    const handleActiveTerminal = (state: ActiveTerminalState) => {
+      setActiveServerId(state.activeServerId);
+      setActiveLabel(state.activeLabel);
+      if (state.hasAnyConnected) {
+        setVisible(true);
+      } else {
+        setVisible(false);
+      }
+    };
+    const unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
+    handleActiveTerminal(getActiveTerminalState());
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Poll metrics for current activeServerId
   useEffect(() => {
     let unmounted = false;
     const fetchLatest = () => {
       Promise.all([
-        getHardwareMetricsRpc().catch(() => null),
+        getHardwareMetricsRpc(activeServerId || undefined).catch(() => null),
         getAgentExecutionStatusRpc(5).catch(() => null)
       ]).then(([m, s]) => {
         if (!unmounted) {
@@ -529,7 +557,7 @@ function MonitorHudContainer(props: {
       unmounted = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [activeServerId]);
 
   if (!visible) return null;
 
@@ -538,7 +566,9 @@ function MonitorHudContainer(props: {
     metrics,
     snapshot,
     forceExpanded,
-    onOpenPane,
+    activeServerId,
+    activeLabel,
+    onOpenPane: (target: 'hardware' | 'agent_execution') => onOpenPane(target, activeServerId || undefined),
     onCloseHud: () => setVisible(false)
   });
 }
@@ -826,8 +856,8 @@ export function apply(ctx: ClientContext): void {
         ctx.slots.register(
           { name: 'shell.overlay', id: '@at-series/dsh-at-terminal/monitor-hud', locale: NS },
           wrapWithLocale(MonitorHudContainer, t, {
-            onOpenPane: (target: 'hardware' | 'agent_execution') => {
-              openMonitorTab({ target, mode: 'float' });
+            onOpenPane: (target: 'hardware' | 'agent_execution', serverId?: string) => {
+              openMonitorTab({ target, serverId, mode: 'float' });
             },
             onRegisterController: (ctrl: HudController | null) => {
               hudController = ctrl;

@@ -175,9 +175,86 @@ export interface TerminalSession {
 
 const sessions = new Map<string, TerminalSession>();
 
+/* -------------------------- active terminal tracking ----------------------- */
+
+export interface ActiveTerminalState {
+  activeKey: string | null;
+  activeServerId: string | null;
+  activeLabel: string | null;
+  isConnected: boolean;
+  hasAnyConnected: boolean;
+}
+
+let activeSessionKey: string | null = null;
+let lastKnownConnectedServerId: string | null = null;
+let lastKnownConnectedLabel: string | null = null;
+const activeTerminalListeners = new Set<(info: ActiveTerminalState) => void>();
+
+export function getActiveTerminalState(): ActiveTerminalState {
+  let active = activeSessionKey ? sessions.get(activeSessionKey) : null;
+  const allSessions = Array.from(sessions.values());
+  const hasAnyConnected = allSessions.some((s) => s.state.kind === 'connected');
+
+  if (active && active.state.kind === 'connected') {
+    lastKnownConnectedServerId = active.serverId;
+    lastKnownConnectedLabel = badges.get(active.key)?.label || active.serverId;
+  } else if (!active && hasAnyConnected) {
+    const connectedSession = allSessions.find((s) => s.state.kind === 'connected');
+    if (connectedSession) {
+      active = connectedSession;
+      lastKnownConnectedServerId = connectedSession.serverId;
+      lastKnownConnectedLabel = badges.get(connectedSession.key)?.label || connectedSession.serverId;
+    }
+  }
+
+  const activeKey = active?.key ?? (hasAnyConnected ? (allSessions.find((s) => s.state.kind === 'connected')?.key ?? null) : null);
+  const activeServerId = active?.serverId ?? lastKnownConnectedServerId;
+  const activeLabel = (activeKey ? badges.get(activeKey)?.label : null) ?? lastKnownConnectedLabel;
+  const isConnected = Boolean(active && active.state.kind === 'connected');
+
+  return {
+    activeKey,
+    activeServerId,
+    activeLabel,
+    isConnected,
+    hasAnyConnected
+  };
+}
+
+export function subscribeActiveTerminal(listener: (info: ActiveTerminalState) => void): () => void {
+  activeTerminalListeners.add(listener);
+  return () => {
+    activeTerminalListeners.delete(listener);
+  };
+}
+
+export function notifyActiveTerminal(): void {
+  const state = getActiveTerminalState();
+  for (const listener of activeTerminalListeners) {
+    try {
+      listener(state);
+    } catch {}
+  }
+}
+
+export function markSessionActive(key: string): void {
+  if (key && activeSessionKey !== key) {
+    activeSessionKey = key;
+    notifyActiveTerminal();
+  }
+}
+
+export function unmarkSessionActive(key: string): void {
+  if (key && activeSessionKey === key) {
+    activeSessionKey = null;
+    notifyActiveTerminal();
+  }
+}
+
 /** Wake every mounted view of one session. Cheap; views that changed nothing re-render anyway. */
 function notify(session: TerminalSession): void {
   for (const listener of session.listeners) listener();
+  notifyActiveTerminal();
 }
 
 /* ---------------------------------- badges ---------------------------------- */
@@ -213,6 +290,7 @@ export function publishTabBadge(key: string, badge: TabBadge): void {
   if (current !== undefined && current.label === badge.label && current.kind === badge.kind) return;
   badges.set(key, badge);
   for (const listener of badgeListeners) listener();
+  notifyActiveTerminal();
 }
 
 /**
@@ -225,6 +303,7 @@ export function publishTabBadge(key: string, badge: TabBadge): void {
 export function clearTabBadge(key: string): void {
   if (key === '' || !badges.delete(key)) return;
   for (const listener of badgeListeners) listener();
+  notifyActiveTerminal();
 }
 
 /** The chip's live view of one tab. Subscribing is what re-renders it on a change. */
@@ -498,6 +577,7 @@ export function disposeSession(key: string, notifyHost = true, why = 'unspecifie
   clearTabBadge(key);
   for (const listener of session.listeners) listener();
   session.listeners.clear();
+  notifyActiveTerminal();
 }
 
 /** Every session this page holds. Only the plugin's own teardown should need this. */

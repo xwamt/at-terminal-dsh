@@ -306,4 +306,69 @@ Swap:     2147483648           0  2147483648
       vi.unstubAllGlobals();
     });
   });
+
+  describe('Active Terminal Session Tracking & Dynamic Target Switching', () => {
+    it('only activates when connected to a terminal and switches target with active tab', async () => {
+      const {
+        ensureSession,
+        markSessionActive,
+        getActiveTerminalState,
+        subscribeActiveTerminal,
+        notifyActiveTerminal,
+        disposeAllSessions
+      } = await import('../../../../src/platform/dsh/client/sessions');
+
+      disposeAllSessions('test-reset');
+
+      // 1. Initial boot state: no connected terminal -> hasAnyConnected is false
+      expect(getActiveTerminalState().hasAnyConnected).toBe(false);
+
+      const stateUpdates: any[] = [];
+      const unsubscribe = subscribeActiveTerminal((st) => stateUpdates.push(st));
+
+      // 2. Open Tab 1 for srv-1
+      const sess1 = ensureSession('tab-1');
+      sess1.serverId = 'srv-1';
+      markSessionActive('tab-1');
+
+      // Not connected yet
+      expect(getActiveTerminalState().hasAnyConnected).toBe(false);
+
+      // Tab 1 becomes connected
+      sess1.state = { kind: 'connected', text: '' };
+      sess1.opened = true;
+      notifyActiveTerminal();
+
+      const stateConnected1 = getActiveTerminalState();
+      expect(stateConnected1.hasAnyConnected).toBe(true);
+      expect(stateConnected1.activeServerId).toBe('srv-1');
+
+      // 3. Open Tab 2 for srv-2 and switch active tab to Tab 2
+      const sess2 = ensureSession('tab-2');
+      sess2.serverId = 'srv-2';
+      sess2.state = { kind: 'connected', text: '' };
+      sess2.opened = true;
+
+      // Switch active tab to Tab 2
+      markSessionActive('tab-2');
+      const stateTab2 = getActiveTerminalState();
+      expect(stateTab2.activeKey).toBe('tab-2');
+      expect(stateTab2.activeServerId).toBe('srv-2');
+
+      // 4. Switch back to Tab 1
+      markSessionActive('tab-1');
+      const stateTab1Again = getActiveTerminalState();
+      expect(stateTab1Again.activeKey).toBe('tab-1');
+      expect(stateTab1Again.activeServerId).toBe('srv-1');
+
+      // 5. When all sessions disconnect
+      sess1.state = { kind: 'disconnected', text: '' };
+      sess2.state = { kind: 'disconnected', text: '' };
+      notifyActiveTerminal();
+      expect(getActiveTerminalState().hasAnyConnected).toBe(false);
+
+      unsubscribe();
+      disposeAllSessions('test-cleanup');
+    });
+  });
 });

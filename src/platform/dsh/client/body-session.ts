@@ -57,6 +57,7 @@ import {
   detachEngine,
   disconnectSession,
   forgetSessionHost,
+  markSessionActive,
   maybeAutoConnect,
   publishTabBadge,
   refusedHostKey,
@@ -68,6 +69,7 @@ import {
   setSessionTarget,
   takeSessionSeed,
   trustSessionHost,
+  unmarkSessionActive,
   useSession,
   type SessionPage,
   type TerminalSession
@@ -136,6 +138,14 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   React.useEffect(() => {
     retainSessionSignal(session, signal);
   }, [session, signal]);
+
+  // Mark this session as active foreground tab while this body is mounted
+  React.useEffect(() => {
+    markSessionActive(key);
+    return () => {
+      unmarkSessionActive(key);
+    };
+  }, [key]);
 
   /**
    * Adopt what this tab was opened for.
