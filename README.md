@@ -54,18 +54,33 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 
 ### Installation & Setup
 
-#### Installing via DSH CLI
+#### Method 1: Installing via DSH CLI (Recommended)
+You can directly install the plugin using DeepSeek Harness's CLI:
 ```sh
-dsh plugin add github:<owner>/at-terminal-dsh
-```
+# Install under default/current profile
+dsh plugin add github:xwamt/at-terminal-dsh
 
-#### Installing via DSH Desktop UI
+# Or install explicitly to desktop profile
+dsh plugin --profile desktop add github:xwamt/at-terminal-dsh
+
+# Or install explicitly to web profile
+dsh plugin --profile web add github:xwamt/at-terminal-dsh
+```
+*Note: Harness will automatically clone the repository, read the `dsh.bundle` manifest from `package.json`, and insert the `cordis.patch.yml` layer into your profile.*
+
+#### Method 2: Installing via DSH Desktop UI (Local Bundle)
 1. Launch DeepSeek Harness Desktop.
 2. Open **Settings -> Plugin Manager**.
 3. Select **Install Local Bundle** (从本地路径安装).
 4. Enter the absolute path to the bundle directory:  
    `/path/to/at-terminal-dsh/dsh`
-5. Restart DeepSeek Harness to load the host runtime.
+5. Restart DeepSeek Harness to load the host runtime and tools.
+
+#### Method 3: One-Click Install via dsh-market (Community Marketplace)
+This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin):
+1. Open the **dsh-market** plugin inside DeepSeek Harness Settings.
+2. Navigate to the **Remote** category or search for `at-terminal-dsh`.
+3. Click **Install** for one-click installation and automatic configuration.
 
 ### Direct Agent Tools List
 
@@ -177,14 +192,33 @@ npm run vendor:dsh
 #### 3. 安装插件到 DeepSeek Harness
 
 > [!IMPORTANT]
-> **安装方式**：
-> 1. **命令行直接添加**：
->    ```sh
->    dsh plugin add github:<owner>/at-terminal-dsh
->    ```
-> 2. **桌面端本地安装**：打开 **设置 -> 插件管理 -> 安装本地插件**，输入绝对路径：  
+> **三种安装方式**：
+>
+> **方式一：通过 DSH 命令行一键添加（最推荐，任意设备通用）**
+> ```sh
+> # 默认/当前配置下安装
+> dsh plugin add github:xwamt/at-terminal-dsh
+>
+> # 或指定 desktop 桌面配置文件安装
+> dsh plugin --profile desktop add github:xwamt/at-terminal-dsh
+>
+> # 或指定 web 配置文件安装
+> dsh plugin --profile web add github:xwamt/at-terminal-dsh
+> ```
+> *说明：Harness 会自动拉取 GitHub 仓库，读取 `package.json` 中的 `dsh.bundle` 清单并自动将 `cordis.patch.yml` 注入到当前 Profile 中。*
+>
+> **方式二：桌面端本地目录加载（适合本机开发与即时生效）**
+> 1. 打开 DeepSeek Harness 客户端；
+> 2. 进入 **设置 -> 插件管理 -> 安装本地插件 / 导入本地包**；
+> 3. 填写本机的 Bundle 绝对路径：  
 >    `/path/to/at-terminal-dsh/dsh`  
->    *(安装完成后重启 DSH 即可生效)*
+> 4. 安装完成后彻底重启 DSH 即可生效。
+>
+> **方式三：通过 dsh-market 社区插件市场一键安装**  
+> 本插件已提交至官方插件索引 [awesome-dsh-plugin (PR #7178)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7178)：
+> 1. 在 DeepSeek Harness 中打开 `dsh-market` 插件市场；
+> 2. 在 **Remote（远程与运维）** 分类下搜索 `at-terminal-dsh`；
+> 3. 点击 **安装** 按钮即可一键完成装载与自动配置。
 
 ---
 
@@ -203,16 +237,6 @@ skills/
 ```
 
 **跨 Agent 复用价值**：如果在 Claude Code、Codex、Cursor Agent、Antigravity 等其他 Agent 环境中开发任何 DSH 系列插件或扩展，可直接将本目录挂载给 Agent，作为编写 Cordis 插件与设计 Agent 直连工具的权威规范。
-
-### Agent Skills
-
-- [skills/at-terminal-mcp/SKILL.md](skills/at-terminal-mcp/SKILL.md): `$at-terminal-mcp`
-- [skills/writing-ops-documents/SKILL.md](skills/writing-ops-documents/SKILL.md): `$writing-ops-documents`
-
-```bash
-npx skills add xwamt/At-Terminal
-```
-注：Skills 不复制进 VSIX。
 
 
 ---
