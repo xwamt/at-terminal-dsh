@@ -34,6 +34,14 @@ import {
   type Translate
 } from '../models';
 import {
+  chevronDownRegular,
+  chevronRightRegular,
+  fileRegular,
+  folderRegular,
+  symlinkRegular,
+  warningTriangleRegular
+} from '../icons';
+import {
   h,
   navPanelId,
   navTabId,
@@ -256,7 +264,11 @@ function renderDisclosure(t: Translate, row: SftpRow, onToggle: (path: string) =
       title: row.expanded ? t('sftp.collapse') : t('sftp.expand'),
       onClick: () => onToggle(path)
     },
-    h('span', { 'aria-hidden': 'true' }, row.expanded ? '▾' : '▸')
+    h(
+      'span',
+      { 'aria-hidden': 'true' },
+      row.expanded ? chevronDownRegular({ size: 12 }) : chevronRightRegular({ size: 12 })
+    )
   );
 }
 
@@ -283,11 +295,23 @@ function failedRowPath(row: SftpRow): string {
   return row.key.endsWith(suffix) ? row.key.slice(0, -suffix.length) : row.key;
 }
 
-function glyph(row: SftpRow): string {
+/**
+ * The row's leading mark: a folder, a file, or a link.
+ *
+ * It used to return three characters — `↪`, `▣`, `·` — which is worth spelling out because each
+ * one failed differently: `▣` is a *box* (it says "checkbox" before it says "folder"), `·` is a
+ * middle dot that at 12px reads as dust rather than as a file, and `↪` is a return arrow rather
+ * than a link. All three also came from the ambient font, so their weight and bearing changed with
+ * the platform while the icons beside them did not.
+ *
+ * Returns an element rather than a string, which is why the caller no longer renders it as text.
+ */
+function rowGlyph(row: SftpRow): El | null {
   const entry = row.entry;
-  if (entry === undefined) return '';
-  if (entry.type === 'symlink') return '↪';
-  return entry.type === 'directory' ? '▣' : '·';
+  if (entry === undefined) return null;
+  if (entry.type === 'symlink') return symlinkRegular({ size: 14 });
+  if (entry.type === 'directory') return folderRegular({ size: 14 });
+  return fileRegular({ size: 14 });
 }
 
 /**
@@ -376,7 +400,11 @@ function renderRow(t: Translate, row: SftpRow, props: SftpViewProps, focusedKey:
         'data-at-terminal-sftp': 'failed',
         'data-at-terminal-sftp-code': code
       },
-      h('span', { className: 'att-tree-glyph', style: FAILURE_COLOR, 'aria-hidden': 'true' }, '⚠'),
+      h(
+        'span',
+        { className: 'att-tree-glyph', style: FAILURE_COLOR, 'aria-hidden': 'true' },
+        warningTriangleRegular({ size: 14 })
+      ),
       h('span', { className: 'att-tree-name', style: FAILURE_COLOR }, t(sftpDirFailureKey(code))),
       // A real `<button>`, which is what makes the retry reachable: the row itself is not a
       // tab stop (`sftpRowFocusable` excludes a read's state on purpose), so a control inside
@@ -439,7 +467,11 @@ function renderRow(t: Translate, row: SftpRow, props: SftpViewProps, focusedKey:
         onRowKeyDown(event, row, props)
     },
     renderDisclosure(t, row, props.onToggle),
-    h('span', { className: 'att-tree-glyph', 'aria-hidden': 'true' }, glyph(row)),
+    h(
+      'span',
+      { className: 'att-tree-glyph', 'aria-hidden': 'true' },
+      rowGlyph(row)
+    ),
     h('span', { className: 'att-tree-name' }, entry.name),
     h('span', { className: 'att-tree-meta', 'aria-hidden': 'true' }, sftpEntrySize(entry))
   );

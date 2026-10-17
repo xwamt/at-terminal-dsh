@@ -28,4 +28,18 @@ export { serverMedium, serverRegular } from './server';
 export { terminalMedium, terminalRegular } from './terminal';
 export { warningTriangleMedium, warningTriangleRegular } from './warningTriangle';
 
+/* ---- UI2-06: the glyphs the chrome was drawing with characters and emoji ---- */
+export { gaugeMedium, gaugeRegular } from './gauge';
+export {
+  chevronDownMedium,
+  chevronDownRegular,
+  chevronRightMedium,
+  chevronRightRegular,
+  chevronUpRegular,
+  type ChevronDirection
+} from './chevron';
+export { closeMedium, closeRegular, gripRegular } from './close';
+export { boltMedium, boltRegular, symlinkMedium, symlinkRegular } from './bolt';
+export { guideTerminalArtwork } from './artwork';
+
 export { MEDIUM_STROKE, REGULAR_STROKE, type IconOptions } from './frame';

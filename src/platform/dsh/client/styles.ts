@@ -169,10 +169,12 @@ function scopeSelectors(prelude: string, root: string): string {
  */
 const TOKEN_BRIDGE = `
 ${ROOT_SELECTOR} {
-  /* ---- Type. A font stack, not a colour decision: it carries no theme
-     meaning, which is why check 9 exempts this one by name. The panel sets
-     font-family once at the root and every descendant inherits it. */
-  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans", sans-serif;
+  /* ---- Type. The host's own UI font, named through its token so a user who set a family sees
+     it here too. It used to be a hand-written stack ending in a generic sans-serif fallback, which
+     meant the panel disagreed with every other pane the moment the host font was not the platform
+     default. A font is not a colour decision, which is why check 9 exempts this one by name; the
+     token is still a --dsw-* reference, so the gate is satisfied without needing the exemption. */
+  --vscode-font-family: var(--dsw-font-family);
 
   /* ---- Text. label-primary is the body tier and label-secondary the
      de-emphasized one (hints, field labels, addresses, status bar). The two
@@ -225,24 +227,34 @@ ${ROOT_SELECTOR} {
      dialog separates from the page it covers. */
   --vscode-widget-border: var(--dsw-alias-border-l4);
 
-  /* ---- The brand-filled button. Foreground is the one literal colour in the
-     bridge; hover is the same brand tinted toward white, so the fill lightens
-     in both themes instead of only in the dark one. */
+  /* ---- The brand-filled button. Foreground is tracked rather than literal: the brand fill is
+     near-black in light and near-white in dark, so only an inverted token can read on it in both.
+     Hover is that same fill tinted toward its own opposite, which is what makes a hover lighten in
+     both themes instead of only in the dark one. */
   --vscode-button-background: var(--dsw-alias-brand-primary);
   --vscode-button-foreground: var(--dsw-alias-label-primary-foreground);
   --vscode-button-hoverBackground: color-mix(in srgb, var(--dsw-alias-brand-primary) 82%, #ffffff);
   --vscode-button-secondaryHoverBackground: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 78%, var(--dsw-alias-label-primary));
-  --vscode-focusBorder: var(--dsw-alias-brand-primary);
+  /*
+   * The focus ring is the **business blue**, not the brand accent.
+   *
+   * The brand is near-black in light and near-white in dark, so a focus ring drawn in it is a
+   * one-pixel shade change on exactly the surfaces it has to be findable on, and it is invisible
+   * against a primary button — which is brand-filled. state-business-primary is the token the
+   * host paints its own focus rings with, and it is legible against both.
+   */
+  --vscode-focusBorder: var(--dsw-alias-state-business-primary);
   --vscode-progressBar-background: var(--dsw-alias-brand-primary);
 
   /* ---- Interactive states. Hover is the official hover token rather than a
      hand-mixed tint: it is exactly this question answered once, for the whole
-     product, in both themes. Selection stays a brand mix on purpose -- it is
-     the one state that has to read as "chosen", so it must outrank the neutral
-     hover rather than reuse it. */
+     product, in both themes. Selection used to be a 32% brand mix; it is now the host's own
+     'selected row' overlay, because a brand-tinted row in a list reads as a warning or a badge
+     rather than as "this one is selected", and because a brand-selected row is hard to
+     distinguish from a brand-filled button in the same column. */
   --vscode-list-hoverBackground: var(--dsw-alias-interactive-bg-hover);
   --vscode-toolbar-hoverBackground: var(--dsw-alias-interactive-bg-hover);
-  --vscode-list-activeSelectionBackground: color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, transparent);
+  --vscode-list-activeSelectionBackground: var(--dsw-alias-interactive-bg-active);
   /* RESERVED: hover landing on an already-selected row, so the pointer
      acknowledges a row that is both hovered and chosen. */
   --vscode-list-activeSelectionHoverBackground: var(--dsw-alias-interactive-bg-hover-accent);
@@ -281,10 +293,28 @@ ${ROOT_SELECTOR} {
   box-sizing: border-box;
   padding: 0;
   margin: 0;
-  background: var(--vscode-editor-background);
+  /*
+   * The sidebar surface, not the editor's.
+   *
+   * This panel lives *in* the right column, so the honest background is the column's own fill
+   * (--dsw-specific-sidebar-fill) rather than a page colour one step lighter: with bg-layer-1 the
+   * panel read as a card laid over the column, with a visible seam at both edges and one more
+   * shade than the host's own panes.
+   *
+   * 'transparent' was the other candidate the plan named, and it is deliberately NOT used. It
+   * looks identical when docked and is wrong in the two other carriers this panel supports: a
+   * floated tab and the full-screen right bar both put the panel over a *different* surface, so
+   * an inherited background would show whatever happens to be behind it. An opaque token cannot
+   * be wrong in any of the three.
+   */
+  background: var(--dsw-specific-sidebar-fill);
   color: var(--vscode-foreground);
   font-family: var(--vscode-font-family);
-  font-size: 13px;
+  /*
+   * The host's secondary content size. Named through the token so a user who changed the
+   * Harness font size gets a panel that matches instead of a 13px island.
+   */
+  font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: 1.5;
 }
 ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-sizing: border-box; }
@@ -312,6 +342,17 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
  * nearest positioned ancestor, so containment above them changes nothing they
  * can observe.
  */
+/*
+ * The panel's own header and footer.
+ *
+ * 38px is the host's pane-header height, and it is a consequence rather than a number: a 28px
+ * control plus 5px above and below. Both bars are transparent on purpose — the root already
+ * carries the surface, and repeating it here made three visible bands out of one panel.
+ *
+ * The hairline is .5px at border-l3 rather than 1px at l1: a full CSS pixel is twice the weight
+ * of the separator the host draws between its own regions, and l1 is the divider step, not the
+ * one that separates a region from its body.
+ */
 .att-page {
   display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
   container: att-panel / inline-size;
@@ -319,34 +360,80 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-page[hidden] { display: none; }
 .att-toolbar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBar-background);
+  min-height: 38px;
+  padding: 5px 10px;
+  border-bottom: .5px solid var(--dsw-alias-border-l3);
+  background: transparent;
 }
-.att-nav { display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: var(--vscode-input-background); }
+.att-nav {
+  display: flex; align-items: center; gap: 2px; padding: 2px;
+  height: 32px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--vscode-input-background);
+}
 .att-nav-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 10px;
   border: none; background: transparent; color: var(--vscode-descriptionForeground);
-  padding: 3px 14px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer; font: inherit; font-size: 12px;
 }
-.att-nav-btn[aria-selected="true"] { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.att-nav-btn:hover:not([aria-selected="true"]):not(:disabled) { background: var(--vscode-list-hoverBackground); }
+/*
+ * The selected segment is a **neutral** raise, not the brand accent.
+ *
+ * A brand-filled chip in a three-item switch claims the same visual weight as the primary
+ * action beside it, so a 资产/文件 switch and a 保存 looked equally important. The host reserves
+ * the accent fill for actions and marks a selected item with a 10% neutral overlay; matching
+ * that is what makes the switch read as navigation.
+ */
+.att-nav-btn[aria-selected="true"] {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--vscode-list-activeSelectionForeground);
+  font-weight: 500;
+}
 .att-spacer { flex: 1 1 auto; }
+/*
+ * Buttons are 28px / 8px / 0 10px — the host's Button sm, measured (see the plan's appendix).
+ * The old 24px / 4px control was a webview control: it reads as a desktop-dense widget next to
+ * a sidebar whose own rows are 13px type with 12px corners.
+ */
 .att-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 10px;
   border: 1px solid var(--vscode-panel-border);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
-  padding: 3px 12px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap;
 }
 .att-btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
 .att-btn:disabled { opacity: 0.5; cursor: default; }
 .att-btn.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
 .att-btn.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
 .att-btn.danger { color: var(--vscode-errorForeground); }
-.att-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 10px 12px; }
+/*
+ * An icon-only button: same 28px box, no horizontal padding, and a square hit area.
+ *
+ * The width is stated rather than derived from the glyph, because an SVG icon and a text glyph
+ * have different intrinsic widths and a toolbar that shifts by a pixel per icon looks broken.
+ */
+.att-icon-btn { width: 28px; padding: 0; }
+/* Icons inherit the label colour, so a disabled or danger button colours them for free. */
+.att-icon { display: block; width: 16px; height: 16px; flex: none; }
+.att-content {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  padding: 8px 0 8px 8px;
+  /* Reserve the scrollbar's width even when the list is short, so switching between a long
+     and a short list does not shift every row sideways by 8px. */
+  scrollbar-gutter: stable;
+}
 .att-group-name {
   display: flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 8px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
   color: var(--vscode-descriptionForeground);
-  padding: 6px 8px; border-radius: 4px;
+  border-radius: var(--dsw-radius-sm);
   cursor: pointer; user-select: none;
 }
 .att-group-name:hover {
@@ -355,13 +442,24 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 .att-group-disclosure {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 12px; height: 12px; font-size: 9px; opacity: 0.8;
+  width: 12px; height: 12px; flex: none; opacity: 0.8;
 }
 .att-group-count {
   margin-left: auto;
   font-size: 11px; font-weight: normal; opacity: 0.7;
 }
-.att-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; user-select: none; }
+/*
+ * A list row: the host's list geometry — 12px corners, 5px 10px padding.
+ *
+ * The radius is what separates "a row in a list" from "a table cell": the host's own file list
+ * rounds every row, and a square row beside a rounded one reads as two different controls.
+ */
+.att-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--dsw-radius-md);
+  user-select: none;
+}
 .att-row:hover { background: var(--vscode-list-hoverBackground); }
 .att-row[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
 .att-row-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32%; }
@@ -380,10 +478,11 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-hint { color: var(--vscode-descriptionForeground); font-size: 12px; padding: 6px; }
 .att-statusbar {
   display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
-  padding: 5px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBar-background);
-  color: var(--vscode-descriptionForeground); font-size: 12px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-top: .5px solid var(--dsw-alias-border-l3);
+  background: transparent;
+  color: var(--vscode-descriptionForeground); font-size: 11px;
 }
 /*
  * The status bar's path, shaped like the official PathLabel: dimmed directory,
@@ -493,16 +592,21 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
    */
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-  background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-panel-border); border-radius: 6px;
+  /* The overlay surface, not the dropdown's: a menu drawn in the page colour reads as part of
+     the page it is covering, which is the one thing a menu must not look like. */
+  background: var(--dsw-alias-bg-overlay); color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-md);
   box-shadow: var(--dsw-shadow-lv2);
 }
 .att-menu-item {
-  display: block; width: 100%; text-align: left;
+  display: flex; align-items: center;
+  width: 100%; height: 28px; text-align: left;
   border: none; background: transparent; color: inherit;
-  padding: 5px 10px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px;
+  padding: 0 10px;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer; font: inherit; font-size: 12px;
 }
-.att-menu-item:hover { background: var(--vscode-list-hoverBackground); }
+.att-menu-item:hover, .att-menu-item:focus-visible { background: var(--vscode-list-hoverBackground); }
 .att-menu-item.danger { color: var(--vscode-errorForeground); }
 .att-overlay {
   position: absolute; inset: 0; z-index: 900;
@@ -514,8 +618,8 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   width: min(520px, 100%);
   display: flex; flex-direction: column; gap: 12px;
   padding: 16px 18px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border); border-radius: 8px;
+  background: var(--dsw-alias-bg-overlay);
+  border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-lg);
   box-shadow: var(--dsw-shadow-lv3);
 }
 .att-dialog-title { margin: 0; font-size: 14px; font-weight: 650; }
@@ -525,12 +629,27 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .att-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--vscode-descriptionForeground); }
 .att-field input[type="text"], .att-field input[type="password"], .att-field select {
-  padding: 4px 8px; font: inherit;
+  height: 28px; padding: 0 8px; font: inherit;
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border); border-radius: 4px;
+  border: 1px solid var(--vscode-input-border); border-radius: var(--dsw-radius-sm);
 }
-.att-field input:focus, .att-field select:focus { outline: 1px solid var(--vscode-focusBorder); }
+/*
+ * Focus is a **ring**, and only for keyboard focus.
+ *
+ * ':focus' painted an outline on every mouse click into a text field, which is the visual noise
+ * the host does not have; ':focus-visible' is the browser's own answer to "was this focus worth
+ * announcing". The ring is the theme's width token rather than a hand-picked 1px, so it matches
+ * the host's own focus treatment at any zoom.
+ */
+.att-field input:focus-visible,
+.att-field select:focus-visible,
+.att-file-editor:focus-visible,
+.att-file-text:focus-visible,
+.att-upload:focus-within {
+  outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
 .att-check { display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .att-banner {
   display: flex; flex-direction: column; gap: 2px;
@@ -649,11 +768,15 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 .att-banners { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
 .att-select {
-  padding: 3px 8px; font: inherit; font-size: 12px; max-width: 280px;
+  height: 28px; padding: 0 8px; font: inherit; font-size: 12px;
+  /* Bounded so the toolbar cannot be pushed wider than the panel by a long server name; the
+     native control truncates its own label. */
+  max-width: 220px;
   color: var(--vscode-dropdown-foreground);
   background: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border); border-radius: 4px;
+  border: 1px solid var(--vscode-dropdown-border); border-radius: var(--dsw-radius-sm);
 }
+.att-select:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder); outline-offset: -1px; }
 .att-chip { font-size: 12px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
 /*
  * Visible to a screen reader, invisible to the eye.
@@ -677,6 +800,19 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
    dot: the strip already draws the capsule, and a second background would read as a
    second chip. Colours come from the same three state tokens the status dot uses, so a
    green tab means exactly what a green status line means. */
+.att-tab-title {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0;
+}
+/*
+ * The instance's own name, and the only part allowed to shrink.
+ *
+ * The strip gives each chip a fixed share, so exactly one child has to be able to truncate or the
+ * chip overflows and the title's tail — the part that names the server — is the piece that leaves.
+ */
+.att-tab-title-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .att-tab-badge {
   display: inline-flex; align-items: center; gap: 5px;
   min-width: 0; font-size: 12px; white-space: nowrap;
@@ -706,7 +842,9 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-copied { font-size: 12px; color: var(--vscode-descriptionForeground); }
 .att-tree-row {
   display: flex; align-items: center; gap: 6px;
-  padding: 4px 8px; border-radius: 4px; user-select: none;
+  padding: 5px 10px;
+  border-radius: var(--dsw-radius-md);
+  user-select: none;
   white-space: nowrap;
 }
 .att-tree-row:hover { background: var(--vscode-list-hoverBackground); }
@@ -719,7 +857,11 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   font-family: inherit; font-size: 11px;
 }
 .att-tree-disclosure:hover { background: var(--vscode-toolbar-hoverBackground); border-radius: 3px; }
-.att-tree-glyph { width: 12px; text-align: center; color: var(--vscode-descriptionForeground); }
+.att-tree-glyph {
+  width: 14px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--vscode-descriptionForeground);
+}
 .att-tree-name { overflow: hidden; text-overflow: ellipsis; }
 .att-tree-meta {
   margin-left: auto; font-size: 12px;
@@ -774,10 +916,7 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   margin: -1px; padding: 0; border: 0;
   clip: rect(0 0 0 0); overflow: hidden; white-space: nowrap;
 }
-.att-upload:focus-within {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 1px;
-}
+/* The ring itself is drawn by the shared focus-visible rule above, on '.att-upload:focus-within'. */
 
 /*
  * The file pane. 'att-file-content' overrides the page's own padding because a viewer and an
@@ -785,10 +924,25 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
  * as the file, and the textarea's own padding is where its gutter-less look comes from.
  */
 .att-file-content { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 0; }
+/*
+ * The code font, overridden here rather than bridged.
+ *
+ * '--vscode-editor-font-family' is not in the bridge, and deliberately so: check 9 requires every
+ * bridged value to reference a --dsw-* token, while the host's code font is --ds-font-family-code
+ * — a different family of variables. Bridging it would either fail the gate or force a token that
+ * does not exist. Overriding the three code surfaces directly is the honest way to read it, and it
+ * costs nothing: nothing else in the sheet wants a code font.
+ *
+ * The fallbacks are font stacks, not colours: they carry no theme decision, and without them a
+ * host that renamed the token would render code in the UI font (the one outcome that makes a
+ * diff unreadable).
+ */
+.att-file-text, .att-file-editor, .att-code-preview {
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
 .att-file-text {
   flex: 1 1 auto; min-height: 0; margin: 0; overflow: auto;
-  padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 4px;
-  font-family: var(--vscode-editor-font-family, monospace);
+  padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-sm);
   font-size: 12px; line-height: 1.45;
   background: var(--vscode-editor-background);
   color: var(--vscode-editor-foreground);
@@ -798,17 +952,60 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 .att-file-editor {
   flex: 1 1 auto; min-height: 0; overflow: auto;
-  padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 4px;
-  font-family: var(--vscode-editor-font-family, monospace);
+  padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-sm);
   font-size: 12px; line-height: 1.45;
   background: var(--vscode-editor-background);
   color: var(--vscode-editor-foreground);
   resize: none; tab-size: 4;
 }
-.att-file-editor:focus-visible,
-.att-file-text:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+
+/* ---------------------------- the reused form's geometry --------------------------- */
+
+/*
+ * Geometry overrides for the server form (UI2-05).
+ *
+ * The reused sheet was written for a VS Code webview, where a 4px corner and a 7px-padded input
+ * were the platform's own look. In this sidebar they sit next to 12px rows and 8px buttons, so the
+ * form read as a different application embedded in the panel. Every rule below is the same
+ * *pairing* the host uses — 28px control, --dsw-radius-sm, 12px type — applied to the classes the
+ * reused markup already carries.
+ *
+ * Each selector is spelled with the root prefix because the reused sheet was scoped to the panel
+ * root on the way in: a bare .primary-action here is a *weaker* selector than the rule it is meant
+ * to replace, and would silently lose.
+ */
+${ROOT_SELECTOR} .form-panel { border-radius: var(--dsw-radius-md); }
+${ROOT_SELECTOR} .auth-card { border-radius: var(--dsw-radius-md); }
+${ROOT_SELECTOR} input,
+${ROOT_SELECTOR} select {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--dsw-radius-sm);
+}
+${ROOT_SELECTOR} .field-stack select { min-height: 28px; }
+/* Hover is a stronger border, not a focus-coloured one: the old rule turned the border the same
+   blue as the focus ring on mere hover, which is the one signal a ring must keep for itself. */
+${ROOT_SELECTOR} input:hover,
+${ROOT_SELECTOR} select:hover { border-color: var(--dsw-alias-border-l4); }
+/* Focus is keyboard-only here too, and the always-on outline from the reused sheet is retired. */
+${ROOT_SELECTOR} input:focus,
+${ROOT_SELECTOR} select:focus { outline: none; }
+${ROOT_SELECTOR} input:focus-visible,
+${ROOT_SELECTOR} select:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder);
   outline-offset: -1px;
+}
+${ROOT_SELECTOR} .primary-action,
+${ROOT_SELECTOR} .secondary-action {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 12px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 12px; line-height: 1;
+}
+${ROOT_SELECTOR} .primary-action:focus { outline: none; }
+${ROOT_SELECTOR} .primary-action:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 /*
@@ -937,6 +1134,9 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 
 .att-monitor-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -944,8 +1144,8 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
-  border-radius: 4px 4px 0 0;
-  transition: all 0.15s ease;
+  border-radius: var(--dsw-radius-sm) var(--dsw-radius-sm) 0 0;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .att-monitor-tab-btn:hover {
@@ -1079,11 +1279,11 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 
 .att-code-preview {
-  font-family: var(--vscode-editor-font-family, monospace);
+  /* Font comes from the shared code-surface rule above ('--ds-font-family-code'). */
   font-size: 11px;
   background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 4px;
+  border-radius: var(--dsw-radius-sm);
   padding: 8px;
   max-height: 140px;
   overflow-y: auto;
@@ -1193,8 +1393,8 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 
 .att-floating-drag-grip {
+  display: inline-flex; align-items: center;
   color: var(--dsw-alias-label-dimmed);
-  font-size: 14px;
   line-height: 1;
   cursor: grab;
   user-select: none;

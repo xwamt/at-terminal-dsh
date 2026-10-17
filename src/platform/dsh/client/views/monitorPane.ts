@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { AgentExecutionSnapshot, HardwareMetrics, ServerView, Translate } from '../models';
 import { callRpc, getAgentExecutionStatusRpc, getHardwareMetricsRpc } from '../channel';
+import { boltRegular, gaugeRegular, refreshRegular } from '../icons';
 import { HardwareMonitorView } from './monitorHardware';
 import { AgentMonitorView } from './monitorAgent';
 import { h, type El } from './shared';
@@ -111,7 +112,8 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
             'data-active': activeTab === 'hardware' ? 'true' : 'false',
             onClick: () => setActiveTab('hardware')
           },
-          `📊 ${t('monitor.tab.hardware')}`
+          gaugeRegular({ size: 14 }),
+          t('monitor.tab.hardware')
         ),
         h(
           'button',
@@ -122,7 +124,8 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
             'data-active': activeTab === 'agent_execution' ? 'true' : 'false',
             onClick: () => setActiveTab('agent_execution')
           },
-          `⚡ ${t('monitor.tab.agent')}`
+          boltRegular({ size: 14 }),
+          t('monitor.tab.agent')
         )
       ),
       h(
@@ -148,12 +151,12 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
         h(
           'button',
           {
-            className: 'att-nav-btn',
+            className: 'att-nav-btn att-icon-btn',
             title: t('monitor.refresh'),
             'aria-label': t('monitor.refresh'),
             onClick: () => void refresh()
           },
-          '🔄'
+          refreshRegular({ size: 16 })
         )
       )
     ),
@@ -168,8 +171,8 @@ export function AtTerminalMonitorTitle(props: { t: Translate }): El {
   const { t } = props;
   return h(
     'span',
-    { style: { display: 'flex', alignItems: 'center', gap: '4px' } },
-    h('span', null, '📊'),
-    h('span', null, t('monitor.title'))
+    { className: 'att-tab-title' },
+    gaugeRegular({ size: 14 }),
+    h('span', { className: 'att-tab-title-text' }, t('monitor.title'))
   );
 }

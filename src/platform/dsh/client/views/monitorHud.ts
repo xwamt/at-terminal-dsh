@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from '../models';
 import { formatThroughput } from '../models';
 import { formatFileSize } from '../../../../sftp/FileSize';
+import { chevronDownRegular, closeRegular, gaugeRegular, gripRegular, serverRegular } from '../icons';
 import { HardwareMonitorView } from './monitorHardware';
 import { AgentMonitorView } from './monitorAgent';
 import { h, type El } from './shared';
@@ -236,8 +237,8 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             }
           }
         },
-        h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, '⠿'),
-        h('span', { 'aria-hidden': true }, '📊'),
+        h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, gripRegular({ size: 14 })),
+        h('span', { 'aria-hidden': true }, gaugeRegular({ size: 14 })),
         (activeLabel || activeServerId) &&
           h(
             'span',
@@ -246,7 +247,8 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
               title: `${t('monitor.server')}${activeLabel || activeServerId}`,
               style: { maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
             },
-            `🖥️ ${activeLabel || activeServerId}`
+            serverRegular({ size: 12 }),
+            ` ${activeLabel || activeServerId}`
           ),
         h(
           'span',
@@ -301,16 +303,16 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           'span',
           {
             title: t('monitor.hud.expand'),
-            style: { fontSize: '10px', opacity: 0.8, cursor: 'pointer', padding: '0 2px' }
+            style: { opacity: 0.8, cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }
           },
-          '▼'
+          chevronDownRegular({ size: 14 })
         ),
         onCloseHud &&
           h(
             'button',
             {
-              className: 'att-nav-btn',
-              style: { marginLeft: '2px', padding: '0 4px', fontSize: '11px', opacity: 0.7 },
+              className: 'att-nav-btn att-icon-btn',
+              style: { marginLeft: '2px', opacity: 0.7 },
               title: t('monitor.hud.close'),
               'aria-label': t('monitor.hud.close'),
               onClick: (e: { stopPropagation: () => void }) => {
@@ -318,7 +320,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 onCloseHud();
               }
             },
-            '✕'
+            closeRegular({ size: 14 })
           )
       ),
 
@@ -353,8 +355,8 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           h(
             'div',
             { className: 'att-floating-header-left' },
-            h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, '⠿'),
-            h('span', { 'aria-hidden': true }, '📊'),
+            h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, gripRegular({ size: 14 })),
+            h('span', { 'aria-hidden': true }, gaugeRegular({ size: 14 })),
             h('span', { style: { fontWeight: 600, fontSize: '12px' } }, t('monitor.title'))
           ),
           h(
@@ -363,7 +365,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             h(
               'button',
               {
-                className: 'att-nav-btn',
+                className: 'att-nav-btn att-icon-btn',
                 title: t('monitor.hud.minimize'),
                 'aria-label': t('monitor.hud.minimize'),
                 onClick: (e: { stopPropagation: () => void }) => {
@@ -372,13 +374,16 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
                 }
               },
-              '—'
+              // A chevron rather than the `—` it used to draw: the action **collapses the window
+              // into the pill**, which is what a downward chevron means, while an em dash is the
+              // typographic mark for a range and says nothing about the result.
+              chevronDownRegular({ size: 14 })
             ),
             onCloseHud &&
               h(
                 'button',
                 {
-                  className: 'att-nav-btn',
+                  className: 'att-nav-btn att-icon-btn',
                   title: t('monitor.hud.close'),
                   'aria-label': t('monitor.hud.close'),
                   onClick: (e: { stopPropagation: () => void }) => {
@@ -386,7 +391,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                     onCloseHud();
                   }
                 },
-                '✕'
+                closeRegular({ size: 14 })
               )
           )
         ),
@@ -406,7 +411,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
               borderBottom: '1px solid var(--dsw-alias-border-l1)'
             }
           },
-          h('span', { 'aria-hidden': true }, '🖥️'),
+          h('span', { 'aria-hidden': true }, serverRegular({ size: 14 })),
           h('span', null, t('monitor.server')),
           h(
             'span',

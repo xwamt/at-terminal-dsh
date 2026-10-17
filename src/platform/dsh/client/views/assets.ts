@@ -26,6 +26,7 @@ import {
   type Translate
 } from '../models';
 import { h, pathLabel, renderFailure, type AsyncState, type El } from './shared';
+import { chevronDownRegular, chevronRightRegular } from '../icons';
 
 export interface AssetSummary {
   servers?: number;
@@ -229,7 +230,14 @@ function renderList(t: Translate, props: AssetsViewProps): El[] {
           'aria-expanded': !isCollapsed,
           onClick: () => props.onToggleGroup?.(groupKey)
         },
-        h('span', { className: 'att-group-disclosure', 'aria-hidden': 'true' }, isCollapsed ? '▶' : '▼'),
+        // The disclosure is a glyph rather than a `▶`/`▼` character: those two are drawn by the
+        // ambient font, so their weight and bearing changed with the platform and they never lined
+        // up with the 16px icons in the rows below.
+        h(
+          'span',
+          { className: 'att-group-disclosure', 'aria-hidden': 'true' },
+          isCollapsed ? chevronRightRegular({ size: 12 }) : chevronDownRegular({ size: 12 })
+        ),
         group.name === null ? t('servers.ungrouped') : group.name,
         h('span', { className: 'att-group-count', 'aria-hidden': 'true' }, `(${group.servers.length})`)
       )

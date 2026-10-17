@@ -58,6 +58,7 @@ import {
 } from './sessions';
 import { ensureStyles } from './styles';
 import { clearAllTabState, clearTabState } from './tabState';
+import { gaugeRegular, guideTerminalArtwork } from './icons';
 import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
 import { h } from './views/shared';
@@ -394,7 +395,20 @@ export function definition(t: Translate): Record<string, unknown> {
         id: 'at-terminal',
         order: 50,
         title: () => t('guide.title'),
-        description: () => t('guide.description')
+        description: () => t('guide.description'),
+        /*
+         * The two fields that make the standard guide card look finished (UI2-06).
+         *
+         * Without `icon` the card renders the registry's placeholder square — the one card in the
+         * column that looks unfinished. Without `commandId` it renders no shortcut, even though
+         * this panel has one. Both fields are what the host's own `sidebar-files` entry supplies,
+         * which is how the shape was confirmed rather than guessed.
+         *
+         * The artwork is 26px and drawn at 1.5px on its own artboard; see `icons/artwork.ts` for
+         * why the 16px glyph is not scaled up into this slot.
+         */
+        icon: guideTerminalArtwork,
+        commandId: 'atTerminal.mode.assets'
       }
     ]
   };
@@ -471,13 +485,14 @@ function MonitorHeaderButton(props: { t: Translate; onOpenPane: () => void }) {
   return h(
     'button',
     {
-      className: 'att-nav-btn',
+      className: 'att-nav-btn att-icon-btn',
       title: props.t('monitor.title'),
       'aria-label': props.t('monitor.title'),
-      onClick: () => props.onOpenPane(),
-      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
+      onClick: () => props.onOpenPane()
     },
-    '📊'
+    // The glyph replaces a `📊` emoji, which rendered in colour on every platform and at a weight
+    // no token could control — the loudest thing in a 28px toolbar.
+    gaugeRegular({ size: 16 })
   );
 }
 

@@ -16,6 +16,7 @@ import React, { type ReactElement } from 'react';
 import { resolveTerminalStatusClass, type TerminalStatusState } from '../../../../../webview/terminal/clipboard';
 import type { TerminalSessionState } from '../frames';
 import { count, text, type ServerView, type Translate } from '../models';
+import { gaugeRegular } from '../icons';
 import type { TerminalEngine, TerminalEngineHooks, TerminalUiSettings } from '../xtermEngine';
 import { createTerminalEngine } from '../xtermEngine';
 import { h, navPanelId, navTabId, renderNav, type El, type PanelMode } from './shared';
@@ -210,13 +211,15 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
             'button',
             {
               type: 'button',
-              className: 'att-nav-btn',
+              className: 'att-nav-btn att-icon-btn',
               title: t('monitor.title'),
               'aria-label': t('monitor.title'),
               onClick: props.onOpenMonitor,
               'data-at-terminal-action': 'term-monitor'
             },
-            '📊'
+            // A 16px dial instead of `📊`: the emoji is colour on every platform and answers to no
+            // token, so it was the loudest mark in a toolbar of 12px text.
+            gaugeRegular({ size: 16 })
           )
         : null,
       /**

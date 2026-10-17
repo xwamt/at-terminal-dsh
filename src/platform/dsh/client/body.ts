@@ -35,6 +35,7 @@ import {
 } from './models';
 import { useTabBadge } from './sessions';
 import { readAssetsState, saveAssetsState } from './tabState';
+import { serverRegular, terminalRegular } from './icons';
 import { renderAssetsView, type AssetSummary } from './views/assets';
 import {
   renderConfirmDialog,
@@ -284,14 +285,47 @@ export function AtTerminalTitle(props: Record<string, unknown>): ReactElement {
       null
     );
   }, [key, badge?.kind]);
+
+  /**
+   * The chip: an icon for the tab **kind**, then whatever names this instance.
+   *
+   * Three changes from the text-only version, all of them about a narrow tab strip:
+   *
+   * 1. the kind is carried by a 16px glyph instead of the words 「AT 终端 · 」, which cost ~40px in
+   *    a strip that holds one chip per open connection — three terminals used to leave room for
+   *    nothing else. The glyph says the same thing in 16px, and `terminal` vs `server` also
+   *    distinguishes the two kinds at a glance, which the words never did (both said 「AT」);
+   * 2. the state is carried by the dot **and** by visually-hidden text, so a screen reader hears
+   *    "connected" rather than nothing (the dot alone is decorative);
+   * 3. the whole chip carries `title`, because the strip truncates and the full host is the one
+   *    thing the user may need to read.
+   */
+  const icon = kind === KIND_SESSION ? terminalRegular({ size: 14 }) : serverRegular({ size: 14 });
   if (badge === undefined || badge.label === '') {
-    return h('span', null, t(kind === KIND_SESSION ? 'session.label' : 'type.label'));
+    // No target yet: the type's own name is the honest label, icon and all.
+    return h(
+      'span',
+      { className: 'att-tab-title', title: t(kind === KIND_SESSION ? 'session.label' : 'type.label') },
+      icon,
+      h('span', { className: 'att-tab-title-text' }, t(kind === KIND_SESSION ? 'session.label' : 'type.label'))
+    );
   }
   return h(
     'span',
-    { className: 'att-tab-badge', 'data-at-terminal-tab-state': badge.kind },
+    {
+      className: 'att-tab-badge',
+      'data-at-terminal-tab-state': badge.kind,
+      title: `${badge.label} · ${t(`terminal.state.${badge.kind === 'problem' ? 'disconnected' : badge.kind}`)}`
+    },
     h('span', { className: 'att-tab-badge-dot' }),
-    `${t(kind === KIND_SESSION ? 'session.label' : 'type.label')} · ${badge.label}`
+    icon,
+    h('span', { className: 'att-tab-title-text' }, badge.label),
+    // The dot is decorative; this is what a screen reader actually hears.
+    h(
+      'span',
+      { className: 'att-sr-only' },
+      t(`terminal.state.${badge.kind === 'problem' ? 'disconnected' : badge.kind}`)
+    )
   );
 }
 

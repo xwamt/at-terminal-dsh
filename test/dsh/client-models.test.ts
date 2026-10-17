@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { createFlowController, PAUSE_BYTES, RESUME_BYTES } from '../../src/platform/dsh/client/flow';
@@ -569,6 +570,90 @@ describe('client styles — scopeCss', () => {
 });
 
 /**
+ * UI2-05: the panel reads the host's geometry tokens instead of VS Code's control sizes.
+ *
+ * These assertions are about **declarations**, not about looks. A text assertion can prove a rule
+ * exists and names a token; only the walkthrough in a real dsh can prove the result is right, and
+ * that is recorded as unverified in the plan rather than claimed here.
+ */
+describe('client styles — geometry and surface tokens (UI2-05)', () => {
+  /**
+   * The declaration block for one selector, or '' when there is none.
+   *
+   * The **last** match, not the first: `.att-root` is declared three times in the assembled sheet
+   * (the scoped xterm sheet, the token bridge, and this file's own layout block), and the one that
+   * decides how the panel looks is the one that comes last. A first-match helper would silently
+   * assert against the scoped xterm reset and pass for the wrong reason.
+   */
+  function ruleFor(sheet: string, selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const matches = [...sheet.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))];
+    return matches.length === 0 ? '' : (matches[matches.length - 1][1] as string);
+  }
+
+  const sheet = buildStyleSheet(readRealSources());
+
+  it('takes the host content size and font', () => {
+    expect(ruleFor(sheet, '.att-root')).toContain('var(--dsh-content-font-size-secondary');
+    // A token, not a hand-written stack: the panel used to disagree with every other pane the
+    // moment the host font was not the platform default.
+    expect(sheet).toContain('--vscode-font-family: var(--dsw-font-family)');
+  });
+
+  it('sizes controls the way the host sizes its buttons and rows', () => {
+    const button = ruleFor(sheet, '.att-btn');
+    expect(button).toContain('height: 28px');
+    expect(button).toContain('var(--dsw-radius-sm)');
+    // 24px / 4px was the webview control: dense beside 12px rows.
+    expect(button).not.toContain('border-radius: 4px');
+
+    const row = ruleFor(sheet, '.att-row');
+    expect(row).toContain('var(--dsw-radius-md)');
+    expect(row).toContain('padding: 5px 10px');
+
+    expect(ruleFor(sheet, '.att-menu')).toContain('var(--dsw-radius-md)');
+    expect(ruleFor(sheet, '.att-dialog')).toContain('var(--dsw-radius-lg)');
+  });
+
+  it('marks a selected segment with the neutral overlay rather than the brand fill', () => {
+    const selected = ruleFor(sheet, '.att-nav-btn[aria-selected="true"]');
+    expect(selected).toContain('var(--dsw-alias-interactive-bg-active)');
+    // The brand fill belongs to the primary action beside the switch, not to the switch.
+    expect(selected).not.toContain('--vscode-button-background');
+  });
+
+  it('paints focus with the business token, so the ring is not the brand fill', () => {
+    expect(sheet).toContain('--vscode-focusBorder: var(--dsw-alias-state-business-primary)');
+    expect(sheet).toContain('--vscode-list-activeSelectionBackground: var(--dsw-alias-interactive-bg-active)');
+  });
+
+  it('gives code its own font instead of a monospace fallback that never resolved', () => {
+    const rule = ruleFor(
+      sheet,
+      '.att-file-text, .att-file-editor, .att-code-preview'
+    );
+    expect(rule).toContain('var(--ds-font-family-code');
+    // The old declarations read a variable nothing defined, so every code surface silently fell
+    // back to the generic family.
+    expect(sheet).not.toContain('var(--vscode-editor-font-family');
+  });
+
+  it('keeps the panel surface a sidebar fill, not a page colour', () => {
+    // 'transparent' would be identical when docked and wrong when floated or full-screen, so the
+    // choice is the column's own opaque fill.
+    expect(ruleFor(sheet, '.att-root')).toContain('var(--dsw-specific-sidebar-fill)');
+  });
+
+  it('declares the container query the narrow layout depends on (UI2-02)', () => {
+    expect(sheet).toContain('container: att-panel / inline-size');
+    // Both thresholds: one column for the section grid, then stacked fields and full-width
+    // actions. A window media query cannot answer either question for a 460px sidebar.
+    expect(sheet).toContain('@container att-panel (max-width: 680px)');
+    expect(sheet).toContain('@container att-panel (max-width: 520px)');
+  });
+});
+
+/**
  * `.att-*` classes the client renders but the sheet never defines — the audit behind UI2-00.
  *
  * Four of these shipped in the monitor/HUD work (`att-input`, `att-hud-pill-expand-arrow`,
@@ -661,6 +746,44 @@ describe('client styles — className audit (UI2-00)', () => {
     );
 
     expect(offenders.map((file) => file.slice(dir.length + 1))).toEqual([]);
+  });
+
+  /**
+   * UI2-06 step 7: no emoji, and no text glyph standing in for an icon.
+   *
+   * The unit of the assertion is *what the code can render*, so comments are stripped first. That
+   * is not leniency — three of these files document the exact character they replaced, and
+   * 「`▣` is a box, it says checkbox before it says folder」 is the sentence that stops the next
+   * person from putting it back. Comments cannot reach the screen; strings and literals can.
+   *
+   * `·` is deliberately absent from the forbidden set: it survives as a *separator* between a
+   * server label and its state in the tab title, which is typography rather than an icon. `▣ ▶ ▼
+   * ↪ ✕` are the five that were standing in for folder / chevron / symlink / close.
+   */
+  it('draws no emoji and no text glyph in place of an icon', () => {
+    const dir = join(process.cwd(), 'src', 'platform', 'dsh', 'client');
+    const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
+    const GLYPH = /[▣▶▼▸▾↪✕⠿]/u;
+
+    /** Source with comments removed, by the compiler rather than by a regex. */
+    function stripComments(source: string): string {
+      return ts.transpileModule(source, {
+        reportDiagnostics: false,
+        compilerOptions: { removeComments: true, target: ts.ScriptTarget.ES2022 }
+      }).outputText;
+    }
+
+    const offenders: string[] = [];
+    for (const file of clientSources(dir)) {
+      const code = stripComments(readFileSync(file, 'utf8'));
+      for (const line of code.split('\n')) {
+        if (EMOJI.test(line) || GLYPH.test(line)) {
+          offenders.push(`${file.slice(dir.length + 1)}: ${line.trim().slice(0, 80)}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 });
 

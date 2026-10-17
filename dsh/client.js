@@ -10196,6 +10196,316 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // src/platform/dsh/client/icons/frame.ts
+    var REGULAR_STROKE = 1;
+    var XMLNS = "http://www.w3.org/2000/svg";
+    function iconClass(name, extra) {
+      return extra ? `att-icon att-icon-${name} ${extra}` : `att-icon att-icon-${name}`;
+    }
+    function renderChildren(children) {
+      return children.map(([tag, props]) => h(tag, props));
+    }
+    function lineIcon(options) {
+      return h(
+        "svg",
+        {
+          width: options.size,
+          height: options.size,
+          viewBox: options.viewBox,
+          fill: "none",
+          xmlns: XMLNS,
+          // Decorative by construction: every call site pairs the glyph with a text label,
+          // so a non-hidden icon makes a screen reader say the same thing twice.
+          "aria-hidden": "true",
+          className: iconClass(options.name, options.className),
+          stroke: "currentColor",
+          strokeWidth: options.strokeWidth,
+          strokeLinecap: options.strokeLinecap,
+          strokeLinejoin: options.strokeLinejoin
+        },
+        ...renderChildren(options.children)
+      );
+    }
+    function plateIcon(options) {
+      return h(
+        "svg",
+        {
+          width: options.size,
+          height: options.size,
+          viewBox: options.viewBox,
+          fill: "none",
+          xmlns: XMLNS,
+          "aria-hidden": "true",
+          className: iconClass(options.name, options.className)
+        },
+        ...renderChildren(options.children)
+      );
+    }
+
+    // src/platform/dsh/client/icons/file.ts
+    var VIEW_BOX = "0 0 28 28", FILE_BODY = "M8.48924 28H19.5108C21.6479 28 22.7165 28 23.5594 27.6509C24.6833 27.1853 25.5762 26.2924 26.0417 25.1685C26.3909 24.3256 26.3909 23.257 26.3909 21.1199V8.79443C26.3909 8.32877 26.3909 8.09593 26.3471 7.87507C26.2887 7.58058 26.173 7.30042 26.0067 7.05048C25.882 6.86303 25.7177 6.69799 25.3893 6.36792L20.0611 1.01354C19.7304 0.681235 19.5651 0.515081 19.3769 0.38885C19.126 0.220541 18.8443 0.103463 18.5481 0.0443412C18.3259 0 18.0915 0 17.6226 0H8.48924C6.35209 0 5.28351 0 4.4406 0.349145C3.31672 0.814671 2.4238 1.70759 1.95828 2.83147C1.60913 3.67438 1.60913 4.74296 1.60913 6.88011V21.1199C1.60913 23.257 1.60913 24.3256 1.95828 25.1685C2.4238 26.2924 3.31672 27.1853 4.4406 27.6509C5.28351 28 6.35209 28 8.48924 28Z", FILE_FOLD = "M26.3909 7.37445L19.0525 0V3.77445C19.0525 4.89271 19.0525 5.45184 19.2352 5.89289C19.4788 6.48096 19.946 6.94818 20.5341 7.19176C20.9751 7.37445 21.5342 7.37445 22.6525 7.37445H26.3909Z";
+    function filePlate(options = {}) {
+      let children = [
+        ["path", { d: FILE_BODY, fill: "var(--dsw-alias-label-secondary)" }],
+        ["path", { d: FILE_FOLD, fill: "var(--dsw-alias-label-dimmed)" }]
+      ];
+      return plateIcon({
+        name: "file",
+        viewBox: VIEW_BOX,
+        size: options.size ?? 28,
+        className: options.className,
+        children
+      });
+    }
+    function fileRegular(options = {}) {
+      return filePlate(options);
+    }
+
+    // src/platform/dsh/client/icons/folder.ts
+    var VIEW_BOX2 = "0 0 28 28", FOLDER_BODY = "M2.80078 10.2112C2.80078 9.52802 2.80078 9.18642 2.85314 8.866C2.98648 8.05 3.36942 7.29538 3.94925 6.70595C4.17694 6.4745 4.45264 6.2728 5.00404 5.86939C5.29197 5.65874 5.43594 5.55342 5.58711 5.46632C5.97089 5.24521 6.39638 5.10618 6.83667 5.05803C7.01011 5.03906 7.18849 5.03906 7.54524 5.03906H11.6543C12.4669 5.03906 12.8732 5.03906 13.2599 5.13697C13.3882 5.16945 13.5143 5.20986 13.6375 5.25795C14.0091 5.40294 14.3398 5.63902 15.0012 6.1112L16.2632 7.01224C16.5526 7.21881 16.6972 7.3221 16.8598 7.38553C16.9137 7.40657 16.9689 7.42425 17.025 7.43846C17.1942 7.4813 17.372 7.4813 17.7275 7.4813H19.8008C22.0506 7.4813 23.1755 7.4813 23.9641 8.05425C24.2188 8.23928 24.4428 8.46326 24.6278 8.71794C25.2008 9.50654 25.2008 10.6315 25.2008 12.8813V18.7283C25.2008 20.9781 25.2008 22.1031 24.6278 22.8917C24.4428 23.1463 24.2188 23.3703 23.9641 23.5554C23.1755 24.1283 22.0506 24.1283 19.8008 24.1283H8.20077C5.95094 24.1283 4.82602 24.1283 4.03743 23.5554C3.78274 23.3703 3.55877 23.1463 3.37373 22.8917C2.80078 22.1031 2.80078 20.9781 2.80078 18.7283V10.2112Z";
+    function folderPlate(options = {}) {
+      let children = [
+        ["path", { d: FOLDER_BODY, fill: "currentColor" }],
+        [
+          "path",
+          {
+            d: "M6.31445 13.0693H21.6893",
+            stroke: "var(--dsw-alias-bg-layer-1)",
+            strokeWidth: "2.38",
+            strokeLinecap: "round"
+          }
+        ]
+      ];
+      return plateIcon({
+        name: "folder",
+        viewBox: VIEW_BOX2,
+        size: options.size ?? 28,
+        className: options.className,
+        children
+      });
+    }
+    function folderRegular(options = {}) {
+      return folderPlate(options);
+    }
+
+    // src/platform/dsh/client/icons/refresh.ts
+    var VIEW_BOX3 = "0 0 16 16", ARC = "M14.5001 8C14.5 9.28552 14.1188 10.5422 13.4045 11.611C12.6903 12.6799 11.6752 13.5129 10.4875 14.0049C9.29982 14.4968 7.99295 14.6255 6.73212 14.3747C5.4713 14.124 4.31314 13.505 3.4041 12.596C2.49514 11.687 1.87614 10.5288 1.62537 9.26798C1.37459 8.00716 1.50331 6.70028 1.99525 5.51261C2.48719 4.32494 3.32025 3.30981 4.3891 2.59557C5.45795 1.88134 6.71458 1.50008 8.0001 1.5C9.9001 1.5 11.7001 2.3 13.0001 3.6L14.5001 5.1", ARROWHEAD = "M14.4999 1.5V5.1H10.8999";
+    function refreshLine(strokeWidth, options) {
+      let children = [
+        ["path", { d: ARC }],
+        ["path", { d: ARROWHEAD }]
+      ];
+      return lineIcon({
+        name: "refresh",
+        viewBox: VIEW_BOX3,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        // Left at the SVG default (butt, miter) on purpose: the arrowhead's corner has to
+        // stay crisp and its two ends stay flat, which is how the official ships it.
+        children
+      });
+    }
+    function refreshRegular(options = {}) {
+      return refreshLine(REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/server.ts
+    var VIEW_BOX4 = "0 0 16 16", TICK = "M4.5 5H7M4.5 11H7";
+    function serverLine(strokeWidth, options) {
+      let children = [
+        ["rect", { x: "2", y: "2.75", width: "12", height: "4.5", rx: "1.25" }],
+        ["rect", { x: "2", y: "8.75", width: "12", height: "4.5", rx: "1.25" }],
+        ["path", { d: TICK }]
+      ];
+      return lineIcon({
+        name: "server",
+        viewBox: VIEW_BOX4,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+    function serverRegular(options = {}) {
+      return serverLine(REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/terminal.ts
+    var VIEW_BOX5 = "0 0 16 16", PROMPT = "M4.75 6.75L7 8.5L4.75 10.25M8.25 10.75H11.25";
+    function terminalLine(strokeWidth, options) {
+      let children = [
+        ["rect", { x: "1.5", y: "3", width: "13", height: "10", rx: "2" }],
+        ["path", { d: PROMPT }]
+      ];
+      return lineIcon({
+        name: "terminal",
+        viewBox: VIEW_BOX5,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+    function terminalRegular(options = {}) {
+      return terminalLine(REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/warningTriangle.ts
+    var VIEW_BOX6 = "0 0 16 16", TRIANGLE = "M6.87 2.6a1.33 1.33 0 0 1 2.26 0l5.34 9.33A1.33 1.33 0 0 1 13.33 14H2.67a1.33 1.33 0 0 1-1.14-2.07Z", MARK = "M8 6v3m0 2.33h.01";
+    function warningTriangleLine(strokeWidth, options) {
+      let children = [
+        ["path", { d: TRIANGLE }],
+        ["path", { d: MARK }]
+      ];
+      return lineIcon({
+        name: "warning",
+        viewBox: VIEW_BOX6,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        // A round join is what the copied path's arcs assume; a miter would spike the
+        // already-rounded base corners at 1.3px.
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+    function warningTriangleRegular(options = {}) {
+      return warningTriangleLine(REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/gauge.ts
+    var VIEW_BOX7 = "0 0 16 16", ARC2 = "M2.6 11.2A5.8 5.8 0 0 1 13.4 11.2", NEEDLE = "M8 9.6L10.6 6.6";
+    function gaugeLine(strokeWidth, options) {
+      let children = [
+        ["path", { d: ARC2 }],
+        ["path", { d: NEEDLE }]
+      ];
+      return lineIcon({
+        name: "gauge",
+        viewBox: VIEW_BOX7,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+    function gaugeRegular(options = {}) {
+      return gaugeLine(REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/chevron.ts
+    var VIEW_BOX8 = "0 0 16 16", PATHS = {
+      down: "M4.5 6.5L8 10L11.5 6.5",
+      right: "M6.5 4.5L10 8L6.5 11.5",
+      up: "M4.5 9.5L8 6L11.5 9.5"
+    };
+    function chevronLine(direction, strokeWidth, options) {
+      let children = [["path", { d: PATHS[direction] }]];
+      return lineIcon({
+        name: `chevron-${direction}`,
+        viewBox: VIEW_BOX8,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+    function chevronDownRegular(options = {}) {
+      return chevronLine("down", REGULAR_STROKE, options);
+    }
+    function chevronRightRegular(options = {}) {
+      return chevronLine("right", REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/close.ts
+    var VIEW_BOX9 = "0 0 16 16", CROSS = "M4.5 4.5L11.5 11.5M11.5 4.5L4.5 11.5";
+    function closeLine(strokeWidth, options) {
+      let children = [["path", { d: CROSS }]];
+      return lineIcon({
+        name: "close",
+        viewBox: VIEW_BOX9,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        strokeLinecap: "round",
+        children
+      });
+    }
+    function closeRegular(options = {}) {
+      return closeLine(REGULAR_STROKE, options);
+    }
+    var GRIP_DOTS = [
+      [6, 4],
+      [10, 4],
+      [6, 8],
+      [10, 8],
+      [6, 12],
+      [10, 12]
+    ];
+    function gripRegular(options = {}) {
+      let children = GRIP_DOTS.map(
+        ([cx, cy]) => ["circle", { cx: String(cx), cy: String(cy), r: "1.1", fill: "currentColor" }]
+      );
+      return plateIcon({
+        name: "grip",
+        viewBox: VIEW_BOX9,
+        size: options.size ?? 16,
+        className: options.className,
+        children
+      });
+    }
+
+    // src/platform/dsh/client/icons/bolt.ts
+    var VIEW_BOX10 = "0 0 16 16", BOLT = "M9.4 1.8L4.2 9.1H7.6L6.6 14.2L11.8 6.9H8.4L9.4 1.8Z", LINK_A = "M6.7 9.3a2.6 2.6 0 0 0 3.7 0l1.9-1.9a2.6 2.6 0 0 0-3.7-3.7l-.6.6", LINK_B = "M9.3 6.7a2.6 2.6 0 0 0-3.7 0L3.7 8.6a2.6 2.6 0 0 0 3.7 3.7l.6-.6";
+    function draw(name, d, strokeWidth, options) {
+      let children = d.map((path) => ["path", { d: path }]);
+      return lineIcon({
+        name,
+        viewBox: VIEW_BOX10,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+    function boltRegular(options = {}) {
+      return draw("bolt", [BOLT], REGULAR_STROKE, options);
+    }
+    function symlinkRegular(options = {}) {
+      return draw("symlink", [LINK_A, LINK_B], REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/artwork.ts
+    var GUIDE_VIEW_BOX = "0 0 26 26", GUIDE_STROKE = 1.5, FRAME = { x: "2.4", y: "4.9", width: "21.2", height: "16.2", rx: "3.2" }, PROMPT2 = "M7.7 11L11.4 13.8L7.7 16.7M13.4 17.5H18.3";
+    function guideTerminalArtwork(options = {}) {
+      let children = [
+        ["rect", FRAME],
+        ["path", { d: PROMPT2 }]
+      ];
+      return lineIcon({
+        name: "guide-terminal",
+        viewBox: GUIDE_VIEW_BOX,
+        strokeWidth: GUIDE_STROKE,
+        size: 26,
+        className: options.className,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children
+      });
+    }
+
     // src/platform/dsh/client/views/assets.ts
     function toolbarButton(t, key, labelKey, onClick, disabled, primary = !1) {
       return h(
@@ -10284,7 +10594,14 @@ window.__ModuleLoader__.load({
               "aria-expanded": !isCollapsed,
               onClick: () => props.onToggleGroup?.(groupKey)
             },
-            h("span", { className: "att-group-disclosure", "aria-hidden": "true" }, isCollapsed ? "\u25B6" : "\u25BC"),
+            // The disclosure is a glyph rather than a `▶`/`▼` character: those two are drawn by the
+            // ambient font, so their weight and bearing changed with the platform and they never lined
+            // up with the 16px icons in the rows below.
+            h(
+              "span",
+              { className: "att-group-disclosure", "aria-hidden": "true" },
+              isCollapsed ? chevronRightRegular({ size: 12 }) : chevronDownRegular({ size: 12 })
+            ),
             group.name === null ? t("servers.ungrouped") : group.name,
             h("span", { className: "att-group-count", "aria-hidden": "true" }, `(${group.servers.length})`)
           )
@@ -11181,7 +11498,7 @@ window.__ModuleLoader__.load({
     }
     function AtTerminalTitle(props) {
       let t = import_react3.default.useContext(BodyLocale), key = readTabKey(props), kind = readTabKind(props), badge = useTabBadge(key);
-      return import_react3.default.useEffect(() => {
+      import_react3.default.useEffect(() => {
         postDiagnostic(
           "info",
           `at-terminal title rendered tab=${key || "(none)"} badge=${badge === void 0 ? "none" : badge.kind}`,
@@ -11189,11 +11506,29 @@ window.__ModuleLoader__.load({
           null,
           null
         );
-      }, [key, badge?.kind]), badge === void 0 || badge.label === "" ? h("span", null, t(kind === KIND_SESSION ? "session.label" : "type.label")) : h(
+      }, [key, badge?.kind]);
+      let icon = kind === KIND_SESSION ? terminalRegular({ size: 14 }) : serverRegular({ size: 14 });
+      return badge === void 0 || badge.label === "" ? h(
         "span",
-        { className: "att-tab-badge", "data-at-terminal-tab-state": badge.kind },
+        { className: "att-tab-title", title: t(kind === KIND_SESSION ? "session.label" : "type.label") },
+        icon,
+        h("span", { className: "att-tab-title-text" }, t(kind === KIND_SESSION ? "session.label" : "type.label"))
+      ) : h(
+        "span",
+        {
+          className: "att-tab-badge",
+          "data-at-terminal-tab-state": badge.kind,
+          title: `${badge.label} \xB7 ${t(`terminal.state.${badge.kind === "problem" ? "disconnected" : badge.kind}`)}`
+        },
         h("span", { className: "att-tab-badge-dot" }),
-        `${t(kind === KIND_SESSION ? "session.label" : "type.label")} \xB7 ${badge.label}`
+        icon,
+        h("span", { className: "att-tab-title-text" }, badge.label),
+        // The dot is decorative; this is what a screen reader actually hears.
+        h(
+          "span",
+          { className: "att-sr-only" },
+          t(`terminal.state.${badge.kind === "problem" ? "disconnected" : badge.kind}`)
+        )
       );
     }
     function clampMenu(position, size, limit) {
@@ -11614,7 +11949,11 @@ window.__ModuleLoader__.load({
           title: row.expanded ? t("sftp.collapse") : t("sftp.expand"),
           onClick: () => onToggle(path)
         },
-        h("span", { "aria-hidden": "true" }, row.expanded ? "\u25BE" : "\u25B8")
+        h(
+          "span",
+          { "aria-hidden": "true" },
+          row.expanded ? chevronDownRegular({ size: 12 }) : chevronRightRegular({ size: 12 })
+        )
       );
     }
     var FAILURE_COLOR = { color: "var(--vscode-errorForeground)" };
@@ -11622,9 +11961,9 @@ window.__ModuleLoader__.load({
       let suffix = "#failed";
       return row.key.endsWith(suffix) ? row.key.slice(0, -suffix.length) : row.key;
     }
-    function glyph(row) {
+    function rowGlyph(row) {
       let entry = row.entry;
-      return entry === void 0 ? "" : entry.type === "symlink" ? "\u21AA" : entry.type === "directory" ? "\u25A3" : "\xB7";
+      return entry === void 0 ? null : entry.type === "symlink" ? symlinkRegular({ size: 14 }) : entry.type === "directory" ? folderRegular({ size: 14 }) : fileRegular({ size: 14 });
     }
     function renderRow2(t, row, props, focusedKey) {
       let pad = { paddingLeft: `${8 + row.depth * 14}px` }, key = `row:${row.key}`, focused = row.key === focusedKey;
@@ -11675,7 +12014,11 @@ window.__ModuleLoader__.load({
             "data-at-terminal-sftp": "failed",
             "data-at-terminal-sftp-code": code
           },
-          h("span", { className: "att-tree-glyph", style: FAILURE_COLOR, "aria-hidden": "true" }, "\u26A0"),
+          h(
+            "span",
+            { className: "att-tree-glyph", style: FAILURE_COLOR, "aria-hidden": "true" },
+            warningTriangleRegular({ size: 14 })
+          ),
           h("span", { className: "att-tree-name", style: FAILURE_COLOR }, t(sftpDirFailureKey(code))),
           // A real `<button>`, which is what makes the retry reachable: the row itself is not a
           // tab stop (`sftpRowFocusable` excludes a read's state on purpose), so a control inside
@@ -11725,7 +12068,11 @@ window.__ModuleLoader__.load({
           onKeyDown: (event) => onRowKeyDown(event, row, props)
         },
         renderDisclosure(t, row, props.onToggle),
-        h("span", { className: "att-tree-glyph", "aria-hidden": "true" }, glyph(row)),
+        h(
+          "span",
+          { className: "att-tree-glyph", "aria-hidden": "true" },
+          rowGlyph(row)
+        ),
         h("span", { className: "att-tree-name" }, entry.name),
         h("span", { className: "att-tree-meta", "aria-hidden": "true" }, sftpEntrySize(entry))
       );
@@ -12868,13 +13215,15 @@ window.__ModuleLoader__.load({
             "button",
             {
               type: "button",
-              className: "att-nav-btn",
+              className: "att-nav-btn att-icon-btn",
               title: t("monitor.title"),
               "aria-label": t("monitor.title"),
               onClick: props.onOpenMonitor,
               "data-at-terminal-action": "term-monitor"
             },
-            "\u{1F4CA}"
+            // A 16px dial instead of `📊`: the emoji is colour on every platform and answers to no
+            // token, so it was the loudest mark in a toolbar of 12px text.
+            gaugeRegular({ size: 16 })
           ) : null,
           /**
            * No 「新建终端」 button here any more.
@@ -14055,7 +14404,8 @@ window.__ModuleLoader__.load({
                 "data-active": activeTab === "hardware" ? "true" : "false",
                 onClick: () => setActiveTab("hardware")
               },
-              `\u{1F4CA} ${t("monitor.tab.hardware")}`
+              gaugeRegular({ size: 14 }),
+              t("monitor.tab.hardware")
             ),
             h(
               "button",
@@ -14066,7 +14416,8 @@ window.__ModuleLoader__.load({
                 "data-active": activeTab === "agent_execution" ? "true" : "false",
                 onClick: () => setActiveTab("agent_execution")
               },
-              `\u26A1 ${t("monitor.tab.agent")}`
+              boltRegular({ size: 14 }),
+              t("monitor.tab.agent")
             )
           ),
           h(
@@ -14090,12 +14441,12 @@ window.__ModuleLoader__.load({
             h(
               "button",
               {
-                className: "att-nav-btn",
+                className: "att-nav-btn att-icon-btn",
                 title: t("monitor.refresh"),
                 "aria-label": t("monitor.refresh"),
                 onClick: () => void refresh()
               },
-              "\u{1F504}"
+              refreshRegular({ size: 16 })
             )
           )
         ),
@@ -14107,9 +14458,9 @@ window.__ModuleLoader__.load({
       let { t } = props;
       return h(
         "span",
-        { style: { display: "flex", alignItems: "center", gap: "4px" } },
-        h("span", null, "\u{1F4CA}"),
-        h("span", null, t("monitor.title"))
+        { className: "att-tab-title" },
+        gaugeRegular({ size: 14 }),
+        h("span", { className: "att-tab-title-text" }, t("monitor.title"))
       );
     }
 
@@ -14236,8 +14587,8 @@ window.__ModuleLoader__.load({
               (e.key === "Enter" || e.key === " ") && (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
             }
           },
-          h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
-          h("span", { "aria-hidden": !0 }, "\u{1F4CA}"),
+          h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, gripRegular({ size: 14 })),
+          h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
           (activeLabel || activeServerId) && h(
             "span",
             {
@@ -14245,7 +14596,8 @@ window.__ModuleLoader__.load({
               title: `${t("monitor.server")}${activeLabel || activeServerId}`,
               style: { maxWidth: "110px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
             },
-            `\u{1F5A5}\uFE0F ${activeLabel || activeServerId}`
+            serverRegular({ size: 12 }),
+            ` ${activeLabel || activeServerId}`
           ),
           h(
             "span",
@@ -14289,22 +14641,22 @@ window.__ModuleLoader__.load({
             "span",
             {
               title: t("monitor.hud.expand"),
-              style: { fontSize: "10px", opacity: 0.8, cursor: "pointer", padding: "0 2px" }
+              style: { opacity: 0.8, cursor: "pointer", display: "inline-flex", alignItems: "center" }
             },
-            "\u25BC"
+            chevronDownRegular({ size: 14 })
           ),
           onCloseHud && h(
             "button",
             {
-              className: "att-nav-btn",
-              style: { marginLeft: "2px", padding: "0 4px", fontSize: "11px", opacity: 0.7 },
+              className: "att-nav-btn att-icon-btn",
+              style: { marginLeft: "2px", opacity: 0.7 },
               title: t("monitor.hud.close"),
               "aria-label": t("monitor.hud.close"),
               onClick: (e) => {
                 e.stopPropagation(), onCloseHud();
               }
             },
-            "\u2715"
+            closeRegular({ size: 14 })
           )
         ),
         // Expanded Draggable Floating Window
@@ -14334,8 +14686,8 @@ window.__ModuleLoader__.load({
             h(
               "div",
               { className: "att-floating-header-left" },
-              h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, "\u283F"),
-              h("span", { "aria-hidden": !0 }, "\u{1F4CA}"),
+              h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, gripRegular({ size: 14 })),
+              h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
               h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.title"))
             ),
             h(
@@ -14344,26 +14696,29 @@ window.__ModuleLoader__.load({
               h(
                 "button",
                 {
-                  className: "att-nav-btn",
+                  className: "att-nav-btn att-icon-btn",
                   title: t("monitor.hud.minimize"),
                   "aria-label": t("monitor.hud.minimize"),
                   onClick: (e) => {
                     e.stopPropagation(), setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
                   }
                 },
-                "\u2014"
+                // A chevron rather than the `—` it used to draw: the action **collapses the window
+                // into the pill**, which is what a downward chevron means, while an em dash is the
+                // typographic mark for a range and says nothing about the result.
+                chevronDownRegular({ size: 14 })
               ),
               onCloseHud && h(
                 "button",
                 {
-                  className: "att-nav-btn",
+                  className: "att-nav-btn att-icon-btn",
                   title: t("monitor.hud.close"),
                   "aria-label": t("monitor.hud.close"),
                   onClick: (e) => {
                     e.stopPropagation(), onCloseHud();
                   }
                 },
-                "\u2715"
+                closeRegular({ size: 14 })
               )
             )
           ),
@@ -14382,7 +14737,7 @@ window.__ModuleLoader__.load({
                 borderBottom: "1px solid var(--dsw-alias-border-l1)"
               }
             },
-            h("span", { "aria-hidden": !0 }, "\u{1F5A5}\uFE0F"),
+            h("span", { "aria-hidden": !0 }, serverRegular({ size: 14 })),
             h("span", null, t("monitor.server")),
             h(
               "span",
@@ -15598,10 +15953,12 @@ window.__ModuleLoader__.load({
     }
     var TOKEN_BRIDGE = `
     ${ROOT_SELECTOR} {
-      /* ---- Type. A font stack, not a colour decision: it carries no theme
-         meaning, which is why check 9 exempts this one by name. The panel sets
-         font-family once at the root and every descendant inherits it. */
-      --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans", sans-serif;
+      /* ---- Type. The host's own UI font, named through its token so a user who set a family sees
+         it here too. It used to be a hand-written stack ending in a generic sans-serif fallback, which
+         meant the panel disagreed with every other pane the moment the host font was not the platform
+         default. A font is not a colour decision, which is why check 9 exempts this one by name; the
+         token is still a --dsw-* reference, so the gate is satisfied without needing the exemption. */
+      --vscode-font-family: var(--dsw-font-family);
 
       /* ---- Text. label-primary is the body tier and label-secondary the
          de-emphasized one (hints, field labels, addresses, status bar). The two
@@ -15654,24 +16011,34 @@ window.__ModuleLoader__.load({
          dialog separates from the page it covers. */
       --vscode-widget-border: var(--dsw-alias-border-l4);
 
-      /* ---- The brand-filled button. Foreground is the one literal colour in the
-         bridge; hover is the same brand tinted toward white, so the fill lightens
-         in both themes instead of only in the dark one. */
+      /* ---- The brand-filled button. Foreground is tracked rather than literal: the brand fill is
+         near-black in light and near-white in dark, so only an inverted token can read on it in both.
+         Hover is that same fill tinted toward its own opposite, which is what makes a hover lighten in
+         both themes instead of only in the dark one. */
       --vscode-button-background: var(--dsw-alias-brand-primary);
       --vscode-button-foreground: var(--dsw-alias-label-primary-foreground);
       --vscode-button-hoverBackground: color-mix(in srgb, var(--dsw-alias-brand-primary) 82%, #ffffff);
       --vscode-button-secondaryHoverBackground: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 78%, var(--dsw-alias-label-primary));
-      --vscode-focusBorder: var(--dsw-alias-brand-primary);
+      /*
+       * The focus ring is the **business blue**, not the brand accent.
+       *
+       * The brand is near-black in light and near-white in dark, so a focus ring drawn in it is a
+       * one-pixel shade change on exactly the surfaces it has to be findable on, and it is invisible
+       * against a primary button \u2014 which is brand-filled. state-business-primary is the token the
+       * host paints its own focus rings with, and it is legible against both.
+       */
+      --vscode-focusBorder: var(--dsw-alias-state-business-primary);
       --vscode-progressBar-background: var(--dsw-alias-brand-primary);
 
       /* ---- Interactive states. Hover is the official hover token rather than a
          hand-mixed tint: it is exactly this question answered once, for the whole
-         product, in both themes. Selection stays a brand mix on purpose -- it is
-         the one state that has to read as "chosen", so it must outrank the neutral
-         hover rather than reuse it. */
+         product, in both themes. Selection used to be a 32% brand mix; it is now the host's own
+         'selected row' overlay, because a brand-tinted row in a list reads as a warning or a badge
+         rather than as "this one is selected", and because a brand-selected row is hard to
+         distinguish from a brand-filled button in the same column. */
       --vscode-list-hoverBackground: var(--dsw-alias-interactive-bg-hover);
       --vscode-toolbar-hoverBackground: var(--dsw-alias-interactive-bg-hover);
-      --vscode-list-activeSelectionBackground: color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, transparent);
+      --vscode-list-activeSelectionBackground: var(--dsw-alias-interactive-bg-active);
       /* RESERVED: hover landing on an already-selected row, so the pointer
          acknowledges a row that is both hovered and chosen. */
       --vscode-list-activeSelectionHoverBackground: var(--dsw-alias-interactive-bg-hover-accent);
@@ -15703,10 +16070,28 @@ window.__ModuleLoader__.load({
       box-sizing: border-box;
       padding: 0;
       margin: 0;
-      background: var(--vscode-editor-background);
+      /*
+       * The sidebar surface, not the editor's.
+       *
+       * This panel lives *in* the right column, so the honest background is the column's own fill
+       * (--dsw-specific-sidebar-fill) rather than a page colour one step lighter: with bg-layer-1 the
+       * panel read as a card laid over the column, with a visible seam at both edges and one more
+       * shade than the host's own panes.
+       *
+       * 'transparent' was the other candidate the plan named, and it is deliberately NOT used. It
+       * looks identical when docked and is wrong in the two other carriers this panel supports: a
+       * floated tab and the full-screen right bar both put the panel over a *different* surface, so
+       * an inherited background would show whatever happens to be behind it. An opaque token cannot
+       * be wrong in any of the three.
+       */
+      background: var(--dsw-specific-sidebar-fill);
       color: var(--vscode-foreground);
       font-family: var(--vscode-font-family);
-      font-size: 13px;
+      /*
+       * The host's secondary content size. Named through the token so a user who changed the
+       * Harness font size gets a panel that matches instead of a 13px island.
+       */
+      font-size: var(--dsh-content-font-size-secondary, 13px);
       line-height: 1.5;
     }
     ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-sizing: border-box; }
@@ -15734,6 +16119,17 @@ window.__ModuleLoader__.load({
      * nearest positioned ancestor, so containment above them changes nothing they
      * can observe.
      */
+    /*
+     * The panel's own header and footer.
+     *
+     * 38px is the host's pane-header height, and it is a consequence rather than a number: a 28px
+     * control plus 5px above and below. Both bars are transparent on purpose \u2014 the root already
+     * carries the surface, and repeating it here made three visible bands out of one panel.
+     *
+     * The hairline is .5px at border-l3 rather than 1px at l1: a full CSS pixel is twice the weight
+     * of the separator the host draws between its own regions, and l1 is the divider step, not the
+     * one that separates a region from its body.
+     */
     .att-page {
       display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
       container: att-panel / inline-size;
@@ -15741,34 +16137,80 @@ window.__ModuleLoader__.load({
     .att-page[hidden] { display: none; }
     .att-toolbar {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-sideBar-background);
+      min-height: 38px;
+      padding: 5px 10px;
+      border-bottom: .5px solid var(--dsw-alias-border-l3);
+      background: transparent;
     }
-    .att-nav { display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: var(--vscode-input-background); }
+    .att-nav {
+      display: flex; align-items: center; gap: 2px; padding: 2px;
+      height: 32px;
+      border-radius: var(--dsw-radius-md);
+      background: var(--vscode-input-background);
+    }
     .att-nav-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 28px; padding: 0 10px;
       border: none; background: transparent; color: var(--vscode-descriptionForeground);
-      padding: 3px 14px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px;
+      border-radius: var(--dsw-radius-sm);
+      cursor: pointer; font: inherit; font-size: 12px;
     }
-    .att-nav-btn[aria-selected="true"] { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    .att-nav-btn:hover:not([aria-selected="true"]):not(:disabled) { background: var(--vscode-list-hoverBackground); }
+    /*
+     * The selected segment is a **neutral** raise, not the brand accent.
+     *
+     * A brand-filled chip in a three-item switch claims the same visual weight as the primary
+     * action beside it, so a \u8D44\u4EA7/\u6587\u4EF6 switch and a \u4FDD\u5B58 looked equally important. The host reserves
+     * the accent fill for actions and marks a selected item with a 10% neutral overlay; matching
+     * that is what makes the switch read as navigation.
+     */
+    .att-nav-btn[aria-selected="true"] {
+      background: var(--dsw-alias-interactive-bg-active);
+      color: var(--vscode-list-activeSelectionForeground);
+      font-weight: 500;
+    }
     .att-spacer { flex: 1 1 auto; }
+    /*
+     * Buttons are 28px / 8px / 0 10px \u2014 the host's Button sm, measured (see the plan's appendix).
+     * The old 24px / 4px control was a webview control: it reads as a desktop-dense widget next to
+     * a sidebar whose own rows are 13px type with 12px corners.
+     */
     .att-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 28px; padding: 0 10px;
       border: 1px solid var(--vscode-panel-border);
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
-      padding: 3px 12px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px;
+      border-radius: var(--dsw-radius-sm);
+      cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap;
     }
     .att-btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
     .att-btn:disabled { opacity: 0.5; cursor: default; }
     .att-btn.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
     .att-btn.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
     .att-btn.danger { color: var(--vscode-errorForeground); }
-    .att-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 10px 12px; }
+    /*
+     * An icon-only button: same 28px box, no horizontal padding, and a square hit area.
+     *
+     * The width is stated rather than derived from the glyph, because an SVG icon and a text glyph
+     * have different intrinsic widths and a toolbar that shifts by a pixel per icon looks broken.
+     */
+    .att-icon-btn { width: 28px; padding: 0; }
+    /* Icons inherit the label colour, so a disabled or danger button colours them for free. */
+    .att-icon { display: block; width: 16px; height: 16px; flex: none; }
+    .att-content {
+      flex: 1 1 auto; min-height: 0; overflow-y: auto;
+      padding: 8px 0 8px 8px;
+      /* Reserve the scrollbar's width even when the list is short, so switching between a long
+         and a short list does not shift every row sideways by 8px. */
+      scrollbar-gutter: stable;
+    }
     .att-group-name {
       display: flex; align-items: center; gap: 6px;
+      height: 28px; padding: 0 8px;
       font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
       color: var(--vscode-descriptionForeground);
-      padding: 6px 8px; border-radius: 4px;
+      border-radius: var(--dsw-radius-sm);
       cursor: pointer; user-select: none;
     }
     .att-group-name:hover {
@@ -15777,13 +16219,24 @@ window.__ModuleLoader__.load({
     }
     .att-group-disclosure {
       display: inline-flex; align-items: center; justify-content: center;
-      width: 12px; height: 12px; font-size: 9px; opacity: 0.8;
+      width: 12px; height: 12px; flex: none; opacity: 0.8;
     }
     .att-group-count {
       margin-left: auto;
       font-size: 11px; font-weight: normal; opacity: 0.7;
     }
-    .att-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; user-select: none; }
+    /*
+     * A list row: the host's list geometry \u2014 12px corners, 5px 10px padding.
+     *
+     * The radius is what separates "a row in a list" from "a table cell": the host's own file list
+     * rounds every row, and a square row beside a rounded one reads as two different controls.
+     */
+    .att-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 10px;
+      border-radius: var(--dsw-radius-md);
+      user-select: none;
+    }
     .att-row:hover { background: var(--vscode-list-hoverBackground); }
     .att-row[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
     .att-row-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32%; }
@@ -15802,10 +16255,11 @@ window.__ModuleLoader__.load({
     .att-hint { color: var(--vscode-descriptionForeground); font-size: 12px; padding: 6px; }
     .att-statusbar {
       display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
-      padding: 5px 12px;
-      border-top: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-sideBar-background);
-      color: var(--vscode-descriptionForeground); font-size: 12px;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-top: .5px solid var(--dsw-alias-border-l3);
+      background: transparent;
+      color: var(--vscode-descriptionForeground); font-size: 11px;
     }
     /*
      * The status bar's path, shaped like the official PathLabel: dimmed directory,
@@ -15915,16 +16369,21 @@ window.__ModuleLoader__.load({
        */
       --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
       --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-      background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground);
-      border: 1px solid var(--vscode-panel-border); border-radius: 6px;
+      /* The overlay surface, not the dropdown's: a menu drawn in the page colour reads as part of
+         the page it is covering, which is the one thing a menu must not look like. */
+      background: var(--dsw-alias-bg-overlay); color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-md);
       box-shadow: var(--dsw-shadow-lv2);
     }
     .att-menu-item {
-      display: block; width: 100%; text-align: left;
+      display: flex; align-items: center;
+      width: 100%; height: 28px; text-align: left;
       border: none; background: transparent; color: inherit;
-      padding: 5px 10px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px;
+      padding: 0 10px;
+      border-radius: var(--dsw-radius-sm);
+      cursor: pointer; font: inherit; font-size: 12px;
     }
-    .att-menu-item:hover { background: var(--vscode-list-hoverBackground); }
+    .att-menu-item:hover, .att-menu-item:focus-visible { background: var(--vscode-list-hoverBackground); }
     .att-menu-item.danger { color: var(--vscode-errorForeground); }
     .att-overlay {
       position: absolute; inset: 0; z-index: 900;
@@ -15936,8 +16395,8 @@ window.__ModuleLoader__.load({
       width: min(520px, 100%);
       display: flex; flex-direction: column; gap: 12px;
       padding: 16px 18px;
-      background: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border); border-radius: 8px;
+      background: var(--dsw-alias-bg-overlay);
+      border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-lg);
       box-shadow: var(--dsw-shadow-lv3);
     }
     .att-dialog-title { margin: 0; font-size: 14px; font-weight: 650; }
@@ -15947,12 +16406,27 @@ window.__ModuleLoader__.load({
     .att-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
     .att-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--vscode-descriptionForeground); }
     .att-field input[type="text"], .att-field input[type="password"], .att-field select {
-      padding: 4px 8px; font: inherit;
+      height: 28px; padding: 0 8px; font: inherit;
       color: var(--vscode-input-foreground);
       background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border); border-radius: 4px;
+      border: 1px solid var(--vscode-input-border); border-radius: var(--dsw-radius-sm);
     }
-    .att-field input:focus, .att-field select:focus { outline: 1px solid var(--vscode-focusBorder); }
+    /*
+     * Focus is a **ring**, and only for keyboard focus.
+     *
+     * ':focus' painted an outline on every mouse click into a text field, which is the visual noise
+     * the host does not have; ':focus-visible' is the browser's own answer to "was this focus worth
+     * announcing". The ring is the theme's width token rather than a hand-picked 1px, so it matches
+     * the host's own focus treatment at any zoom.
+     */
+    .att-field input:focus-visible,
+    .att-field select:focus-visible,
+    .att-file-editor:focus-visible,
+    .att-file-text:focus-visible,
+    .att-upload:focus-within {
+      outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder);
+      outline-offset: -1px;
+    }
     .att-check { display: flex; align-items: center; gap: 7px; font-size: 12px; }
     .att-banner {
       display: flex; flex-direction: column; gap: 2px;
@@ -16071,11 +16545,15 @@ window.__ModuleLoader__.load({
     }
     .att-banners { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
     .att-select {
-      padding: 3px 8px; font: inherit; font-size: 12px; max-width: 280px;
+      height: 28px; padding: 0 8px; font: inherit; font-size: 12px;
+      /* Bounded so the toolbar cannot be pushed wider than the panel by a long server name; the
+         native control truncates its own label. */
+      max-width: 220px;
       color: var(--vscode-dropdown-foreground);
       background: var(--vscode-dropdown-background);
-      border: 1px solid var(--vscode-dropdown-border); border-radius: 4px;
+      border: 1px solid var(--vscode-dropdown-border); border-radius: var(--dsw-radius-sm);
     }
+    .att-select:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder); outline-offset: -1px; }
     .att-chip { font-size: 12px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
     /*
      * Visible to a screen reader, invisible to the eye.
@@ -16099,6 +16577,19 @@ window.__ModuleLoader__.load({
        dot: the strip already draws the capsule, and a second background would read as a
        second chip. Colours come from the same three state tokens the status dot uses, so a
        green tab means exactly what a green status line means. */
+    .att-tab-title {
+      display: inline-flex; align-items: center; gap: 6px;
+      min-width: 0;
+    }
+    /*
+     * The instance's own name, and the only part allowed to shrink.
+     *
+     * The strip gives each chip a fixed share, so exactly one child has to be able to truncate or the
+     * chip overflows and the title's tail \u2014 the part that names the server \u2014 is the piece that leaves.
+     */
+    .att-tab-title-text {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .att-tab-badge {
       display: inline-flex; align-items: center; gap: 5px;
       min-width: 0; font-size: 12px; white-space: nowrap;
@@ -16128,7 +16619,9 @@ window.__ModuleLoader__.load({
     .att-copied { font-size: 12px; color: var(--vscode-descriptionForeground); }
     .att-tree-row {
       display: flex; align-items: center; gap: 6px;
-      padding: 4px 8px; border-radius: 4px; user-select: none;
+      padding: 5px 10px;
+      border-radius: var(--dsw-radius-md);
+      user-select: none;
       white-space: nowrap;
     }
     .att-tree-row:hover { background: var(--vscode-list-hoverBackground); }
@@ -16141,7 +16634,11 @@ window.__ModuleLoader__.load({
       font-family: inherit; font-size: 11px;
     }
     .att-tree-disclosure:hover { background: var(--vscode-toolbar-hoverBackground); border-radius: 3px; }
-    .att-tree-glyph { width: 12px; text-align: center; color: var(--vscode-descriptionForeground); }
+    .att-tree-glyph {
+      width: 14px; flex: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--vscode-descriptionForeground);
+    }
     .att-tree-name { overflow: hidden; text-overflow: ellipsis; }
     .att-tree-meta {
       margin-left: auto; font-size: 12px;
@@ -16196,10 +16693,7 @@ window.__ModuleLoader__.load({
       margin: -1px; padding: 0; border: 0;
       clip: rect(0 0 0 0); overflow: hidden; white-space: nowrap;
     }
-    .att-upload:focus-within {
-      outline: 1px solid var(--vscode-focusBorder);
-      outline-offset: 1px;
-    }
+    /* The ring itself is drawn by the shared focus-visible rule above, on '.att-upload:focus-within'. */
 
     /*
      * The file pane. 'att-file-content' overrides the page's own padding because a viewer and an
@@ -16207,10 +16701,25 @@ window.__ModuleLoader__.load({
      * as the file, and the textarea's own padding is where its gutter-less look comes from.
      */
     .att-file-content { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 0; }
+    /*
+     * The code font, overridden here rather than bridged.
+     *
+     * '--vscode-editor-font-family' is not in the bridge, and deliberately so: check 9 requires every
+     * bridged value to reference a --dsw-* token, while the host's code font is --ds-font-family-code
+     * \u2014 a different family of variables. Bridging it would either fail the gate or force a token that
+     * does not exist. Overriding the three code surfaces directly is the honest way to read it, and it
+     * costs nothing: nothing else in the sheet wants a code font.
+     *
+     * The fallbacks are font stacks, not colours: they carry no theme decision, and without them a
+     * host that renamed the token would render code in the UI font (the one outcome that makes a
+     * diff unreadable).
+     */
+    .att-file-text, .att-file-editor, .att-code-preview {
+      font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+    }
     .att-file-text {
       flex: 1 1 auto; min-height: 0; margin: 0; overflow: auto;
-      padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 4px;
-      font-family: var(--vscode-editor-font-family, monospace);
+      padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-sm);
       font-size: 12px; line-height: 1.45;
       background: var(--vscode-editor-background);
       color: var(--vscode-editor-foreground);
@@ -16220,17 +16729,60 @@ window.__ModuleLoader__.load({
     }
     .att-file-editor {
       flex: 1 1 auto; min-height: 0; overflow: auto;
-      padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 4px;
-      font-family: var(--vscode-editor-font-family, monospace);
+      padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: var(--dsw-radius-sm);
       font-size: 12px; line-height: 1.45;
       background: var(--vscode-editor-background);
       color: var(--vscode-editor-foreground);
       resize: none; tab-size: 4;
     }
-    .att-file-editor:focus-visible,
-    .att-file-text:focus-visible {
-      outline: 1px solid var(--vscode-focusBorder);
+
+    /* ---------------------------- the reused form's geometry --------------------------- */
+
+    /*
+     * Geometry overrides for the server form (UI2-05).
+     *
+     * The reused sheet was written for a VS Code webview, where a 4px corner and a 7px-padded input
+     * were the platform's own look. In this sidebar they sit next to 12px rows and 8px buttons, so the
+     * form read as a different application embedded in the panel. Every rule below is the same
+     * *pairing* the host uses \u2014 28px control, --dsw-radius-sm, 12px type \u2014 applied to the classes the
+     * reused markup already carries.
+     *
+     * Each selector is spelled with the root prefix because the reused sheet was scoped to the panel
+     * root on the way in: a bare .primary-action here is a *weaker* selector than the rule it is meant
+     * to replace, and would silently lose.
+     */
+    ${ROOT_SELECTOR} .form-panel { border-radius: var(--dsw-radius-md); }
+    ${ROOT_SELECTOR} .auth-card { border-radius: var(--dsw-radius-md); }
+    ${ROOT_SELECTOR} input,
+    ${ROOT_SELECTOR} select {
+      height: 28px;
+      padding: 0 8px;
+      border-radius: var(--dsw-radius-sm);
+    }
+    ${ROOT_SELECTOR} .field-stack select { min-height: 28px; }
+    /* Hover is a stronger border, not a focus-coloured one: the old rule turned the border the same
+       blue as the focus ring on mere hover, which is the one signal a ring must keep for itself. */
+    ${ROOT_SELECTOR} input:hover,
+    ${ROOT_SELECTOR} select:hover { border-color: var(--dsw-alias-border-l4); }
+    /* Focus is keyboard-only here too, and the always-on outline from the reused sheet is retired. */
+    ${ROOT_SELECTOR} input:focus,
+    ${ROOT_SELECTOR} select:focus { outline: none; }
+    ${ROOT_SELECTOR} input:focus-visible,
+    ${ROOT_SELECTOR} select:focus-visible {
+      outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder);
       outline-offset: -1px;
+    }
+    ${ROOT_SELECTOR} .primary-action,
+    ${ROOT_SELECTOR} .secondary-action {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 28px; padding: 0 12px;
+      border-radius: var(--dsw-radius-sm);
+      font-size: 12px; line-height: 1;
+    }
+    ${ROOT_SELECTOR} .primary-action:focus { outline: none; }
+    ${ROOT_SELECTOR} .primary-action:focus-visible {
+      outline: var(--dsw-focus-ring-width) solid var(--vscode-focusBorder);
+      outline-offset: 2px;
     }
 
     /*
@@ -16359,6 +16911,9 @@ window.__ModuleLoader__.load({
     }
 
     .att-monitor-tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       background: transparent;
       border: none;
       border-bottom: 2px solid transparent;
@@ -16366,8 +16921,8 @@ window.__ModuleLoader__.load({
       padding: 6px 12px;
       font-size: 13px;
       cursor: pointer;
-      border-radius: 4px 4px 0 0;
-      transition: all 0.15s ease;
+      border-radius: var(--dsw-radius-sm) var(--dsw-radius-sm) 0 0;
+      transition: color 0.15s ease, background 0.15s ease;
     }
 
     .att-monitor-tab-btn:hover {
@@ -16501,11 +17056,11 @@ window.__ModuleLoader__.load({
     }
 
     .att-code-preview {
-      font-family: var(--vscode-editor-font-family, monospace);
+      /* Font comes from the shared code-surface rule above ('--ds-font-family-code'). */
       font-size: 11px;
       background: var(--dsw-alias-bg-base);
       border: 1px solid var(--dsw-alias-border-l1);
-      border-radius: 4px;
+      border-radius: var(--dsw-radius-sm);
       padding: 8px;
       max-height: 140px;
       overflow-y: auto;
@@ -16615,8 +17170,8 @@ window.__ModuleLoader__.load({
     }
 
     .att-floating-drag-grip {
+      display: inline-flex; align-items: center;
       color: var(--dsw-alias-label-dimmed);
-      font-size: 14px;
       line-height: 1;
       cursor: grab;
       user-select: none;
@@ -16858,7 +17413,20 @@ window.__ModuleLoader__.load({
             id: "at-terminal",
             order: 50,
             title: () => t("guide.title"),
-            description: () => t("guide.description")
+            description: () => t("guide.description"),
+            /*
+             * The two fields that make the standard guide card look finished (UI2-06).
+             *
+             * Without `icon` the card renders the registry's placeholder square — the one card in the
+             * column that looks unfinished. Without `commandId` it renders no shortcut, even though
+             * this panel has one. Both fields are what the host's own `sidebar-files` entry supplies,
+             * which is how the shape was confirmed rather than guessed.
+             *
+             * The artwork is 26px and drawn at 1.5px on its own artboard; see `icons/artwork.ts` for
+             * why the 16px glyph is not scaled up into this slot.
+             */
+            icon: guideTerminalArtwork,
+            commandId: "atTerminal.mode.assets"
           }
         ]
       };
@@ -16904,13 +17472,14 @@ window.__ModuleLoader__.load({
       return h(
         "button",
         {
-          className: "att-nav-btn",
+          className: "att-nav-btn att-icon-btn",
           title: props.t("monitor.title"),
           "aria-label": props.t("monitor.title"),
-          onClick: () => props.onOpenPane(),
-          style: { display: "inline-flex", alignItems: "center", justifyContent: "center" }
+          onClick: () => props.onOpenPane()
         },
-        "\u{1F4CA}"
+        // The glyph replaces a `📊` emoji, which rendered in colour on every platform and at a weight
+        // no token could control — the loudest thing in a 28px toolbar.
+        gaugeRegular({ size: 16 })
       );
     }
     function MonitorHudContainer(props) {

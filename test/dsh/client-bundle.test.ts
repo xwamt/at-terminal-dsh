@@ -3251,3 +3251,80 @@ function findByFunctionName(tree: Tree, name: string): ElementLike | null {
   });
   return found;
 }
+/* ------------------------------ UI2-06: the icon set ------------------------------ */
+
+/**
+ * The guide card and the tab chip, as the user meets them.
+ *
+ * Two things are asserted and one is deliberately not. Asserted: the guide entry carries the
+ * fields the host's own entry carries (`icon`, `commandId`), and the chip renders a glyph instead
+ * of the words 「AT 终端 · 」. Not asserted: how any of it *looks* — the artwork's optical weight is
+ * a judgement the walkthrough makes, and no text assertion can stand in for it.
+ */
+describe('client bundle — icons wired into the chrome (UI2-06)', () => {
+  it('gives the guide entry a 26px artwork and the command it advertises', () => {
+    const harness = createHarness();
+    harness.apply();
+
+    const entry = harness.tabDefinitions[0].guide as Array<Record<string, unknown>>;
+    const artwork = entry[0].icon as (() => ElementLike) | undefined;
+    expect(typeof artwork, 'the card would render a placeholder square without this').toBe('function');
+
+    const svg = artwork?.() as unknown as ElementLike;
+    expect(svg.type).toBe('svg');
+    // 26 on its own artboard, and a 1.5px stroke that therefore lands at 1.5px — the whole reason
+    // it is not the 16px glyph scaled up (1.3 * 26/16 = 2.1, visibly heavier than the host's).
+    expect(svg.props.width).toBe(26);
+    expect(svg.props.viewBox).toBe('0 0 26 26');
+    expect(svg.props.strokeWidth).toBe(1.5);
+    expect(svg.props['aria-hidden']).toBe('true');
+
+    expect(entry[0].commandId).toBe('atTerminal.mode.assets');
+  });
+
+  it('draws the tab chip with a glyph instead of a text prefix', async () => {
+    const harness = createSessionHarness();
+    await harness.settle();
+
+    const titleEntry = harness.slotRegisters.find(
+      (entry) => entry.options.name === 'sidebar.right.pane.tab.title' && entry.options.key === SESSION_KEY
+    );
+    expect(titleEntry, 'the session kind registers a chip').toBeDefined();
+    const component = titleEntry?.component as (props: Record<string, unknown>) => unknown;
+
+    /*
+     * A tab the frame named **no server** for, which is the branch this asserts.
+     *
+     * Instantiated twice, and that is the registration's shape rather than a workaround: the seat
+     * is registered as `wrapWithLocale(AtTerminalTitle, t)`, so the first call returns a
+     * `BodyLocale.Provider` element and the second steps through it into the chip itself.
+     * `instantiate` resolves **one** level per call (a provider, or one component), which is what
+     * keeps a body's own subtree out of the shim's reach.
+     *
+     * The branch with a published badge — the one that used to read 「AT 终端 · <label>」 — needs a
+     * live session to publish it, and `publishTabBadge` is not reachable from here; its changed
+     * shape is inspected in the walkthrough and recorded as unverified in the plan rather than
+     * asserted through a double that would only prove itself.
+     */
+    const record = harness.tabInfo('tab-under-test', {});
+    const provider = harness.shim.instantiate({
+      type: component,
+      props: { useTabInfo: () => ({ tab: record }) }
+    });
+    const rendered = harness.shim.instantiate(provider) as ElementLike;
+
+    const svgs: ElementLike[] = [];
+    walk(rendered, (node) => {
+      if (node.type === 'svg') svgs.push(node);
+    });
+    expect(svgs, 'the kind is carried by a glyph, not by words').toHaveLength(1);
+    expect(svgs[0].props.width).toBe(14);
+    expect(svgs[0].props['aria-hidden']).toBe('true');
+
+    const text = collectText(rendered);
+    // With no target yet, the type's own name is the honest label — and it is no longer glued to a
+    // second word with a `·` separator, which is what cost the strip ~40px per chip.
+    expect(text).toContain('AT 终端');
+    expect(text).not.toContain('·');
+  });
+});
