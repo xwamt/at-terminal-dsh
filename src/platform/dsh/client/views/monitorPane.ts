@@ -137,7 +137,7 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
             h(
               'select',
               {
-                className: 'att-input',
+                className: 'att-select',
                 style: { padding: '2px 6px', fontSize: '12px' },
                 value: selectedServerId,
                 onChange: (e: { target: { value: string } }) => setSelectedServerId(e.target.value)

@@ -78,6 +78,15 @@ export interface AssetsViewProps {
   onOpenMonitor?(server: ServerView): void;
   collapsedGroups?: readonly string[];
   onToggleGroup?(groupKey: string): void;
+  /**
+   * The scrolling list box, so the body can put it back where the user left it.
+   *
+   * A ref object rather than a callback: the body needs to *write* `scrollTop` after an
+   * asynchronous read lands, which is not a moment React will call anything back on.
+   */
+  scrollRef?: { current: HTMLElement | null };
+  /** Reported on scroll only — the offset never re-renders the list. */
+  onScrollTop?(top: number): void;
 }
 
 function toolbarButton(
@@ -297,7 +306,18 @@ export function renderAssetsView(props: AssetsViewProps): El {
           { className: 'att-banner', role: 'status', 'data-at-terminal-notice': 'tab-refused' },
           props.notice
         ),
-    h('div', { className: 'att-content', role: 'listbox', 'aria-label': t('servers.title') }, renderList(t, props)),
+    h(
+      'div',
+      {
+        className: 'att-content',
+        role: 'listbox',
+        'aria-label': t('servers.title'),
+        ref: props.scrollRef,
+        onScroll: (event: { currentTarget?: { scrollTop?: unknown } }) =>
+          props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0))
+      },
+      renderList(t, props)
+    ),
     renderStatusbar(t, props.summaryState)
   );
 }

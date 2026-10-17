@@ -143,10 +143,27 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
         {
           className: 'att-select',
           value: props.selectedServerId,
-          disabled: props.serversState.kind !== 'ok' || props.servers.length === 0,
+          /**
+           * Disabled while live, not only while the list is unusable.
+           *
+           * The selector changes which server the *next* connection opens, but the status bar,
+           * the tab chip and the PTY all describe the **current** one. Enabling it mid-session
+           * is what produced "the chip says B, the PTY is on A": the state was honest about the
+           * selection and the connection was honest about the PTY, and the user had no way to
+           * tell which of the two labels to believe. `setSessionTarget` refuses the same change
+           * from the model side; see its comment for why both exist.
+           */
+          disabled:
+            props.serversState.kind !== 'ok' || props.servers.length === 0 || live,
+          // A disabled control cannot show a tooltip reliably in every browser, but the wrapper
+          // keeps the reason reachable: `title` on the select still surfaces on hover in
+          // Chromium, and the status line below states the connection anyway.
+          title: live ? t('terminal.selectLocked') : undefined,
           onChange: (event: { target?: { value?: unknown } }) => props.onSelect(text(event?.target?.value)),
           'aria-label': t('terminal.select'),
-          'data-at-terminal-action': 'term-select'
+          'aria-describedby': live ? 'att-term-lock-hint' : undefined,
+          'data-at-terminal-action': 'term-select',
+          'data-at-terminal-locked': live ? 'true' : 'false'
         },
         h('option', { value: '' }, t('terminal.select')),
         props.servers.map((server) =>
@@ -157,6 +174,14 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
           )
         )
       ),
+      // The reason a keyboard or screen-reader user cannot change the selector. Visually hidden
+      // rather than shown: the toolbar is already the tightest row in a narrow panel (UI2-07), and
+      // a permanent sentence explaining a disabled control would cost more than it says. Referenced
+      // by `aria-describedby` instead of being a second live region — the status line already
+      // announces the connection state, and two announcements for one change is noise.
+      live
+        ? h('span', { id: 'att-term-lock-hint', className: 'att-sr-only' }, t('terminal.selectLocked'))
+        : null,
       live
         ? h(
             'button',

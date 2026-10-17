@@ -42,6 +42,15 @@ export const zh: Record<string, string> = {
   'menu.remove': '删除',
   'menu.copied': '已复制 {target}',
   'dialog.close': '关闭',
+  // The confirm box's dismissive button. 取消 rather than 否: it is the same word the form's own
+  // 取消 uses, so "this closes the question without doing anything" reads identically everywhere.
+  'dialog.cancel': '取消',
+  // Titles for the three destructive questions. A title says what is being acted on; the
+  // message says what will happen — one word of each, and never merged into one sentence.
+  'dialog.confirmRemoveTitle': '删除服务器',
+  'dialog.confirmDeleteTitle': '删除远端文件',
+  'dialog.confirmDiscardTitle': '放弃未保存的修改',
+  'dialog.confirmUploadTitle': '覆盖已有文件',
   'summary.title': '资产摘要',
   'summary.pending': '正在读取资产摘要 …',
   'summary.servers': '服务器：{count}',
@@ -63,7 +72,10 @@ export const zh: Record<string, string> = {
   'servers.edit': '编辑',
   'servers.remove': '删除',
   'servers.hasPassword': '已存口令',
-  'servers.removeConfirm': '确定删除服务器「{label}」？此操作不可撤销。',
+  // The delete question states the whole consequence, because two of the three parts are
+  // surprising: the stored password goes with the record, and the private-key **file** does not
+  // (the panel never owned it). Saying only "cannot be undone" leaves the user guessing which.
+  'servers.removeConfirm': '将删除服务器「{label}」及其已保存的口令，并立即断开该服务器的连接。磁盘上的私钥文件不会被删除。此操作不可撤销。',
   'servers.removed': '已删除 {label}。',
   'servers.removeMissing': '该服务器已不存在，列表已刷新。',
   'auth.password': '口令',
@@ -111,6 +123,10 @@ export const zh: Record<string, string> = {
   'form.saving': '正在保存 …',
   'form.cancel': '取消',
   'form.saved': '已保存 {label}。',
+  // Leaving a half-typed server form. The message names what is lost rather than asking
+  // "are you sure", because "sure about what" is the question the user then has to answer.
+  'form.discardConfirm': '这台服务器的填写内容还没有保存，返回列表会丢掉刚才的输入。',
+  'form.discard': '放弃填写',
   'form.summaryEnterHostUser': '填写主机与用户名',
   'form.summaryAuth': '认证：{auth}',
   'form.summaryGroup': '分组：{group}',
@@ -156,6 +172,9 @@ export const zh: Record<string, string> = {
   'import.result.privateKeys': '写入私钥 {count}',
   'terminal.title': '终端',
   'terminal.select': '服务器',
+  // Why the selector is disabled mid-session. It reads as a state, not as an instruction:
+  // the honest answer to "why can I not change this" is "because something else depends on it".
+  'terminal.selectLocked': '连接中或已连接时不能切换服务器，断开后可切换。',
   'terminal.connect': '连接',
   'terminal.disconnect': '断开',
   'terminal.reconnect': '重连',
@@ -250,6 +269,11 @@ export const zh: Record<string, string> = {
   'sftp.uploadConflict': '远端已存在 {path}。要覆盖它吗？',
   'sftp.uploadSkipped': '已跳过 {name}（远端已存在）',
   'sftp.uploadDone': '已上传 {count} 个文件。',
+  // The verb on the confirm button. 覆盖 rather than 确定, so the button restates the action the
+  // message just described.
+  'sftp.overwrite': '覆盖',
+  'sftp.discard': '放弃修改',
+  'sftp.discardConfirm': '{name} 有未保存的修改，继续会丢失这些修改。',
   'sftp.fileBack': '返回列表',
   'sftp.filePending': '正在读取文件 …',
   'sftp.fileSave': '保存',
@@ -356,6 +380,11 @@ export const en: Record<string, string> = {
   'menu.remove': 'Delete',
   'menu.copied': 'Copied {target}',
   'dialog.close': 'Close',
+  'dialog.cancel': 'Cancel',
+  'dialog.confirmRemoveTitle': 'Delete server',
+  'dialog.confirmDeleteTitle': 'Delete remote file',
+  'dialog.confirmDiscardTitle': 'Discard unsaved changes',
+  'dialog.confirmUploadTitle': 'Overwrite existing file',
   'summary.title': 'Asset summary',
   'summary.pending': 'Reading the asset summary …',
   'summary.servers': 'Servers: {count}',
@@ -373,7 +402,7 @@ export const en: Record<string, string> = {
   'servers.edit': 'Edit',
   'servers.remove': 'Delete',
   'servers.hasPassword': 'password stored',
-  'servers.removeConfirm': 'Delete server "{label}"? This cannot be undone.',
+  'servers.removeConfirm': 'Deletes server "{label}" and its stored password, and disconnects it immediately. The private-key file on disk is not deleted. This cannot be undone.',
   'servers.removed': 'Deleted {label}.',
   'servers.removeMissing': 'That server is already gone; the list has been refreshed.',
   'auth.password': 'password',
@@ -421,6 +450,8 @@ export const en: Record<string, string> = {
   'form.saving': 'Saving …',
   'form.cancel': 'Cancel',
   'form.saved': 'Saved {label}.',
+  'form.discardConfirm': 'This server form has not been saved. Going back to the list discards what you typed.',
+  'form.discard': 'Discard',
   'form.summaryEnterHostUser': 'Enter host and username',
   'form.summaryAuth': 'Authentication: {auth}',
   'form.summaryGroup': 'Group: {group}',
@@ -466,6 +497,7 @@ export const en: Record<string, string> = {
   'import.result.privateKeys': 'private keys written {count}',
   'terminal.title': 'Terminal',
   'terminal.select': 'Server',
+  'terminal.selectLocked': 'The server cannot be changed while connecting or connected. Disconnect first.',
   'terminal.connect': 'Connect',
   'terminal.disconnect': 'Disconnect',
   'terminal.reconnect': 'Reconnect',
@@ -548,6 +580,9 @@ export const en: Record<string, string> = {
   'sftp.copiedPath': 'Copied path: {path}',
   'sftp.uploadHere': 'Upload here …',
   'sftp.upload': 'Upload',
+  'sftp.overwrite': 'Overwrite',
+  'sftp.discard': 'Discard changes',
+  'sftp.discardConfirm': '{name} has unsaved changes. Continuing discards them.',
   'sftp.uploading': 'Uploading …',
   'sftp.uploadProgress': 'Uploading: {name}',
   'sftp.uploadProgressMulti': 'Uploading ({current}/{total}): {name}',

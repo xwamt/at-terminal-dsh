@@ -519,6 +519,9 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   box-shadow: var(--dsw-shadow-lv3);
 }
 .att-dialog-title { margin: 0; font-size: 14px; font-weight: 650; }
+/* The confirm box's one sentence. Body size, secondary weight: it explains a decision the title
+   has already named, so it must not compete with it. */
+.att-dialog-message { margin: 0; font-size: 12px; line-height: 1.6; color: var(--vscode-descriptionForeground); }
 .att-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .att-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--vscode-descriptionForeground); }
 .att-field input[type="text"], .att-field input[type="password"], .att-field select {
@@ -652,6 +655,22 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   border: 1px solid var(--vscode-dropdown-border); border-radius: 4px;
 }
 .att-chip { font-size: 12px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+/*
+ * Visible to a screen reader, invisible to the eye.
+ *
+ * The standard clip-and-shrink recipe rather than 'display: none' or 'visibility: hidden':
+ * both of those remove the node from the accessibility tree, which would make an
+ * 'aria-describedby' pointing at it describe nothing at all — the failure mode looks like
+ * "the hint is redundant" while it is really "the hint does not exist". 1px rather than 0 is
+ * deliberate for the same reason: a genuinely zero-sized box is skipped by some readers.
+ */
+.att-sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  overflow: hidden; white-space: nowrap;
+}
 
 /* Tab chip badge — which server this tab is on, and whether it is up.
    Rendered inside the frame's own tab strip, so it owns no box of its own beyond the
@@ -708,6 +727,20 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 /* The disconnected listing is the last one the server gave us: readable, never editable. */
 .att-sftp-page .att-banner[data-at-terminal-sftp="disconnected"] { margin: 6px 0; }
+
+/*
+ * The file pane's box.
+ *
+ * .att-file-content is a plain flex column with no sizing of its own, so without this it
+ * sizes to its content and the *page* scrolls — while a viewer and an editor both want their
+ * own scroll region inside a fixed-height pane (the textarea especially: its 'overflow: auto'
+ * can never engage if its box is as tall as the file). The client renders this class on the
+ * pane root; it had no rule at all until the UI2-00 className audit caught it.
+ *
+ * (No backticks above: this whole sheet is a template literal, so one would end the string.)
+ */
+.att-sftp-file-page > .att-file-content { flex: 1 1 auto; min-height: 0; }
+.att-sftp-file-page { overflow: hidden; }
 
 /*
  * The selected **file** row. A background rather than a border, because a border would shift
@@ -838,6 +871,41 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   }
 }
 
+/*
+ * The server form in a narrow panel (UI2-02).
+ *
+ * The reused sheet already collapses this grid to one column, but inside
+ * '@media (max-width: 760px)' — a question about the **window**, not about this panel. A
+ * 1024px window gives the right bar roughly 460px, so the two-column grid stays and its left
+ * column ('minmax(0, 1.1fr)') is squeezed to ~110px: the form was unusable at the default
+ * width while the rule that fixes it sat there being true only for windows nobody drags.
+ *
+ * Same declarations, asked of the container that actually resizes. 680px is where the right
+ * column's own minimum ('minmax(280px, .9fr)') plus a usable left column stops fitting; 520px
+ * is where the field pairs inside each column stop fitting too. Specificity is spelled out
+ * with the root prefix because the reused rules are already scoped to '.att-root' and a bare
+ * '.form-section-grid' here would lose to them rather than override.
+ *
+ * (No backticks in this block: the sheet is a template literal.)
+ */
+@container att-panel (max-width: 680px) {
+  ${ROOT_SELECTOR} .form-section-grid { grid-template-columns: minmax(0, 1fr); }
+  ${ROOT_SELECTOR} .form-right-col { grid-template-columns: minmax(0, 1fr); }
+}
+@container att-panel (max-width: 520px) {
+  ${ROOT_SELECTOR} .field-grid,
+  ${ROOT_SELECTOR} .auth-card-grid { grid-template-columns: minmax(0, 1fr); }
+  ${ROOT_SELECTOR} .server-form-shell { padding: 16px; }
+  ${ROOT_SELECTOR} .form-header,
+  ${ROOT_SELECTOR} .form-footer { display: grid; gap: 8px; }
+  ${ROOT_SELECTOR} .form-actions { display: grid; justify-content: stretch; }
+  /* Full-width actions in a narrow panel: two 28px buttons side by side at 380px would each
+     be ~half of a 348px content box, which is fine — but 保存 is the primary act and the
+     footer already wraps, so stacking is the readable arrangement rather than a compromise. */
+  ${ROOT_SELECTOR} .secondary-action,
+  ${ROOT_SELECTOR} .primary-action { width: 100%; }
+}
+
 /* --------------------------- Monitor & HUD Styles -------------------------- */
 .att-monitor-container {
   display: flex;
@@ -960,7 +1028,18 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-.att-badge {
+/*
+ * The monitor/HUD status pill.
+ *
+ * Renamed from '.att-badge', which was already the **asset row's** auth badge 600 lines above —
+ * two rules with one name, the later one winning, so the asset badge silently picked up this
+ * pill's padding, weight and radius. That is the class of defect a stylesheet cannot warn about:
+ * both rules are valid, both are wanted, and the bug is that they agree on a name. The att-monitor-
+ * prefix is the scope this file actually has (a plain prefix rather than a nested selector, because
+ * the pills are rendered inside both the docked pane and the floating HUD, which share no ancestor
+ * below .att-root).
+ */
+.att-monitor-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -971,12 +1050,12 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   line-height: 1.4;
 }
 
-.att-badge-running {
+.att-monitor-badge-running {
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
   color: var(--dsw-alias-brand-primary);
 }
 
-.att-badge-pulse-dot {
+.att-monitor-badge-pulse-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -984,17 +1063,17 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   animation: att-pulse 1.5s infinite ease-in-out;
 }
 
-.att-badge-waiting {
+.att-monitor-badge-waiting {
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
   color: var(--dsw-alias-state-warn-primary);
 }
 
-.att-badge-success {
+.att-monitor-badge-success {
   background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
   color: var(--dsw-alias-state-success-primary);
 }
 
-.att-badge-denied {
+.att-monitor-badge-denied {
   background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
   color: var(--dsw-alias-state-error-primary);
 }

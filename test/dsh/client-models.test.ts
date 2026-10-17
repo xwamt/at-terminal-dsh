@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -565,6 +565,102 @@ describe('client styles — scopeCss', () => {
     const sheet = buildStyleSheet(sources);
     const missing = [...used].filter((name) => !sheet.includes(`${name}:`));
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * `.att-*` classes the client renders but the sheet never defines — the audit behind UI2-00.
+ *
+ * Four of these shipped in the monitor/HUD work (`att-input`, `att-hud-pill-expand-arrow`,
+ * `att-btn-secondary`, `att-sftp-file-page`), and nothing caught them: an undefined class is
+ * not a syntax error, a type error or a failed assertion — it is a control that silently falls
+ * back to the browser's own chrome, which looks *plausible* in a screenshot and wrong only
+ * next to the real thing. A text assertion is the only kind of test that can see it.
+ *
+ * What this proves and does not: every literal still currently resolves. It cannot prove the
+ * rule says anything useful, and it deliberately does not try — a class defined as `{}` passes,
+ * because "defined but faint" is a design review, not a gate.
+ */
+describe('client styles — className audit (UI2-00)', () => {
+  /**
+   * Every `className` literal in one source file, tokenised.
+   *
+   * Only literals: a `className` built from a variable is not auditable here, and inferring one
+   * would mean running the component. A template literal contributes its **static** prefix —
+   * `att-badge ${kind}` yields `att-badge` — which is the honest reading of "this class is
+   * rendered": the interpolated half is another branch of code this test does not execute.
+   */
+  function classNameTokens(source: string): string[] {
+    const tokens: string[] = [];
+    for (const statement of source.matchAll(/className:\s*([^\n]*)/g)) {
+      const line = statement[1];
+      for (const literal of line.matchAll(/'([^']*)'|"([^"]*)"|`([^`]*)`/g)) {
+        const value = literal[1] ?? literal[2] ?? literal[3] ?? '';
+        for (const token of value.split(/[\s${}]+/)) {
+          if (/^att-[A-Za-z0-9_-]+$/.test(token)) tokens.push(token);
+        }
+      }
+    }
+    return tokens;
+  }
+
+  function clientSources(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir)) {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) out.push(...clientSources(path));
+      else if (path.endsWith('.ts')) out.push(path);
+    }
+    return out;
+  }
+
+  it('defines every att-* class the client renders', () => {
+    const dir = join(process.cwd(), 'src', 'platform', 'dsh', 'client');
+    const sheet = buildStyleSheet(readRealSources());
+
+    /** `.att-x` as a whole class, not the prefix of `.att-x-y`. */
+    const isDefined = (className: string): boolean =>
+      new RegExp(`\\.${className}(?![A-Za-z0-9_-])`).test(sheet);
+
+    const missing: string[] = [];
+    let seen = 0;
+    for (const file of clientSources(dir)) {
+      for (const token of new Set(classNameTokens(readFileSync(file, 'utf8')))) {
+        seen += 1;
+        if (!isDefined(token)) missing.push(`${token} (${file.slice(dir.length + 1)})`);
+      }
+    }
+
+    // A regex that stopped matching would make this suite vacuously green.
+    expect(seen).toBeGreaterThan(80);
+    expect(missing).toEqual([]);
+  });
+
+  it('reads a template literal as its static prefix only', () => {
+    expect(classNameTokens("className: `att-badge ${kind === 'a' ? 'x' : 'y'}`")).toEqual(['att-badge']);
+    // Both arms of a ternary are literals, so both are audited; `primary` is not an att- class.
+    expect(classNameTokens("className: primary ? 'att-btn primary' : 'att-btn'")).toEqual([
+      'att-btn',
+      'att-btn'
+    ]);
+    // A class built from a variable is not a literal and is not audited.
+    expect(classNameTokens('className: dynamic')).toEqual([]);
+  });
+
+  /**
+   * UI2-04: no destructive question goes to the browser any more.
+   *
+   * A call, not a mention: the two comments that explain *why* `window.confirm` is gone name it,
+   * and deleting those would cost more than this assertion buys. `window.confirm(` with the
+   * parenthesis is the only thing that can actually open a dialog.
+   */
+  it('never asks a question through window.confirm', () => {
+    const dir = join(process.cwd(), 'src', 'platform', 'dsh', 'client');
+    const offenders = clientSources(dir).filter((file) =>
+      /window\.confirm\s*\(/.test(readFileSync(file, 'utf8'))
+    );
+
+    expect(offenders.map((file) => file.slice(dir.length + 1))).toEqual([]);
   });
 });
 

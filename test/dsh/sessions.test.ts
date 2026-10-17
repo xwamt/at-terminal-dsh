@@ -30,6 +30,7 @@ import {
   disconnectSession,
   disposeAllSessions,
   ensureSession,
+  isSessionLive,
   setSessionTarget,
   type TerminalSession
 } from '../../src/platform/dsh/client/sessions';
@@ -225,5 +226,64 @@ describe('session registry — the screen survives a tab switch', () => {
     attachEngine(session, engine.engine);
     expect(engine.writes.length).toBe(1);
     expect(engine.writes[0].length).toBe(5000);
+  });
+});
+
+/**
+ * UI2-01: the target is the PTY's, not the selector's.
+ *
+ * The defect was a disagreement, not a crash. The selector's `onChange` called
+ * `setSessionTarget`, which only rewrote `session.serverId` — the socket, the PTY and the
+ * status bar kept describing the *old* server, so the tab chip and the connection reported
+ * different hosts and there was no way for the user to tell which to believe. The view now
+ * disables the control, and these cases pin the second, independent guard: a programmatic
+ * call (a shortcut, a stale closure, a future menu item) must not be able to make the same
+ * mistake the control no longer offers.
+ */
+describe('session target — locked while the PTY is live (UI2-01)', () => {
+  beforeEach(() => {
+    disposeAllSessions('test');
+  });
+
+  it('refuses to retarget a connected session', () => {
+    const session = ensureSession('tab-live');
+    session.serverId = 'srv-a';
+    session.state = { kind: 'connected', text: '' };
+
+    setSessionTarget(session, 'srv-b');
+
+    expect(session.serverId).toBe('srv-a');
+  });
+
+  it('refuses while connecting, which is the window that actually bit', () => {
+    // The socket is open and the PTY is about to be requested for `serverId`. Accepting a
+    // retarget here is what let the label move ahead of the connection.
+    const session = ensureSession('tab-connecting');
+    session.serverId = 'srv-a';
+    session.state = { kind: 'connecting', text: '' };
+
+    setSessionTarget(session, 'srv-b');
+
+    expect(session.serverId).toBe('srv-a');
+  });
+
+  it('allows retargeting once the PTY is gone', () => {
+    // 断开 then pick another server then 连接 is the intended flow; a guard that also blocked
+    // this would leave the selector permanently useless after the first session.
+    const session = ensureSession('tab-idle');
+    session.serverId = 'srv-a';
+    session.state = { kind: 'disconnected', text: '' };
+
+    setSessionTarget(session, 'srv-b');
+
+    expect(session.serverId).toBe('srv-b');
+  });
+
+  it('reports liveness for exactly the two live kinds', () => {
+    const session = ensureSession('tab-kinds');
+    for (const kind of ['idle', 'connected', 'connecting', 'disconnected'] as const) {
+      session.state = { kind, text: '' };
+      expect(isSessionLive(session), kind).toBe(kind === 'connected' || kind === 'connecting');
+    }
   });
 });

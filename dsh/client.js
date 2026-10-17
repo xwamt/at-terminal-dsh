@@ -8416,8 +8416,8 @@ window.__ModuleLoader__.load({
           ungrouped.push(server);
           continue;
         }
-        let bucket = named.get(name);
-        bucket === void 0 ? named.set(name, [server]) : bucket.push(server);
+        let bucket2 = named.get(name);
+        bucket2 === void 0 ? named.set(name, [server]) : bucket2.push(server);
       }
       let groups = [];
       for (let [name, items] of named) groups.push({ name, servers: items });
@@ -8942,6 +8942,15 @@ window.__ModuleLoader__.load({
       "menu.remove": "\u5220\u9664",
       "menu.copied": "\u5DF2\u590D\u5236 {target}",
       "dialog.close": "\u5173\u95ED",
+      // The confirm box's dismissive button. 取消 rather than 否: it is the same word the form's own
+      // 取消 uses, so "this closes the question without doing anything" reads identically everywhere.
+      "dialog.cancel": "\u53D6\u6D88",
+      // Titles for the three destructive questions. A title says what is being acted on; the
+      // message says what will happen — one word of each, and never merged into one sentence.
+      "dialog.confirmRemoveTitle": "\u5220\u9664\u670D\u52A1\u5668",
+      "dialog.confirmDeleteTitle": "\u5220\u9664\u8FDC\u7AEF\u6587\u4EF6",
+      "dialog.confirmDiscardTitle": "\u653E\u5F03\u672A\u4FDD\u5B58\u7684\u4FEE\u6539",
+      "dialog.confirmUploadTitle": "\u8986\u76D6\u5DF2\u6709\u6587\u4EF6",
       "summary.title": "\u8D44\u4EA7\u6458\u8981",
       "summary.pending": "\u6B63\u5728\u8BFB\u53D6\u8D44\u4EA7\u6458\u8981 \u2026",
       "summary.servers": "\u670D\u52A1\u5668\uFF1A{count}",
@@ -8963,7 +8972,10 @@ window.__ModuleLoader__.load({
       "servers.edit": "\u7F16\u8F91",
       "servers.remove": "\u5220\u9664",
       "servers.hasPassword": "\u5DF2\u5B58\u53E3\u4EE4",
-      "servers.removeConfirm": "\u786E\u5B9A\u5220\u9664\u670D\u52A1\u5668\u300C{label}\u300D\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002",
+      // The delete question states the whole consequence, because two of the three parts are
+      // surprising: the stored password goes with the record, and the private-key **file** does not
+      // (the panel never owned it). Saying only "cannot be undone" leaves the user guessing which.
+      "servers.removeConfirm": "\u5C06\u5220\u9664\u670D\u52A1\u5668\u300C{label}\u300D\u53CA\u5176\u5DF2\u4FDD\u5B58\u7684\u53E3\u4EE4\uFF0C\u5E76\u7ACB\u5373\u65AD\u5F00\u8BE5\u670D\u52A1\u5668\u7684\u8FDE\u63A5\u3002\u78C1\u76D8\u4E0A\u7684\u79C1\u94A5\u6587\u4EF6\u4E0D\u4F1A\u88AB\u5220\u9664\u3002\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002",
       "servers.removed": "\u5DF2\u5220\u9664 {label}\u3002",
       "servers.removeMissing": "\u8BE5\u670D\u52A1\u5668\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5217\u8868\u5DF2\u5237\u65B0\u3002",
       "auth.password": "\u53E3\u4EE4",
@@ -9011,6 +9023,10 @@ window.__ModuleLoader__.load({
       "form.saving": "\u6B63\u5728\u4FDD\u5B58 \u2026",
       "form.cancel": "\u53D6\u6D88",
       "form.saved": "\u5DF2\u4FDD\u5B58 {label}\u3002",
+      // Leaving a half-typed server form. The message names what is lost rather than asking
+      // "are you sure", because "sure about what" is the question the user then has to answer.
+      "form.discardConfirm": "\u8FD9\u53F0\u670D\u52A1\u5668\u7684\u586B\u5199\u5185\u5BB9\u8FD8\u6CA1\u6709\u4FDD\u5B58\uFF0C\u8FD4\u56DE\u5217\u8868\u4F1A\u4E22\u6389\u521A\u624D\u7684\u8F93\u5165\u3002",
+      "form.discard": "\u653E\u5F03\u586B\u5199",
       "form.summaryEnterHostUser": "\u586B\u5199\u4E3B\u673A\u4E0E\u7528\u6237\u540D",
       "form.summaryAuth": "\u8BA4\u8BC1\uFF1A{auth}",
       "form.summaryGroup": "\u5206\u7EC4\uFF1A{group}",
@@ -9056,6 +9072,9 @@ window.__ModuleLoader__.load({
       "import.result.privateKeys": "\u5199\u5165\u79C1\u94A5 {count}",
       "terminal.title": "\u7EC8\u7AEF",
       "terminal.select": "\u670D\u52A1\u5668",
+      // Why the selector is disabled mid-session. It reads as a state, not as an instruction:
+      // the honest answer to "why can I not change this" is "because something else depends on it".
+      "terminal.selectLocked": "\u8FDE\u63A5\u4E2D\u6216\u5DF2\u8FDE\u63A5\u65F6\u4E0D\u80FD\u5207\u6362\u670D\u52A1\u5668\uFF0C\u65AD\u5F00\u540E\u53EF\u5207\u6362\u3002",
       "terminal.connect": "\u8FDE\u63A5",
       "terminal.disconnect": "\u65AD\u5F00",
       "terminal.reconnect": "\u91CD\u8FDE",
@@ -9150,6 +9169,11 @@ window.__ModuleLoader__.load({
       "sftp.uploadConflict": "\u8FDC\u7AEF\u5DF2\u5B58\u5728 {path}\u3002\u8981\u8986\u76D6\u5B83\u5417\uFF1F",
       "sftp.uploadSkipped": "\u5DF2\u8DF3\u8FC7 {name}\uFF08\u8FDC\u7AEF\u5DF2\u5B58\u5728\uFF09",
       "sftp.uploadDone": "\u5DF2\u4E0A\u4F20 {count} \u4E2A\u6587\u4EF6\u3002",
+      // The verb on the confirm button. 覆盖 rather than 确定, so the button restates the action the
+      // message just described.
+      "sftp.overwrite": "\u8986\u76D6",
+      "sftp.discard": "\u653E\u5F03\u4FEE\u6539",
+      "sftp.discardConfirm": "{name} \u6709\u672A\u4FDD\u5B58\u7684\u4FEE\u6539\uFF0C\u7EE7\u7EED\u4F1A\u4E22\u5931\u8FD9\u4E9B\u4FEE\u6539\u3002",
       "sftp.fileBack": "\u8FD4\u56DE\u5217\u8868",
       "sftp.filePending": "\u6B63\u5728\u8BFB\u53D6\u6587\u4EF6 \u2026",
       "sftp.fileSave": "\u4FDD\u5B58",
@@ -9254,6 +9278,11 @@ window.__ModuleLoader__.load({
       "menu.remove": "Delete",
       "menu.copied": "Copied {target}",
       "dialog.close": "Close",
+      "dialog.cancel": "Cancel",
+      "dialog.confirmRemoveTitle": "Delete server",
+      "dialog.confirmDeleteTitle": "Delete remote file",
+      "dialog.confirmDiscardTitle": "Discard unsaved changes",
+      "dialog.confirmUploadTitle": "Overwrite existing file",
       "summary.title": "Asset summary",
       "summary.pending": "Reading the asset summary \u2026",
       "summary.servers": "Servers: {count}",
@@ -9271,7 +9300,7 @@ window.__ModuleLoader__.load({
       "servers.edit": "Edit",
       "servers.remove": "Delete",
       "servers.hasPassword": "password stored",
-      "servers.removeConfirm": 'Delete server "{label}"? This cannot be undone.',
+      "servers.removeConfirm": 'Deletes server "{label}" and its stored password, and disconnects it immediately. The private-key file on disk is not deleted. This cannot be undone.',
       "servers.removed": "Deleted {label}.",
       "servers.removeMissing": "That server is already gone; the list has been refreshed.",
       "auth.password": "password",
@@ -9319,6 +9348,8 @@ window.__ModuleLoader__.load({
       "form.saving": "Saving \u2026",
       "form.cancel": "Cancel",
       "form.saved": "Saved {label}.",
+      "form.discardConfirm": "This server form has not been saved. Going back to the list discards what you typed.",
+      "form.discard": "Discard",
       "form.summaryEnterHostUser": "Enter host and username",
       "form.summaryAuth": "Authentication: {auth}",
       "form.summaryGroup": "Group: {group}",
@@ -9364,6 +9395,7 @@ window.__ModuleLoader__.load({
       "import.result.privateKeys": "private keys written {count}",
       "terminal.title": "Terminal",
       "terminal.select": "Server",
+      "terminal.selectLocked": "The server cannot be changed while connecting or connected. Disconnect first.",
       "terminal.connect": "Connect",
       "terminal.disconnect": "Disconnect",
       "terminal.reconnect": "Reconnect",
@@ -9446,6 +9478,9 @@ window.__ModuleLoader__.load({
       "sftp.copiedPath": "Copied path: {path}",
       "sftp.uploadHere": "Upload here \u2026",
       "sftp.upload": "Upload",
+      "sftp.overwrite": "Overwrite",
+      "sftp.discard": "Discard changes",
+      "sftp.discardConfirm": "{name} has unsaved changes. Continuing discards them.",
       "sftp.uploading": "Uploading \u2026",
       "sftp.uploadProgress": "Uploading: {name}",
       "sftp.uploadProgressMulti": "Uploading ({current}/{total}): {name}",
@@ -9874,8 +9909,23 @@ window.__ModuleLoader__.load({
       }
       disposeSession(session.key, !1, "occurrence-abort");
     }
+    function isSessionLive(session) {
+      return session.state.kind === "connected" || session.state.kind === "connecting";
+    }
     function setSessionTarget(session, serverId) {
-      session.serverId !== serverId && (session.serverId = serverId, notify(session));
+      if (session.serverId !== serverId) {
+        if (isSessionLive(session)) {
+          postDiagnostic(
+            "info",
+            `at-terminal target-locked key=${session.key} wanted=${serverId} keeping=${session.serverId} state=${session.state.kind}`,
+            "session",
+            null,
+            null
+          );
+          return;
+        }
+        session.serverId = serverId, notify(session);
+      }
     }
     function setSessionFailure(session, failure) {
       session.failure = failure, notify(session);
@@ -10041,6 +10091,43 @@ window.__ModuleLoader__.load({
     }
     function refusedHostKey(session) {
       return session.failure !== null && session.failure.fingerprint !== "" ? session.failure : null;
+    }
+
+    // src/platform/dsh/client/tabState.ts
+    var buckets = /* @__PURE__ */ new Map();
+    function bucket(key) {
+      if (key === "") return null;
+      let existing = buckets.get(key);
+      if (existing !== void 0) return existing;
+      let created = {};
+      if (buckets.set(key, created), buckets.size > 32)
+        for (let oldest of buckets.keys()) {
+          if (buckets.size <= 32) break;
+          buckets.delete(oldest);
+        }
+      return created;
+    }
+    function draftForm(form) {
+      return form.password === "" ? form : { ...form, password: "" };
+    }
+    function readAssetsState(key) {
+      return buckets.get(key)?.assets;
+    }
+    function saveAssetsState(key, state) {
+      let target = bucket(key);
+      target !== null && (target.assets = { ...state, form: draftForm(state.form) });
+    }
+    function clearTabState(key, kind) {
+      if (key === "") return;
+      if (kind === void 0) {
+        buckets.delete(key);
+        return;
+      }
+      let existing = buckets.get(key);
+      existing !== void 0 && (delete existing[kind], existing.assets === void 0 && existing.sftp === void 0 && buckets.delete(key));
+    }
+    function clearAllTabState() {
+      buckets.clear();
     }
 
     // src/platform/dsh/client/views/shared.ts
@@ -10264,7 +10351,17 @@ window.__ModuleLoader__.load({
           { className: "att-banner", role: "status", "data-at-terminal-notice": "tab-refused" },
           props.notice
         ),
-        h("div", { className: "att-content", role: "listbox", "aria-label": t("servers.title") }, renderList(t, props)),
+        h(
+          "div",
+          {
+            className: "att-content",
+            role: "listbox",
+            "aria-label": t("servers.title"),
+            ref: props.scrollRef,
+            onScroll: (event) => props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0))
+          },
+          renderList(t, props)
+        ),
         renderStatusbar(t, props.summaryState)
       );
     }
@@ -10481,6 +10578,45 @@ window.__ModuleLoader__.load({
               "data-at-terminal-action": "import-submit"
             },
             t("import.submit")
+          )
+        ),
+        props.onClose
+      );
+    }
+    function renderConfirmDialog(props) {
+      let { t } = props;
+      return overlay(
+        "confirm",
+        props.title,
+        [h("p", { key: "message", className: "att-dialog-message" }, props.message)],
+        h(
+          "div",
+          { className: "att-dialog-actions" },
+          h(
+            "button",
+            {
+              type: "button",
+              className: "att-btn",
+              disabled: props.busy === !0,
+              onClick: props.onClose,
+              // Focus starts on **cancel**: a destructive question whose default answer is "yes"
+              // is a question a stray Return answers for you. This is the opposite of the import
+              // dialog's choice, and deliberately so — there, Enter should proceed.
+              "data-modal-autofocus": !0,
+              "data-at-terminal-action": "confirm-cancel"
+            },
+            t("dialog.cancel")
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: props.danger === !0 ? "att-btn danger" : "att-btn primary",
+              disabled: props.busy === !0,
+              onClick: props.onConfirm,
+              "data-at-terminal-action": "confirm-accept"
+            },
+            props.confirmLabel
           )
         ),
         props.onClose
@@ -11105,9 +11241,43 @@ window.__ModuleLoader__.load({
         };
       }, [method, revision, enabled, paramKey]), state;
     }
+    var ANONYMOUS_TAB_KEY = "anonymous";
+    function formsDiffer(left, right) {
+      return Object.keys(left).some((field) => left[field] !== right[field]);
+    }
     function AtTerminalBody(props = {}) {
-      let t = import_react3.default.useContext(BodyLocale), tabId = readTabId(props), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, [formOpen, setFormOpen] = import_react3.default.useState(!1), [dialog, setDialog] = import_react3.default.useState("none"), [menu, setMenu] = import_react3.default.useState(null), [copied, setCopied] = import_react3.default.useState(null), [listSelectedId, setListSelectedId] = import_react3.default.useState(""), [notice, setNotice] = import_react3.default.useState(null), [summaryRevision, setSummaryRevision] = import_react3.default.useState(0), [serversRevision, setServersRevision] = import_react3.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react3.default.useState(emptyForm), [formError, setFormError] = import_react3.default.useState(null), [saveState, setSaveState] = import_react3.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react3.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react3.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react3.default.useState(!1), [includePasswords, setIncludePasswords] = import_react3.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react3.default.useState(!1), [exportPassword, setExportPassword] = import_react3.default.useState(""), [exportState, setExportState] = import_react3.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react3.default.useState(null), [importPassword, setImportPassword] = import_react3.default.useState(""), [importStrategy, setImportStrategy] = import_react3.default.useState("skip"), [importState, setImportState] = import_react3.default.useState({ kind: "idle" }), importReadRef = import_react3.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react3.default.useState([]);
+      let t = import_react3.default.useContext(BodyLocale), tabId = readTabId(props), tabKey = readTabKey(props) || ANONYMOUS_TAB_KEY, restored = readAssetsState(tabKey), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, [formOpen, setFormOpen] = import_react3.default.useState(restored?.formOpen ?? !1), [dialog, setDialog] = import_react3.default.useState("none"), [menu, setMenu] = import_react3.default.useState(null), [copied, setCopied] = import_react3.default.useState(null), [listSelectedId, setListSelectedId] = import_react3.default.useState(restored?.listSelectedId ?? ""), scrollRef = import_react3.default.useRef(null), scrollTopRef = import_react3.default.useRef(restored?.scrollTop ?? 0), [notice, setNotice] = import_react3.default.useState(null), [summaryRevision, setSummaryRevision] = import_react3.default.useState(0), [serversRevision, setServersRevision] = import_react3.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react3.default.useState(restored?.form ?? emptyForm), [formError, setFormError] = import_react3.default.useState(null), [saveState, setSaveState] = import_react3.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react3.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react3.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react3.default.useState(!1), formBaselineRef = import_react3.default.useRef(form), [confirm2, setConfirm] = import_react3.default.useState(null);
+      function requestConfirm(request) {
+        return new Promise((resolve) => setConfirm({ request, resolve }));
+      }
+      function answerConfirm(answer) {
+        let pending = confirm2;
+        pending !== null && (setConfirm(null), pending.resolve(answer));
+      }
+      async function confirmDiscard() {
+        return formsDiffer(form, formBaselineRef.current) ? requestConfirm({
+          title: t("dialog.confirmDiscardTitle"),
+          message: t("form.discardConfirm"),
+          confirmLabel: t("form.discard"),
+          danger: !0
+        }) : !0;
+      }
+      let [includePasswords, setIncludePasswords] = import_react3.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react3.default.useState(!1), [exportPassword, setExportPassword] = import_react3.default.useState(""), [exportState, setExportState] = import_react3.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react3.default.useState(null), [importPassword, setImportPassword] = import_react3.default.useState(""), [importStrategy, setImportStrategy] = import_react3.default.useState("skip"), [importState, setImportState] = import_react3.default.useState({ kind: "idle" }), importReadRef = import_react3.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react3.default.useState([
+        ...restored?.collapsedGroups ?? []
+      ]);
       import_react3.default.useEffect(() => {
+        saveAssetsState(tabKey, {
+          formOpen,
+          form,
+          listSelectedId,
+          collapsedGroups,
+          scrollTop: scrollTopRef.current
+        });
+      }, [tabKey, formOpen, form, listSelectedId, collapsedGroups]), import_react3.default.useEffect(() => {
+        if (serversState.kind !== "ok") return;
+        let node = scrollRef.current;
+        node !== null && (node.scrollTop = scrollTopRef.current);
+      }, [serversState.kind]), import_react3.default.useEffect(() => {
         if (menu === null) return;
         let close = () => setMenu(null), onKeydown = (event) => {
           event.key === "Escape" && close();
@@ -11161,10 +11331,11 @@ window.__ModuleLoader__.load({
         );
       }
       function startNew() {
-        setForm(emptyForm()), setFormError(null), setSaveState({ kind: "idle" }), setShowPassword(!1), setGroupMenuOpen(!1), setFormOpen(!0);
+        setForm(emptyForm()), formBaselineRef.current = emptyForm(), setFormError(null), setSaveState({ kind: "idle" }), setShowPassword(!1), setGroupMenuOpen(!1), setFormOpen(!0);
       }
       function startEdit(server) {
-        setForm(formFromServer(server)), setFormError(null), setSaveState({ kind: "idle" }), setShowPassword(!1), setGroupMenuOpen(!1), setFormOpen(!0);
+        let draft = formFromServer(server);
+        setForm(draft), formBaselineRef.current = draft, setFormError(null), setSaveState({ kind: "idle" }), setShowPassword(!1), setGroupMenuOpen(!1), setFormOpen(!0);
       }
       function runSave() {
         if (saveState.kind === "pending") return;
@@ -11176,21 +11347,24 @@ window.__ModuleLoader__.load({
         setFormError(null), setSaveState({ kind: "pending" }), callRpc("servers.save", { server: buildServerInput(form, isNew) }).then(
           (result) => {
             let label = text((result ?? {}).label) || form.label.trim();
-            setSaveState({ kind: "ok", label }), setForm(emptyForm()), setFormOpen(!1), setServersRevision((value) => value + 1), setSummaryRevision((value) => value + 1);
+            setSaveState({ kind: "ok", label }), setForm(emptyForm()), formBaselineRef.current = emptyForm(), setFormOpen(!1), setServersRevision((value) => value + 1), setSummaryRevision((value) => value + 1);
           },
           (error) => setSaveState({ kind: "failed", ...asFailure(error) })
         );
       }
       function runRemove(server) {
-        setMenu(null);
-        let message = t("servers.removeConfirm", { label: text(server.label) });
-        typeof window > "u" || typeof window.confirm != "function" || window.confirm(message) === !0 && (setRemoval({ kind: "pending" }), callRpc("servers.remove", { id: text(server.id) }).then(
+        setMenu(null), (async () => await requestConfirm({
+          title: t("dialog.confirmRemoveTitle"),
+          message: t("servers.removeConfirm", { label: text(server.label) }),
+          confirmLabel: t("menu.remove"),
+          danger: !0
+        }) && (setRemoval({ kind: "pending" }), callRpc("servers.remove", { id: text(server.id) }).then(
           (result) => {
             let payload = result ?? {};
             setRemoval({ kind: "ok", label: text(server.label), removed: payload.removed !== !1 }), setServersRevision((value) => value + 1), setSummaryRevision((value) => value + 1);
           },
           (error) => setRemoval({ kind: "failed", ...asFailure(error) })
-        ));
+        )))();
       }
       function openAssetInSessionTab(server) {
         let id = text(server.id);
@@ -11228,9 +11402,13 @@ window.__ModuleLoader__.load({
           },
           onSave: runSave,
           onCancel: () => {
-            setForm(emptyForm()), setFormError(null), setSaveState({ kind: "idle" }), setFormOpen(!1);
+            (async () => await confirmDiscard() && (setForm(emptyForm()), formBaselineRef.current = emptyForm(), setFormError(null), setSaveState({ kind: "idle" }), setFormOpen(!1)))();
           },
-          onBack: () => setFormOpen(!1)
+          // 返回列表 is the same act as 取消 once the form has content worth losing, so it asks the
+          // same question through the same dialog rather than a second code path.
+          onBack: () => {
+            (async () => await confirmDiscard() && (setForm(emptyForm()), formBaselineRef.current = emptyForm(), setFormError(null), setSaveState({ kind: "idle" }), setFormOpen(!1)))();
+          }
         })
       ), children.push(
         renderAssetsView({
@@ -11269,6 +11447,12 @@ window.__ModuleLoader__.load({
           },
           onOpenMonitor: openMonitorTab ? (server) => openMonitorTab({ serverId: text(server.id), target: "hardware" }) : void 0,
           collapsedGroups,
+          scrollRef,
+          onScrollTop: (top) => {
+            scrollTopRef.current = top;
+            let current = readAssetsState(tabKey);
+            current !== void 0 && saveAssetsState(tabKey, { ...current, scrollTop: top });
+          },
           onToggleGroup: (groupKey) => {
             setCollapsedGroups(
               (prev) => prev.includes(groupKey) ? prev.filter((k) => k !== groupKey) : [...prev, groupKey]
@@ -11302,6 +11486,13 @@ window.__ModuleLoader__.load({
           onStrategy: setImportStrategy,
           onSubmit: runImport,
           onClose: () => setDialog("none")
+        })
+      ), confirm2 !== null && children.push(
+        renderConfirmDialog({
+          t,
+          ...confirm2.request,
+          onConfirm: () => answerConfirm(!0),
+          onClose: () => answerConfirm(!1)
         })
       ), menu !== null) {
         let item = (key, labelKey, onClick, danger = !1) => h(
@@ -12616,10 +12807,26 @@ window.__ModuleLoader__.load({
             {
               className: "att-select",
               value: props.selectedServerId,
-              disabled: props.serversState.kind !== "ok" || props.servers.length === 0,
+              /**
+               * Disabled while live, not only while the list is unusable.
+               *
+               * The selector changes which server the *next* connection opens, but the status bar,
+               * the tab chip and the PTY all describe the **current** one. Enabling it mid-session
+               * is what produced "the chip says B, the PTY is on A": the state was honest about the
+               * selection and the connection was honest about the PTY, and the user had no way to
+               * tell which of the two labels to believe. `setSessionTarget` refuses the same change
+               * from the model side; see its comment for why both exist.
+               */
+              disabled: props.serversState.kind !== "ok" || props.servers.length === 0 || live,
+              // A disabled control cannot show a tooltip reliably in every browser, but the wrapper
+              // keeps the reason reachable: `title` on the select still surfaces on hover in
+              // Chromium, and the status line below states the connection anyway.
+              title: live ? t("terminal.selectLocked") : void 0,
               onChange: (event) => props.onSelect(text(event?.target?.value)),
               "aria-label": t("terminal.select"),
-              "data-at-terminal-action": "term-select"
+              "aria-describedby": live ? "att-term-lock-hint" : void 0,
+              "data-at-terminal-action": "term-select",
+              "data-at-terminal-locked": live ? "true" : "false"
             },
             h("option", { value: "" }, t("terminal.select")),
             props.servers.map(
@@ -12630,6 +12837,12 @@ window.__ModuleLoader__.load({
               )
             )
           ),
+          // The reason a keyboard or screen-reader user cannot change the selector. Visually hidden
+          // rather than shown: the toolbar is already the tightest row in a narrow panel (UI2-07), and
+          // a permanent sentence explaining a disabled control would cost more than it says. Referenced
+          // by `aria-describedby` instead of being a second live region — the status line already
+          // announces the connection state, and two announcements for one change is noise.
+          live ? h("span", { id: "att-term-lock-hint", className: "att-sr-only" }, t("terminal.selectLocked")) : null,
           live ? h(
             "button",
             {
@@ -12803,7 +13016,14 @@ window.__ModuleLoader__.load({
         let badgeKind = session.failure !== null ? "problem" : session.state.kind === "connected" ? "connected" : "connecting";
         publishTabBadge(key, { label: server.label === "" ? server.host : server.label, kind: badgeKind });
       }, [key, servers, session, session.serverId, session.state.kind, session.failure]);
-      let [sftpRevision, setSftpRevision] = import_react5.default.useState(0), [sftpVisited, setSftpVisited] = import_react5.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react5.default.useState(!1), [sftpFailure, setSftpFailure] = import_react5.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react5.default.useState([]), [sftpChildren, setSftpChildren] = import_react5.default.useState({}), [sftpFile, setSftpFile] = import_react5.default.useState(null), [sftpSelected, setSftpSelected] = import_react5.default.useState(null), [sftpUploading, setSftpUploading] = import_react5.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react5.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react5.default.useState(null), [sftpNotice, setSftpNotice] = import_react5.default.useState(null), [sftpMenu, setSftpMenu] = import_react5.default.useState(null), [newFileDialog, setNewFileDialog] = import_react5.default.useState(null), sftpUploadTargetRef = import_react5.default.useRef(""), sftpFileInputRef = import_react5.default.useRef(null);
+      let [sftpRevision, setSftpRevision] = import_react5.default.useState(0), [sftpVisited, setSftpVisited] = import_react5.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react5.default.useState(!1), [sftpFailure, setSftpFailure] = import_react5.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react5.default.useState([]), [sftpChildren, setSftpChildren] = import_react5.default.useState({}), [sftpFile, setSftpFile] = import_react5.default.useState(null), [sftpSelected, setSftpSelected] = import_react5.default.useState(null), [sftpUploading, setSftpUploading] = import_react5.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react5.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react5.default.useState(null), [sftpNotice, setSftpNotice] = import_react5.default.useState(null), [sftpMenu, setSftpMenu] = import_react5.default.useState(null), [newFileDialog, setNewFileDialog] = import_react5.default.useState(null), sftpUploadTargetRef = import_react5.default.useRef(""), sftpFileInputRef = import_react5.default.useRef(null), [confirm2, setConfirm] = import_react5.default.useState(null);
+      function requestConfirm(request) {
+        return new Promise((resolve) => setConfirm({ request, resolve }));
+      }
+      function answerConfirm(answer) {
+        let pending = confirm2;
+        pending !== null && (setConfirm(null), pending.resolve(answer));
+      }
       import_react5.default.useEffect(() => {
         if (sftpMenu === null) return;
         let close = () => setSftpMenu(null), onKeydown = (event) => {
@@ -12996,7 +13216,12 @@ window.__ModuleLoader__.load({
           } catch (error) {
             let failure = asFailure(error);
             if (failure.code !== "sftp-conflict") return `${file.name}: ${failure.message}`;
-            if (!(typeof window < "u" && typeof window.confirm == "function" ? window.confirm(t("sftp.uploadConflict", { path: target })) : !1)) return t("sftp.uploadSkipped", { name: file.name });
+            if (!await requestConfirm({
+              title: t("dialog.confirmUploadTitle"),
+              message: t("sftp.uploadConflict", { path: target }),
+              confirmLabel: t("sftp.overwrite"),
+              danger: !0
+            })) return t("sftp.uploadSkipped", { name: file.name });
             try {
               return await send(!0), null;
             } catch (retry) {
@@ -13035,14 +13260,17 @@ window.__ModuleLoader__.load({
         setSftpMenu(null), sftpUploadTargetRef.current = targetDir, sftpFileInputRef.current !== null ? sftpFileInputRef.current.click() : typeof document < "u" && document.querySelector('[data-at-terminal-action="sftp-menu-upload-input"]')?.click();
       }
       function deleteRemoteItem(path, name) {
-        setSftpMenu(null);
-        let message = t("sftp.deleteConfirm", { name });
-        typeof window > "u" || typeof window.confirm != "function" || window.confirm(message) === !0 && (setSftpBusy(!0), setSftpFailure(null), callRpc("sftp.delete", { path, terminalId: session.hostTerminalId }).then(
+        setSftpMenu(null), (async () => await requestConfirm({
+          title: t("dialog.confirmDeleteTitle"),
+          message: t("sftp.deleteConfirm", { name }),
+          confirmLabel: t("sftp.delete"),
+          danger: !0
+        }) && (setSftpBusy(!0), setSftpFailure(null), callRpc("sftp.delete", { path, terminalId: session.hostTerminalId }).then(
           () => {
             sftpSelected === path && setSftpSelected(null), sftpFile?.path === path && setSftpFile(null), setSftpNotice(t("sftp.deleteDone", { name })), reloadSftp(!0);
           },
           (error) => setSftpFailure(asFailure(error))
-        ).finally(() => setSftpBusy(!1)));
+        ).finally(() => setSftpBusy(!1))))();
       }
       function openNewFileDialog(targetDir) {
         setSftpMenu(null), setNewFileDialog({ targetDir, name: "", error: null, busy: !1 });
@@ -13061,6 +13289,18 @@ window.__ModuleLoader__.load({
         }
       }
       function changePage(next) {
+        if (next !== "sftp" && sftpFile !== null && sftpFile.kind === "ready" && sftpFile.dirty) {
+          (async () => await requestConfirm({
+            title: t("dialog.confirmDiscardTitle"),
+            message: t("sftp.discardConfirm", { name: sftpFile.path }),
+            confirmLabel: t("sftp.discard"),
+            danger: !0
+          }) && applyPage(next))();
+          return;
+        }
+        applyPage(next);
+      }
+      function applyPage(next) {
         if (setSessionPage(session, next), next !== "sftp") {
           setSftpFile(null), setSftpMenu(null), setNewFileDialog(null);
           return;
@@ -13396,7 +13636,16 @@ window.__ModuleLoader__.load({
           onRevert: revertSftpFile,
           onSave: saveSftpFile,
           onReload: () => openSftpFile(sftpFile.path, sftpFile.mode),
-          onClose: () => setSftpFile(null),
+          // Closing a dirty buffer asks first (UI2-11): the 关闭 button sat next to the save
+          // button and discarded a whole file's worth of typing with one click.
+          onClose: () => {
+            (async () => sftpFile.kind === "ready" && sftpFile.dirty && !await requestConfirm({
+              title: t("dialog.confirmDiscardTitle"),
+              message: t("sftp.discardConfirm", { name: sftpFile.path }),
+              confirmLabel: t("sftp.discard"),
+              danger: !0
+            }) || setSftpFile(null))();
+          },
           onDownload: () => downloadSftpFile(sftpFile.path)
         })
       ), children.push(
@@ -13426,6 +13675,13 @@ window.__ModuleLoader__.load({
           { key: "terminal-banners", className: "att-banners", hidden: session.page !== "terminal" },
           banners
         )
+      ), confirm2 !== null && children.push(
+        renderConfirmDialog({
+          t,
+          ...confirm2.request,
+          onConfirm: () => answerConfirm(!0),
+          onClose: () => answerConfirm(!1)
+        })
       ), import_react5.default.useEffect(() => {
         postBodyRendered(key, session.page);
       }, [key, session.page]), h("div", { className: "att-root", "data-at-terminal-body": session.page }, children);
@@ -13633,9 +13889,9 @@ window.__ModuleLoader__.load({
             current && h(
               "span",
               {
-                className: `att-badge ${current.status === "running" ? "att-badge-running" : current.status === "confirmation_waiting" ? "att-badge-waiting" : current.status === "success" ? "att-badge-success" : "att-badge-denied"}`
+                className: `att-monitor-badge ${current.status === "running" ? "att-monitor-badge-running" : current.status === "confirmation_waiting" ? "att-monitor-badge-waiting" : current.status === "success" ? "att-monitor-badge-success" : "att-monitor-badge-denied"}`
               },
-              current.status === "running" && h("span", { className: "att-badge-pulse-dot" }),
+              current.status === "running" && h("span", { className: "att-monitor-badge-pulse-dot" }),
               t(`monitor.status.${current.status === "confirmation_waiting" ? "waiting" : current.status}`)
             )
           ),
@@ -13719,7 +13975,7 @@ window.__ModuleLoader__.load({
               "tbody",
               null,
               ...recentAudits.map((audit) => {
-                let decisionClass = audit.decision === "denied" ? "att-badge-denied" : audit.decision === "confirmed" ? "att-badge-waiting" : "att-badge-success";
+                let decisionClass = audit.decision === "denied" ? "att-monitor-badge-denied" : audit.decision === "confirmed" ? "att-monitor-badge-waiting" : "att-monitor-badge-success";
                 return h(
                   "tr",
                   { key: audit.id },
@@ -13727,7 +13983,7 @@ window.__ModuleLoader__.load({
                   h(
                     "td",
                     null,
-                    h("span", { className: `att-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
+                    h("span", { className: `att-monitor-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
                   ),
                   h("td", { style: { textTransform: "uppercase", fontSize: "10px" } }, audit.riskLevel ?? "normal"),
                   h("td", { style: { fontFamily: "monospace", maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, audit.command)
@@ -13823,7 +14079,7 @@ window.__ModuleLoader__.load({
               h(
                 "select",
                 {
-                  className: "att-input",
+                  className: "att-select",
                   style: { padding: "2px 6px", fontSize: "12px" },
                   value: selectedServerId,
                   onChange: (e) => setSelectedServerId(e.target.value)
@@ -14016,23 +14272,22 @@ window.__ModuleLoader__.load({
           isAgentActive ? h(
             "span",
             {
-              className: `att-badge ${agentStatus === "confirmation_waiting" ? "att-badge-waiting" : "att-badge-running"}`,
+              className: `att-monitor-badge ${agentStatus === "confirmation_waiting" ? "att-monitor-badge-waiting" : "att-monitor-badge-running"}`,
               style: { padding: "1px 6px", fontSize: "10px", cursor: "pointer" },
               title: `${t("monitor.tab.agent")}: ${agentStatus}`,
               onClick: (e) => {
                 e.stopPropagation(), setExpanded(!0), setActiveTab("agent"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
               }
             },
-            h("span", { className: "att-badge-pulse-dot" }),
+            h("span", { className: "att-monitor-badge-pulse-dot" }),
             agentStatus === "confirmation_waiting" ? "WAIT" : "RUN"
           ) : h("span", {
-            className: "att-badge-pulse-dot",
+            className: "att-monitor-badge-pulse-dot",
             style: { color: "var(--dsw-alias-state-success-primary)" }
           }),
           h(
             "span",
             {
-              className: "att-hud-pill-expand-arrow",
               title: t("monitor.hud.expand"),
               style: { fontSize: "10px", opacity: 0.8, cursor: "pointer", padding: "0 2px" }
             },
@@ -14286,7 +14541,7 @@ window.__ModuleLoader__.load({
                   isAgentActive ? h(
                     "span",
                     {
-                      className: `att-badge ${agentStatus === "confirmation_waiting" ? "att-badge-waiting" : "att-badge-running"}`,
+                      className: `att-monitor-badge ${agentStatus === "confirmation_waiting" ? "att-monitor-badge-waiting" : "att-monitor-badge-running"}`,
                       style: { fontSize: "10px" }
                     },
                     t(agentStatus === "confirmation_waiting" ? "monitor.status.waiting" : "monitor.status.running")
@@ -14319,7 +14574,7 @@ window.__ModuleLoader__.load({
                 h(
                   "button",
                   {
-                    className: "att-btn att-btn-secondary",
+                    className: "att-btn",
                     style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
                     onClick: () => setActiveTab("hardware")
                   },
@@ -14328,7 +14583,7 @@ window.__ModuleLoader__.load({
                 h(
                   "button",
                   {
-                    className: "att-btn att-btn-secondary",
+                    className: "att-btn",
                     style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
                     onClick: () => setActiveTab("agent")
                   },
@@ -14337,7 +14592,7 @@ window.__ModuleLoader__.load({
                 h(
                   "button",
                   {
-                    className: "att-btn att-btn-secondary",
+                    className: "att-btn",
                     style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
                     onClick: () => {
                       setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
@@ -15686,6 +15941,9 @@ window.__ModuleLoader__.load({
       box-shadow: var(--dsw-shadow-lv3);
     }
     .att-dialog-title { margin: 0; font-size: 14px; font-weight: 650; }
+    /* The confirm box's one sentence. Body size, secondary weight: it explains a decision the title
+       has already named, so it must not compete with it. */
+    .att-dialog-message { margin: 0; font-size: 12px; line-height: 1.6; color: var(--vscode-descriptionForeground); }
     .att-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
     .att-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--vscode-descriptionForeground); }
     .att-field input[type="text"], .att-field input[type="password"], .att-field select {
@@ -15819,6 +16077,22 @@ window.__ModuleLoader__.load({
       border: 1px solid var(--vscode-dropdown-border); border-radius: 4px;
     }
     .att-chip { font-size: 12px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+    /*
+     * Visible to a screen reader, invisible to the eye.
+     *
+     * The standard clip-and-shrink recipe rather than 'display: none' or 'visibility: hidden':
+     * both of those remove the node from the accessibility tree, which would make an
+     * 'aria-describedby' pointing at it describe nothing at all \u2014 the failure mode looks like
+     * "the hint is redundant" while it is really "the hint does not exist". 1px rather than 0 is
+     * deliberate for the same reason: a genuinely zero-sized box is skipped by some readers.
+     */
+    .att-sr-only {
+      position: absolute;
+      width: 1px; height: 1px;
+      margin: -1px; padding: 0; border: 0;
+      clip: rect(0 0 0 0); clip-path: inset(50%);
+      overflow: hidden; white-space: nowrap;
+    }
 
     /* Tab chip badge \u2014 which server this tab is on, and whether it is up.
        Rendered inside the frame's own tab strip, so it owns no box of its own beyond the
@@ -15875,6 +16149,20 @@ window.__ModuleLoader__.load({
     }
     /* The disconnected listing is the last one the server gave us: readable, never editable. */
     .att-sftp-page .att-banner[data-at-terminal-sftp="disconnected"] { margin: 6px 0; }
+
+    /*
+     * The file pane's box.
+     *
+     * .att-file-content is a plain flex column with no sizing of its own, so without this it
+     * sizes to its content and the *page* scrolls \u2014 while a viewer and an editor both want their
+     * own scroll region inside a fixed-height pane (the textarea especially: its 'overflow: auto'
+     * can never engage if its box is as tall as the file). The client renders this class on the
+     * pane root; it had no rule at all until the UI2-00 className audit caught it.
+     *
+     * (No backticks above: this whole sheet is a template literal, so one would end the string.)
+     */
+    .att-sftp-file-page > .att-file-content { flex: 1 1 auto; min-height: 0; }
+    .att-sftp-file-page { overflow: hidden; }
 
     /*
      * The selected **file** row. A background rather than a border, because a border would shift
@@ -16005,6 +16293,41 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /*
+     * The server form in a narrow panel (UI2-02).
+     *
+     * The reused sheet already collapses this grid to one column, but inside
+     * '@media (max-width: 760px)' \u2014 a question about the **window**, not about this panel. A
+     * 1024px window gives the right bar roughly 460px, so the two-column grid stays and its left
+     * column ('minmax(0, 1.1fr)') is squeezed to ~110px: the form was unusable at the default
+     * width while the rule that fixes it sat there being true only for windows nobody drags.
+     *
+     * Same declarations, asked of the container that actually resizes. 680px is where the right
+     * column's own minimum ('minmax(280px, .9fr)') plus a usable left column stops fitting; 520px
+     * is where the field pairs inside each column stop fitting too. Specificity is spelled out
+     * with the root prefix because the reused rules are already scoped to '.att-root' and a bare
+     * '.form-section-grid' here would lose to them rather than override.
+     *
+     * (No backticks in this block: the sheet is a template literal.)
+     */
+    @container att-panel (max-width: 680px) {
+      ${ROOT_SELECTOR} .form-section-grid { grid-template-columns: minmax(0, 1fr); }
+      ${ROOT_SELECTOR} .form-right-col { grid-template-columns: minmax(0, 1fr); }
+    }
+    @container att-panel (max-width: 520px) {
+      ${ROOT_SELECTOR} .field-grid,
+      ${ROOT_SELECTOR} .auth-card-grid { grid-template-columns: minmax(0, 1fr); }
+      ${ROOT_SELECTOR} .server-form-shell { padding: 16px; }
+      ${ROOT_SELECTOR} .form-header,
+      ${ROOT_SELECTOR} .form-footer { display: grid; gap: 8px; }
+      ${ROOT_SELECTOR} .form-actions { display: grid; justify-content: stretch; }
+      /* Full-width actions in a narrow panel: two 28px buttons side by side at 380px would each
+         be ~half of a 348px content box, which is fine \u2014 but \u4FDD\u5B58 is the primary act and the
+         footer already wraps, so stacking is the readable arrangement rather than a compromise. */
+      ${ROOT_SELECTOR} .secondary-action,
+      ${ROOT_SELECTOR} .primary-action { width: 100%; }
+    }
+
     /* --------------------------- Monitor & HUD Styles -------------------------- */
     .att-monitor-container {
       display: flex;
@@ -16127,7 +16450,18 @@ window.__ModuleLoader__.load({
       border-bottom: 1px solid var(--dsw-alias-border-l1);
     }
 
-    .att-badge {
+    /*
+     * The monitor/HUD status pill.
+     *
+     * Renamed from '.att-badge', which was already the **asset row's** auth badge 600 lines above \u2014
+     * two rules with one name, the later one winning, so the asset badge silently picked up this
+     * pill's padding, weight and radius. That is the class of defect a stylesheet cannot warn about:
+     * both rules are valid, both are wanted, and the bug is that they agree on a name. The att-monitor-
+     * prefix is the scope this file actually has (a plain prefix rather than a nested selector, because
+     * the pills are rendered inside both the docked pane and the floating HUD, which share no ancestor
+     * below .att-root).
+     */
+    .att-monitor-badge {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -16138,12 +16472,12 @@ window.__ModuleLoader__.load({
       line-height: 1.4;
     }
 
-    .att-badge-running {
+    .att-monitor-badge-running {
       background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
       color: var(--dsw-alias-brand-primary);
     }
 
-    .att-badge-pulse-dot {
+    .att-monitor-badge-pulse-dot {
       width: 6px;
       height: 6px;
       border-radius: 50%;
@@ -16151,17 +16485,17 @@ window.__ModuleLoader__.load({
       animation: att-pulse 1.5s infinite ease-in-out;
     }
 
-    .att-badge-waiting {
+    .att-monitor-badge-waiting {
       background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
       color: var(--dsw-alias-state-warn-primary);
     }
 
-    .att-badge-success {
+    .att-monitor-badge-success {
       background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
       color: var(--dsw-alias-state-success-primary);
     }
 
-    .att-badge-denied {
+    .att-monitor-badge-denied {
       background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
       color: var(--dsw-alias-state-error-primary);
     }
@@ -16679,9 +17013,15 @@ window.__ModuleLoader__.load({
       ), ctx.effect(
         () => ctx.sidebarRight.registerCloseHandler(KIND_SESSION, (_sessionId, tab) => {
           let contentId = tab?.contentId, key = typeof contentId == "string" && contentId !== "" ? contentId : String(tab?.id ?? "");
-          key !== "" && disposeSession(key, !0, "close-handler");
+          key !== "" && (disposeSession(key, !0, "close-handler"), clearTabState(key));
         }),
         "at-terminal: session close"
+      ), ctx.effect(
+        () => ctx.sidebarRight.registerCloseHandler(KIND, (_sessionId, tab) => {
+          let contentId = tab?.contentId, key = typeof contentId == "string" && contentId !== "" ? contentId : String(tab?.id ?? "");
+          clearTabState(key);
+        }),
+        "at-terminal: assets tab state"
       ), ctx.effect(() => {
         let sync = () => retainSessions(
           ctx.sidebarRight.openTabs.getSnapshot().filter((tab) => tab.kind === KIND_SESSION)
@@ -16689,7 +17029,12 @@ window.__ModuleLoader__.load({
         return sync(), () => {
           unsubscribe();
         };
-      }, "at-terminal: session holds"), ctx.effect(() => () => disposeAllSessions("unload"), "at-terminal: session teardown"), announceToHost(), installDiagnostics(), postDiagnostic("info", "at-terminal client half activating", "apply", null, null), ctx.effect(
+      }, "at-terminal: session holds"), ctx.effect(
+        () => () => {
+          disposeAllSessions("unload"), clearAllTabState();
+        },
+        "at-terminal: session teardown"
+      ), announceToHost(), installDiagnostics(), postDiagnostic("info", "at-terminal client half activating", "apply", null, null), ctx.effect(
         () => ctx.slots.inject(
           "sidebar.right.pane.tab",
           () => (

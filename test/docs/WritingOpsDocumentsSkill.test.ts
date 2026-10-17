@@ -66,15 +66,32 @@ describe('writing operations documents skill', () => {
     expect(standard).toContain('预期结果写成实际结果');
   });
 
-  it('documents skill discovery, installation, and composition in the README', () => {
+  /**
+   * The README lists this repository's own skill set.
+   *
+   * The assertions here used to describe the **VS Code variant** — an `### Agent Skills`
+   * heading, a `skills/at-terminal-mcp/` directory (this repository has never had one) and a
+   * marketplace install line (`npx skills add xwamt/At-Terminal`). None of those exist here,
+   * so the test was red from the first commit and the README rewrite in `a410b8b` was blamed
+   * for it. What the README actually promises is the six directories under `skills/`, which
+   * is what this now checks — every one of them verified on disk, so a renamed or dropped
+   * skill cannot leave a stale line in the docs.
+   */
+  it('documents this repository\'s skill set in the README', () => {
     const readme = readFileSync('README.md', 'utf8');
 
-    expect(readme).toContain('### Agent Skills');
-    expect(readme).toContain('skills/at-terminal-mcp/SKILL.md');
-    expect(readme).toContain('skills/writing-ops-documents/SKILL.md');
-    expect(readme).toContain('$at-terminal-mcp');
-    expect(readme).toContain('$writing-ops-documents');
-    expect(readme).toContain('npx skills add xwamt/At-Terminal');
-    expect(readme).toContain('Skills 不复制进 VSIX');
+    expect(readme).toContain('### DSH 创造套件技能体系（Skills）');
+    for (const name of [
+      'dsh-creator-skills',
+      'cordis-plugin-development',
+      'editing-cordis-compositions',
+      'cordis-composition-reference',
+      'agent-experience',
+      'writing-ops-documents'
+    ]) {
+      // Documented **and** present: the README is the index, not a copy of the tree.
+      expect(readme).toContain(`${name}/`);
+      expect(existsSync(`skills/${name}/SKILL.md`)).toBe(true);
+    }
   });
 });

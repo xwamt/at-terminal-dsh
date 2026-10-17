@@ -57,6 +57,7 @@ import {
   type ActiveTerminalState
 } from './sessions';
 import { ensureStyles } from './styles';
+import { clearAllTabState, clearTabState } from './tabState';
 import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
 import { h } from './views/shared';
@@ -732,9 +733,31 @@ export function apply(ctx: ClientContext): void {
       ctx.sidebarRight.registerCloseHandler(KIND_SESSION, (_sessionId, tab) => {
         const contentId = tab?.contentId;
         const key = typeof contentId === 'string' && contentId !== '' ? contentId : String(tab?.id ?? '');
-        if (key !== '') disposeSession(key, true, 'close-handler');
+        if (key === '') return;
+        disposeSession(key, true, 'close-handler');
+        // The tab is gone for good, so its UI bucket is too: an expansion list and a scroll
+        // offset for a tab nobody can reopen are the only unbounded part of `tabState`.
+        clearTabState(key);
       }),
     'at-terminal: session close'
+  );
+
+  /**
+   * The same for the 资产 tab, which has UI state but no session.
+   *
+   * Both kinds are registered rather than one: `registerCloseHandler` is per kind, and the
+   * assets tab's draft form is exactly the state a user would be most upset to have survive a
+   * close and reappear in a *new* tab (a new tab gets a new `contentId`, so it would not — but
+   * the bucket would sit in memory labelling a tab that no longer exists).
+   */
+  ctx.effect(
+    () =>
+      ctx.sidebarRight.registerCloseHandler(KIND, (_sessionId, tab) => {
+        const contentId = tab?.contentId;
+        const key = typeof contentId === 'string' && contentId !== '' ? contentId : String(tab?.id ?? '');
+        clearTabState(key);
+      }),
+    'at-terminal: assets tab state'
   );
 
   /**
@@ -764,7 +787,14 @@ export function apply(ctx: ClientContext): void {
 
   // Unloading the plugin closes every PTY it opened. Without this a disable/enable cycle would leave
   // SSH sessions running with no tab, no chip and no way to reach them.
-  ctx.effect(() => () => disposeAllSessions('unload'), 'at-terminal: session teardown');
+  ctx.effect(
+    () => () => {
+      disposeAllSessions('unload');
+      // The UI buckets belong to the tabs this activation can see; a reload builds a new set.
+      clearAllTabState();
+    },
+    'at-terminal: session teardown'
+  );
 
   // Announced once per activation, before the seats: it answers "did this half run?" independently
   // of whether the user ever opens the tab.

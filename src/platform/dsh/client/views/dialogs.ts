@@ -396,3 +396,77 @@ export function renderImportDialog(props: ImportDialogProps): El {
     props.onClose
   );
 }
+
+/* ------------------------------ the confirm box ------------------------------ */
+
+/**
+ * A yes/no question, as one shape for the whole panel.
+ *
+ * Before this, three destructive paths asked the browser: `window.confirm` for 删除服务器,
+ * 覆盖上传 and 删除远端文件. Four things were wrong with that, and only the first is cosmetic:
+ *
+ * 1. It is the **browser's** chrome — a grey system dialog in the middle of a themed sidebar,
+ *    with the origin string in it;
+ * 2. it is **not themeable and not localizable** beyond the message text (its buttons say OK /
+ *    Cancel in the browser's own language, which is often not the panel's);
+ * 3. it **blocks the thread**, so an asynchronous flow cannot ask from inside a loop without
+ *    freezing what it is doing — the upload path did, file by file;
+ * 4. it has **no focus management** — focus lands wherever the browser puts it and comes back
+ *    to the document, not to the control that asked.
+ *
+ * This reuses the import/export dialogs' own focus machinery (`dialogRef`, `dialogKeydown`),
+ * which is the point: there is one Escape/Tab implementation in this panel, not two.
+ */
+export interface ConfirmDialogProps {
+  t: Translate;
+  title: string;
+  message: string;
+  /** The verb, not "确定": "删除" tells the user what they are about to do. */
+  confirmLabel: string;
+  /** Renders the confirm button in the error colour. */
+  danger?: boolean;
+  /** The action is in flight; both buttons stop responding. */
+  busy?: boolean;
+  onConfirm(): void;
+  onClose(): void;
+}
+
+export function renderConfirmDialog(props: ConfirmDialogProps): El {
+  const { t } = props;
+  return overlay(
+    'confirm',
+    props.title,
+    [h('p', { key: 'message', className: 'att-dialog-message' }, props.message)],
+    h(
+      'div',
+      { className: 'att-dialog-actions' },
+      h(
+        'button',
+        {
+          type: 'button',
+          className: 'att-btn',
+          disabled: props.busy === true,
+          onClick: props.onClose,
+          // Focus starts on **cancel**: a destructive question whose default answer is "yes"
+          // is a question a stray Return answers for you. This is the opposite of the import
+          // dialog's choice, and deliberately so — there, Enter should proceed.
+          'data-modal-autofocus': true,
+          'data-at-terminal-action': 'confirm-cancel'
+        },
+        t('dialog.cancel')
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          className: props.danger === true ? 'att-btn danger' : 'att-btn primary',
+          disabled: props.busy === true,
+          onClick: props.onConfirm,
+          'data-at-terminal-action': 'confirm-accept'
+        },
+        props.confirmLabel
+      )
+    ),
+    props.onClose
+  );
+}

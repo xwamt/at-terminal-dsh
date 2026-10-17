@@ -696,9 +696,43 @@ function closeOnSignalAbort(session: TerminalSession): void {
   disposeSession(session.key, false, 'occurrence-abort');
 }
 
-/** Point the session at another server, from inside the tab. Does not connect; the view connects when asked. */
+/**
+ * Whether this session's PTY is live enough that retargeting it would be a lie.
+ *
+ * `connected` and `connecting` both count. `connecting` is the one that actually needs the
+ * guard: the socket is already open and the PTY is about to be requested for `serverId`, so a
+ * retarget accepted in that window changes what the status bar and the tab chip **say** while
+ * the PTY is being opened against the old server — the "chip says B, PTY is on A" report.
+ *
+ * `disconnected` deliberately does not count: the PTY is gone, so picking a new server and
+ * pressing 连接 is exactly what the user should be able to do next.
+ */
+export function isSessionLive(session: TerminalSession): boolean {
+  return session.state.kind === 'connected' || session.state.kind === 'connecting';
+}
+
+/**
+ * Point the session at another server, from inside the tab. Does not connect; the view connects when asked.
+ *
+ * Refuses while live, and the view **also** disables the selector — two independent guards for
+ * one rule, because they fail differently. The disabled attribute is what the user sees and what
+ * a keyboard user hits; this check is what a programmatic call (a shortcut, a future "connect
+ * here" menu item, a stale closure) hits. Either one alone leaves a hole: a disabled control can
+ * still be driven through `onChange` by a test or a script, and a guard alone would let the user
+ * change a selector whose value then silently snaps back.
+ */
 export function setSessionTarget(session: TerminalSession, serverId: string): void {
   if (session.serverId === serverId) return;
+  if (isSessionLive(session)) {
+    postDiagnostic(
+      'info',
+      `at-terminal target-locked key=${session.key} wanted=${serverId} keeping=${session.serverId} state=${session.state.kind}`,
+      'session',
+      null,
+      null
+    );
+    return;
+  }
   session.serverId = serverId;
   notify(session);
 }

@@ -280,7 +280,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           ? h(
               'span',
               {
-                className: `att-badge ${agentStatus === 'confirmation_waiting' ? 'att-badge-waiting' : 'att-badge-running'}`,
+                className: `att-monitor-badge ${agentStatus === 'confirmation_waiting' ? 'att-monitor-badge-waiting' : 'att-monitor-badge-running'}`,
                 style: { padding: '1px 6px', fontSize: '10px', cursor: 'pointer' },
                 title: `${t('monitor.tab.agent')}: ${agentStatus}`,
                 onClick: (e: any) => {
@@ -290,17 +290,16 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
                 }
               },
-              h('span', { className: 'att-badge-pulse-dot' }),
+              h('span', { className: 'att-monitor-badge-pulse-dot' }),
               agentStatus === 'confirmation_waiting' ? 'WAIT' : 'RUN'
             )
           : h('span', {
-              className: 'att-badge-pulse-dot',
+              className: 'att-monitor-badge-pulse-dot',
               style: { color: 'var(--dsw-alias-state-success-primary)' }
             }),
         h(
           'span',
           {
-            className: 'att-hud-pill-expand-arrow',
             title: t('monitor.hud.expand'),
             style: { fontSize: '10px', opacity: 0.8, cursor: 'pointer', padding: '0 2px' }
           },
@@ -571,7 +570,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                     ? h(
                         'span',
                         {
-                          className: `att-badge ${agentStatus === 'confirmation_waiting' ? 'att-badge-waiting' : 'att-badge-running'}`,
+                          className: `att-monitor-badge ${agentStatus === 'confirmation_waiting' ? 'att-monitor-badge-waiting' : 'att-monitor-badge-running'}`,
                           style: { fontSize: '10px' }
                         },
                         agentStatus === 'confirmation_waiting' ? t('monitor.status.waiting') : t('monitor.status.running')
@@ -609,7 +608,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 h(
                   'button',
                   {
-                    className: 'att-btn att-btn-secondary',
+                    className: 'att-btn',
                     style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
                     onClick: () => setActiveTab('hardware')
                   },
@@ -618,7 +617,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 h(
                   'button',
                   {
-                    className: 'att-btn att-btn-secondary',
+                    className: 'att-btn',
                     style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
                     onClick: () => setActiveTab('agent')
                   },
@@ -627,7 +626,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 h(
                   'button',
                   {
-                    className: 'att-btn att-btn-secondary',
+                    className: 'att-btn',
                     style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
                     onClick: () => {
                       setExpanded(false);

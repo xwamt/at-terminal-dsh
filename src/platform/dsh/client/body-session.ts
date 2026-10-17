@@ -76,6 +76,7 @@ import {
 } from './sessions';
 import { renderSftpView } from './views/sftp';
 import { renderSftpFileView } from './views/sftpFile';
+import { renderConfirmDialog, type ConfirmDialogProps } from './views/dialogs';
 import { h, renderFailure, type El } from './views/shared';
 import { TerminalView } from './views/terminal';
 import type { TerminalEngine, TerminalEngineHooks } from './xtermEngine';
@@ -114,6 +115,12 @@ interface NewFileDialogState {
 }
 
 const ANONYMOUS_KEY = 'anonymous';
+
+/** A question waiting for an answer — the same shape the 资产 body uses, see its comment. */
+interface PendingConfirm {
+  request: Omit<ConfirmDialogProps, 't' | 'onConfirm' | 'onClose'>;
+  resolve(answer: boolean): void;
+}
 
 export function AtTerminalSessionBody(props: Record<string, unknown> = {}): ReactElement {
   const t = React.useContext(BodyLocale);
@@ -259,6 +266,31 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   const [newFileDialog, setNewFileDialog] = React.useState<NewFileDialogState | null>(null);
   const sftpUploadTargetRef = React.useRef<string>('');
   const sftpFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  /* ------------------------------ the confirm box ---------------------------- */
+
+  /**
+   * One question at a time, answered through a promise.
+   *
+   * The promise is what makes the upload path work: `sftp.upload` refuses an existing path, and
+   * asking about file 3 of 7 has to suspend that loop rather than freeze the page. The three
+   * destructive actions here (删除远端文件, 覆盖上传, 丢弃未保存的编辑) all go through this one
+   * dialog, so the panel has exactly one Escape/Tab/focus behaviour to get right.
+   */
+  const [confirm, setConfirm] = React.useState<PendingConfirm | null>(null);
+
+  function requestConfirm(
+    request: Omit<ConfirmDialogProps, 't' | 'onConfirm' | 'onClose'>
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => setConfirm({ request, resolve }));
+  }
+
+  function answerConfirm(answer: boolean): void {
+    const pending = confirm;
+    if (pending === null) return;
+    setConfirm(null);
+    pending.resolve(answer);
+  }
 
   React.useEffect(() => {
     if (sftpMenu === null) return undefined;
@@ -572,10 +604,16 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
       } catch (error) {
         const failure = asFailure(error);
         if (failure.code !== 'sftp-conflict') return `${file.name}: ${failure.message}`;
-        const confirmed =
-          typeof window !== 'undefined' && typeof window.confirm === 'function'
-            ? window.confirm(t('sftp.uploadConflict', { path: target }))
-            : false;
+        // The question names the file and the destination, because the answer is "replace the
+        // thing at this path" and the row the user picked is no longer on screen behind the
+        // dialog. A refusal is recorded as `uploadSkipped`, so the notice at the end accounts
+        // for every file in the selection rather than silently dropping one.
+        const confirmed = await requestConfirm({
+          title: t('dialog.confirmUploadTitle'),
+          message: t('sftp.uploadConflict', { path: target }),
+          confirmLabel: t('sftp.overwrite'),
+          danger: true
+        });
         if (!confirmed) return t('sftp.uploadSkipped', { name: file.name });
         try {
           await send(true);
@@ -644,22 +682,28 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
 
   function deleteRemoteItem(path: string, name: string): void {
     setSftpMenu(null);
-    const message = t('sftp.deleteConfirm', { name });
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') return;
-    if (window.confirm(message) !== true) return;
-    setSftpBusy(true);
-    setSftpFailure(null);
-    callRpc('sftp.delete', { path, terminalId: session.hostTerminalId })
-      .then(
-        () => {
-          if (sftpSelected === path) setSftpSelected(null);
-          if (sftpFile?.path === path) setSftpFile(null);
-          setSftpNotice(t('sftp.deleteDone', { name }));
-          reloadSftp(true);
-        },
-        (error: unknown) => setSftpFailure(asFailure(error))
-      )
-      .finally(() => setSftpBusy(false));
+    void (async () => {
+      const confirmed = await requestConfirm({
+        title: t('dialog.confirmDeleteTitle'),
+        message: t('sftp.deleteConfirm', { name }),
+        confirmLabel: t('sftp.delete'),
+        danger: true
+      });
+      if (!confirmed) return;
+      setSftpBusy(true);
+      setSftpFailure(null);
+      callRpc('sftp.delete', { path, terminalId: session.hostTerminalId })
+        .then(
+          () => {
+            if (sftpSelected === path) setSftpSelected(null);
+            if (sftpFile?.path === path) setSftpFile(null);
+            setSftpNotice(t('sftp.deleteDone', { name }));
+            reloadSftp(true);
+          },
+          (error: unknown) => setSftpFailure(asFailure(error))
+        )
+        .finally(() => setSftpBusy(false));
+    })();
   }
 
   function openNewFileDialog(targetDir: string): void {
@@ -689,8 +733,32 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
    * Switching to 文件 re-reads. A terminal may have connected or dropped while the user was on
    * another page, and the host half only knows the terminals it was told about — so the page's
    * first paint after a switch is the moment its answer can be stale.
+   *
+   * Leaving 文件 while the editor holds unsaved text asks first, and that is a correctness point
+   * rather than a courtesy: the pane is torn down with the page, so switching to 终端 used to
+   * discard a half-written file with no way back and no question asked. The guard is on the
+   * **page switch** and not only on the pane's 关闭 button, because the nav is the shorter path
+   * and therefore the one a user actually takes.
    */
   function changePage(next: SessionPage): void {
+    if (next !== 'sftp' && sftpFile !== null && sftpFile.kind === 'ready' && sftpFile.dirty) {
+      void (async () => {
+        const discard = await requestConfirm({
+          title: t('dialog.confirmDiscardTitle'),
+          message: t('sftp.discardConfirm', { name: sftpFile.path }),
+          confirmLabel: t('sftp.discard'),
+          danger: true
+        });
+        if (!discard) return;
+        applyPage(next);
+      })();
+      return;
+    }
+    applyPage(next);
+  }
+
+  /** The page switch itself, once anything that had to be asked has been answered. */
+  function applyPage(next: SessionPage): void {
     setSessionPage(session, next);
     if (next !== 'sftp') {
       // Leaving 文件 closes the file pane. The pane belongs to the 文件 page rather than to
@@ -1135,7 +1203,22 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
         onRevert: revertSftpFile,
         onSave: saveSftpFile,
         onReload: () => openSftpFile(sftpFile.path, sftpFile.mode),
-        onClose: () => setSftpFile(null),
+        // Closing a dirty buffer asks first (UI2-11): the 关闭 button sat next to the save
+        // button and discarded a whole file's worth of typing with one click.
+        onClose: () => {
+          void (async () => {
+            if (sftpFile.kind === 'ready' && sftpFile.dirty) {
+              const discard = await requestConfirm({
+                title: t('dialog.confirmDiscardTitle'),
+                message: t('sftp.discardConfirm', { name: sftpFile.path }),
+                confirmLabel: t('sftp.discard'),
+                danger: true
+              });
+              if (!discard) return;
+            }
+            setSftpFile(null);
+          })();
+        },
         onDownload: () => downloadSftpFile(sftpFile.path)
       })
     );
@@ -1176,6 +1259,18 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
         { key: 'terminal-banners', className: 'att-banners', hidden: session.page !== 'terminal' },
         banners
       )
+    );
+  }
+
+  // Last, so it paints over the page and the file pane it is asking about.
+  if (confirm !== null) {
+    children.push(
+      renderConfirmDialog({
+        t,
+        ...confirm.request,
+        onConfirm: () => answerConfirm(true),
+        onClose: () => answerConfirm(false)
+      })
     );
   }
 

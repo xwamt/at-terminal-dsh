@@ -40,17 +40,17 @@ export function AgentMonitorView(props: AgentMonitorViewProps): El {
           h(
             'span',
             {
-              className: `att-badge ${
+              className: `att-monitor-badge ${
                 current.status === 'running'
-                  ? 'att-badge-running'
+                  ? 'att-monitor-badge-running'
                   : current.status === 'confirmation_waiting'
-                    ? 'att-badge-waiting'
+                    ? 'att-monitor-badge-waiting'
                     : current.status === 'success'
-                      ? 'att-badge-success'
-                      : 'att-badge-denied'
+                      ? 'att-monitor-badge-success'
+                      : 'att-monitor-badge-denied'
               }`
             },
-            current.status === 'running' && h('span', { className: 'att-badge-pulse-dot' }),
+            current.status === 'running' && h('span', { className: 'att-monitor-badge-pulse-dot' }),
             t(`monitor.status.${current.status === 'confirmation_waiting' ? 'waiting' : current.status}`)
           )
       ),
@@ -143,10 +143,10 @@ export function AgentMonitorView(props: AgentMonitorViewProps): El {
               ...recentAudits.map((audit) => {
                 const decisionClass =
                   audit.decision === 'denied'
-                    ? 'att-badge-denied'
+                    ? 'att-monitor-badge-denied'
                     : audit.decision === 'confirmed'
-                      ? 'att-badge-waiting'
-                      : 'att-badge-success';
+                      ? 'att-monitor-badge-waiting'
+                      : 'att-monitor-badge-success';
                 return h(
                   'tr',
                   { key: audit.id },
@@ -154,7 +154,7 @@ export function AgentMonitorView(props: AgentMonitorViewProps): El {
                   h(
                     'td',
                     null,
-                    h('span', { className: `att-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
+                    h('span', { className: `att-monitor-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
                   ),
                   h('td', { style: { textTransform: 'uppercase', fontSize: '10px' } }, audit.riskLevel ?? 'normal'),
                   h('td', { style: { fontFamily: 'monospace', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, audit.command)

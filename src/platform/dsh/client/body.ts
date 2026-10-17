@@ -34,10 +34,13 @@ import {
   type Translate
 } from './models';
 import { useTabBadge } from './sessions';
+import { readAssetsState, saveAssetsState } from './tabState';
 import { renderAssetsView, type AssetSummary } from './views/assets';
 import {
+  renderConfirmDialog,
   renderExportDialog,
   renderImportDialog,
+  type ConfirmDialogProps,
   type ExportDone,
   type ExportFailed,
   type ExportState,
@@ -395,6 +398,34 @@ interface ServerListResult {
 }
 
 /**
+ * The bucket key for a body the frame gave no identity — a harness render, or a frame old enough
+ * not to carry `contentId`.
+ *
+ * A constant, for the same reason `body-session.ts` uses one: two renders that cannot name their
+ * tab are the same tab as far as anything here can tell. It is also why the store's tests clear
+ * themselves — a module-level store and a shared fallback key would otherwise hand one test's
+ * draft form to the next.
+ */
+const ANONYMOUS_TAB_KEY = 'anonymous';
+
+/**
+ * Whether two forms differ in anything the user could have typed.
+ *
+ * Every field, password included: a password typed into a restored draft is a change the user
+ * would lose by leaving, and a baseline's own password is always `''` (the store blanks it and
+ * `formFromServer` never fills it), so this compares what was typed rather than what is stored.
+ */
+function formsDiffer(left: FormModel, right: FormModel): boolean {
+  return (Object.keys(left) as Array<keyof FormModel>).some((field) => left[field] !== right[field]);
+}
+
+/** A question waiting for an answer. The resolver is what turns the click back into a `boolean`. */
+interface PendingConfirm {
+  request: Omit<ConfirmDialogProps, 't' | 'onConfirm' | 'onClose'>;
+  resolve(answer: boolean): void;
+}
+
+/**
  * The 资产 tab: a server manager and nothing else.
  *
  * The terminal and the file tree used to be two more pages behind this body's nav. They are not
@@ -406,6 +437,16 @@ interface ServerListResult {
 export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElement {
   const t = React.useContext(BodyLocale);
   const tabId = readTabId(props);
+  /**
+   * This tab's bucket key, and the state a previous mount of **this** tab left behind.
+   *
+   * Read once per mount, into the initialisers below — that is what makes a tab switch look
+   * like a page the user never left, while a freshly opened tab still starts clean (a new
+   * `contentId`, so no bucket). Nothing re-reads it afterwards: the store is written by this
+   * body, so a subscription would only echo what this render already knows.
+   */
+  const tabKey = readTabKey(props) || ANONYMOUS_TAB_KEY;
+  const restored = readAssetsState(tabKey);
 
   const openSessionTab =
     typeof props.openSessionTab === 'function'
@@ -417,11 +458,20 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
       ? (props.openMonitorTab as (options?: { serverId?: string; target?: 'hardware' | 'agent_execution' }) => boolean)
       : undefined;
 
-  const [formOpen, setFormOpen] = React.useState(false);
+  const [formOpen, setFormOpen] = React.useState(restored?.formOpen ?? false);
   const [dialog, setDialog] = React.useState<'none' | 'import' | 'export'>('none');
   const [menu, setMenu] = React.useState<MenuState | null>(null);
   const [copied, setCopied] = React.useState<string | null>(null);
-  const [listSelectedId, setListSelectedId] = React.useState('');
+  const [listSelectedId, setListSelectedId] = React.useState(restored?.listSelectedId ?? '');
+  /**
+   * The list's scroll offset, held in a ref rather than in state.
+   *
+   * A scroll is not a re-render: putting it in `useState` would rebuild the whole list on every
+   * wheel tick, and the only reader is the restore effect below. The ref is also what lets the
+   * write-through effect persist the *current* offset without depending on it.
+   */
+  const scrollRef = React.useRef<HTMLElement | null>(null);
+  const scrollTopRef = React.useRef(restored?.scrollTop ?? 0);
   /**
    * Why a double-click did not open a tab, when the frame refused it.
    *
@@ -446,7 +496,7 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
 
   /* ---------------------------------- form ----------------------------------- */
 
-  const [form, setForm] = React.useState<FormModel>(emptyForm);
+  const [form, setForm] = React.useState<FormModel>(restored?.form ?? emptyForm);
   const [formError, setFormError] = React.useState<{ field: string; message: string } | null>(null);
   const [saveState, setSaveState] = React.useState<SaveState | SaveDone | SaveFailed>({ kind: 'idle' });
   const [removal, setRemoval] = React.useState<
@@ -457,6 +507,54 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
   >({ kind: 'idle' });
   const [showPassword, setShowPassword] = React.useState(false);
   const [groupMenuOpen, setGroupMenuOpen] = React.useState(false);
+  /**
+   * The form as it was when this draft started, so "unsaved changes" can be answered rather
+   * than guessed. A ref, not state: it never needs to re-render anything — `form` does that —
+   * and putting it in state would make the dirty check a render behind the edit.
+   */
+  const formBaselineRef = React.useRef<FormModel>(form);
+
+  /* ------------------------------ the confirm box ---------------------------- */
+
+  /**
+   * One question at a time, answered through a promise.
+   *
+   * The promise is what makes this usable from the middle of an async flow: the upload loop has
+   * to ask about file 3 of 7, so the answer has to suspend that loop rather than block the
+   * browser. `window.confirm` could do neither — it froze the page and gave a themed panel a
+   * grey system dialog with an origin string in it.
+   *
+   * Plain functions rather than `useCallback`: a fresh identity per render is harmless here
+   * (every caller closes over the render it is in and answers before the next one), and the
+   * bundle test's React stand-in does not implement the memo hooks.
+   */
+  const [confirm, setConfirm] = React.useState<PendingConfirm | null>(null);
+
+  function requestConfirm(
+    request: Omit<ConfirmDialogProps, 't' | 'onConfirm' | 'onClose'>
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => setConfirm({ request, resolve }));
+  }
+
+  function answerConfirm(answer: boolean): void {
+    const pending = confirm;
+    if (pending === null) return;
+    // Closed **before** resolution, so a caller that immediately opens another dialog is not
+    // painted underneath this one for a frame.
+    setConfirm(null);
+    pending.resolve(answer);
+  }
+
+  /** Ask before throwing away edits. True means "there is nothing to lose, carry on". */
+  async function confirmDiscard(): Promise<boolean> {
+    if (!formsDiffer(form, formBaselineRef.current)) return true;
+    return requestConfirm({
+      title: t('dialog.confirmDiscardTitle'),
+      message: t('form.discardConfirm'),
+      confirmLabel: t('form.discard'),
+      danger: true
+    });
+  }
 
   /* ------------------------------ import/export ------------------------------ */
 
@@ -470,7 +568,48 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
   const [importStrategy, setImportStrategy] = React.useState('skip');
   const [importState, setImportState] = React.useState<ImportState | ImportDone | ImportFailed>({ kind: 'idle' });
   const importReadRef = React.useRef<(() => Promise<string>) | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = React.useState<string[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = React.useState<string[]>([
+    ...(restored?.collapsedGroups ?? [])
+  ]);
+
+  /* --------------------------- state that outlives us ------------------------- */
+
+  /**
+   * Write the four surviving fields back on every change.
+   *
+   * A single effect rather than a `persist()` call at each setter: there are nine call sites
+   * that touch `form` (one per field), and a write-through that has to be remembered at each of
+   * them is a write-through that will be forgotten at one. The deps are the fields themselves,
+   * so it runs exactly when something it stores changed.
+   *
+   * `scrollTop` rides a ref and is therefore not in the deps — it is saved by the scroll
+   * handler itself (see `renderAssetsView`'s `onScrollTop`), which is the only moment it moves.
+   */
+  React.useEffect(() => {
+    saveAssetsState(tabKey, {
+      formOpen,
+      form,
+      listSelectedId,
+      collapsedGroups,
+      scrollTop: scrollTopRef.current
+    });
+  }, [tabKey, formOpen, form, listSelectedId, collapsedGroups]);
+
+  /**
+   * Put the list back where the user left it.
+   *
+   * Keyed on `serversState.kind` rather than run once on mount, and that is the whole
+   * difficulty: the read is in flight on the first paint, so the scroll container has no height
+   * to scroll — setting `scrollTop` then clamps to 0 and the position is lost for good. The
+   * effect therefore waits for the read to land, which is the first frame the list can actually
+   * be scrolled.
+   */
+  React.useEffect(() => {
+    if (serversState.kind !== 'ok') return;
+    const node = scrollRef.current;
+    if (node === null) return;
+    node.scrollTop = scrollTopRef.current;
+  }, [serversState.kind]);
 
   // The context menu closes on any outside click or Escape.
   React.useEffect(() => {
@@ -548,6 +687,7 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
 
   function startNew(): void {
     setForm(emptyForm());
+    formBaselineRef.current = emptyForm();
     setFormError(null);
     setSaveState({ kind: 'idle' });
     setShowPassword(false);
@@ -556,7 +696,9 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
   }
 
   function startEdit(server: ServerView): void {
-    setForm(formFromServer(server));
+    const draft = formFromServer(server);
+    setForm(draft);
+    formBaselineRef.current = draft;
     setFormError(null);
     setSaveState({ kind: 'idle' });
     setShowPassword(false);
@@ -581,6 +723,9 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         const label = text(payload.label) || form.label.trim();
         setSaveState({ kind: 'ok', label });
         setForm(emptyForm());
+        // Saved is not dirty: without this, closing the form after a save would ask whether to
+        // discard edits the user has just persisted.
+        formBaselineRef.current = emptyForm();
         setFormOpen(false);
         setServersRevision((value) => value + 1);
         setSummaryRevision((value) => value + 1);
@@ -591,19 +736,27 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
 
   function runRemove(server: ServerView): void {
     setMenu(null);
-    const message = t('servers.removeConfirm', { label: text(server.label) });
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') return;
-    if (window.confirm(message) !== true) return;
-    setRemoval({ kind: 'pending' });
-    callRpc('servers.remove', { id: text(server.id) }).then(
-      (result) => {
-        const payload = (result ?? {}) as { removed?: unknown };
-        setRemoval({ kind: 'ok', label: text(server.label), removed: payload.removed !== false });
-        setServersRevision((value) => value + 1);
-        setSummaryRevision((value) => value + 1);
-      },
-      (error: unknown) => setRemoval({ kind: 'failed', ...asFailure(error) })
-    );
+    void (async () => {
+      const confirmed = await requestConfirm({
+        title: t('dialog.confirmRemoveTitle'),
+        message: t('servers.removeConfirm', { label: text(server.label) }),
+        confirmLabel: t('menu.remove'),
+        danger: true
+      });
+      // A refusal is a no-op rather than a cancelled state: nothing was started, so there is
+      // nothing to report and no pending flag to unwind.
+      if (!confirmed) return;
+      setRemoval({ kind: 'pending' });
+      callRpc('servers.remove', { id: text(server.id) }).then(
+        (result) => {
+          const payload = (result ?? {}) as { removed?: unknown };
+          setRemoval({ kind: 'ok', label: text(server.label), removed: payload.removed !== false });
+          setServersRevision((value) => value + 1);
+          setSummaryRevision((value) => value + 1);
+        },
+        (error: unknown) => setRemoval({ kind: 'failed', ...asFailure(error) })
+      );
+    })();
   }
 
   /**
@@ -666,12 +819,27 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         },
         onSave: runSave,
         onCancel: () => {
-          setForm(emptyForm());
-          setFormError(null);
-          setSaveState({ kind: 'idle' });
-          setFormOpen(false);
+          void (async () => {
+            if (!(await confirmDiscard())) return;
+            setForm(emptyForm());
+            formBaselineRef.current = emptyForm();
+            setFormError(null);
+            setSaveState({ kind: 'idle' });
+            setFormOpen(false);
+          })();
         },
-        onBack: () => setFormOpen(false)
+        // 返回列表 is the same act as 取消 once the form has content worth losing, so it asks the
+        // same question through the same dialog rather than a second code path.
+        onBack: () => {
+          void (async () => {
+            if (!(await confirmDiscard())) return;
+            setForm(emptyForm());
+            formBaselineRef.current = emptyForm();
+            setFormError(null);
+            setSaveState({ kind: 'idle' });
+            setFormOpen(false);
+          })();
+        }
       })
     );
   }
@@ -721,6 +889,14 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         ? (server) => openMonitorTab({ serverId: text(server.id), target: 'hardware' })
         : undefined,
       collapsedGroups,
+      scrollRef,
+      onScrollTop: (top) => {
+        scrollTopRef.current = top;
+        // Saved here rather than through the effect: the offset moves on every wheel tick and
+        // nothing re-renders, so this is the only place that sees it change.
+        const current = readAssetsState(tabKey);
+        if (current !== undefined) saveAssetsState(tabKey, { ...current, scrollTop: top });
+      },
       onToggleGroup: (groupKey: string) => {
         setCollapsedGroups((prev) =>
           prev.includes(groupKey) ? prev.filter((k) => k !== groupKey) : [...prev, groupKey]
@@ -761,6 +937,17 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         onStrategy: setImportStrategy,
         onSubmit: runImport,
         onClose: () => setDialog('none')
+      })
+    );
+  }
+
+  if (confirm !== null) {
+    children.push(
+      renderConfirmDialog({
+        t,
+        ...confirm.request,
+        onConfirm: () => answerConfirm(true),
+        onClose: () => answerConfirm(false)
       })
     );
   }

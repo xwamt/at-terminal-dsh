@@ -1461,6 +1461,34 @@ describe('client bundle — assets page', () => {
     expect(text).toContain('私钥文件：3');
   });
 
+  /**
+   * UI2-03's wiring, as far as this harness can honestly see it.
+   *
+   * The behaviour — a draft form, a selected row, collapsed groups and a scroll offset coming
+   * back on the next mount — is asserted in `tab-state.test.ts`, against the real store. It
+   * cannot be asserted **here**: the shim keeps one hook-slot array per harness, so a second
+   * render after `unmount()` still finds the previous `useState` slots and would pass whether
+   * or not the store did anything. A test that cannot fail is worse than no test, so this one
+   * stops at the wiring the store needs: a mounted node to scroll and a handler that reports
+   * the offset out of it.
+   */
+  it('gives the list box a scroll container the body can restore', async () => {
+    const harness = createHarness();
+    harness.apply();
+    primeHappyPath(harness);
+    const tree = await harness.settle();
+
+    const listBox = findAllByClass(tree, 'att-content')[0];
+    expect(listBox, 'the list box is rendered').toBeDefined();
+    expect(typeof listBox.props.onScroll, 'an offset has to leave the DOM somehow').toBe('function');
+    expect(listBox.props.ref, 'and the body needs the node to write the offset back').toBeDefined();
+
+    // The handler reads `currentTarget.scrollTop` and must not throw on a partial event.
+    expect(() =>
+      (listBox.props.onScroll as (event: unknown) => void)({ currentTarget: { scrollTop: 240 } })
+    ).not.toThrow();
+  });
+
   it('collapses and expands a server group on click', async () => {
     const harness = createHarness();
     harness.apply();
@@ -1525,9 +1553,26 @@ describe('client bundle — assets page', () => {
 
     (findByAction(harness.tree, 'menu-remove')?.props.onClick as () => void)();
     await harness.settle();
-    expect(harness.confirms).toHaveLength(1);
-    expect(harness.confirms[0]).toContain('web-01');
+
+    // The question is the panel's own dialog now, not `window.confirm`: it carries a title, the
+    // consequence, and a verb on the button. Asserted before the answer so the dialog is proven
+    // to be *what* the click produced, rather than an artefact of the delete rendering after it.
+    const dialog = findAllByClass(harness.tree, 'att-dialog');
+    expect(dialog).toHaveLength(1);
+    const dialogText = collectText(harness.tree);
+    expect(dialogText).toContain('删除服务器');
+    expect(dialogText).toContain('web-01');
+    // The consequence names the private key, which is the part users guess wrong about.
+    expect(dialogText).toContain('私钥文件不会被删除');
+    // Nothing has been deleted yet: the question is unanswered.
+    expect(harness.rpcCalls.some((call) => call.method === 'servers.remove')).toBe(false);
+    expect(harness.confirms).toHaveLength(0);
+
+    (findByAction(harness.tree, 'confirm-accept')?.props.onClick as () => void)();
+    await harness.settle();
     expect(harness.rpcCalls.some((call) => call.method === 'servers.remove')).toBe(true);
+    // And the dialog is gone once answered.
+    expect(findAllByClass(harness.tree, 'att-dialog')).toHaveLength(0);
   });
 
   it('copies the row address through the context menu', async () => {
@@ -1547,15 +1592,19 @@ describe('client bundle — assets page', () => {
     const harness = createHarness();
     harness.apply();
     primeHappyPath(harness);
-    harness.setConfirmAnswer(false);
     await harness.settle();
     const row = findByAttribute(harness.tree, 'data-at-terminal-row');
     (row?.props.onContextMenu as (event: unknown) => void)({ preventDefault() {}, clientX: 1, clientY: 1 });
     harness.render();
     (findByAction(harness.tree, 'menu-remove')?.props.onClick as () => void)();
     await harness.settle();
-    expect(harness.confirms).toHaveLength(1);
+
+    expect(findByAction(harness.tree, 'confirm-accept')).not.toBeNull();
+    (findByAction(harness.tree, 'confirm-cancel')?.props.onClick as () => void)();
+    await harness.settle();
+
     expect(harness.rpcCalls.some((call) => call.method === 'servers.remove')).toBe(false);
+    expect(findAllByClass(harness.tree, 'att-dialog')).toHaveLength(0);
   });
 });
 
@@ -2260,6 +2309,61 @@ describe('client bundle — terminal over the websocket', () => {
     expect(findByAction(rendered as Tree, 'term-new-tab')).toBeNull();
   });
 
+  /**
+   * UI2-01, view half: the selector is not operable while the PTY is live.
+   *
+   * The model guard (`setSessionTarget`) is covered in `sessions.test.ts`; this is the half the
+   * user actually meets. Both are asserted because they fail differently — a disabled control
+   * still exists and can be driven programmatically, and a guard alone would let the user pick
+   * a value that silently snaps back.
+   *
+   * The state is supplied on a **cloned** `TerminalView` element rather than by pushing a frame
+   * through the socket: what the toolbar renders is a pure function of `termState`, and driving
+   * the socket would only add a connect handshake between the assertion and the fact.
+   */
+  it('disables the server selector while the terminal is connected', async () => {
+    const harness = createSessionHarness();
+    await harness.settle();
+    const view = findByFunctionName(harness.tree, 'TerminalView');
+    expect(view).not.toBeNull();
+
+    const rendered = harness.shim.instantiate({
+      type: view?.type,
+      props: { ...view?.props, termState: { kind: 'connected', text: '' } }
+    } as ElementLike);
+
+    const select = findByAction(rendered as Tree, 'term-select');
+    expect(select).not.toBeNull();
+    expect(select?.props.disabled).toBe(true);
+    expect(select?.props['data-at-terminal-locked']).toBe('true');
+    // The reason is reachable by a screen reader, which cannot read a `title` on a disabled
+    // control reliably — and in some browsers not at all.
+    const hints = findAllByClass(rendered as Tree, 'att-sr-only');
+    expect(hints).toHaveLength(1);
+    expect(hints[0].props.id).toBe('att-term-lock-hint');
+    expect(select?.props['aria-describedby']).toBe('att-term-lock-hint');
+    expect(collectText(rendered as Tree)).toContain('断开');
+    // 连接 is gone while live: the same state that locks the target offers the way out.
+    expect(findByAction(rendered as Tree, 'term-connect')).toBeNull();
+  });
+
+  it('leaves the server selector operable when nothing is connected', async () => {
+    // The counterpart: a guard that also blocked the idle case would leave the selector dead
+    // after the first disconnect, and every test above would still pass.
+    const harness = createSessionHarness();
+    await harness.settle();
+    const view = findByFunctionName(harness.tree, 'TerminalView');
+    const rendered = harness.shim.instantiate({
+      type: view?.type,
+      props: { ...view?.props, termState: { kind: 'idle', text: '' } }
+    } as ElementLike);
+
+    const select = findByAction(rendered as Tree, 'term-select');
+    expect(select?.props['data-at-terminal-locked']).toBe('false');
+    expect(select?.props.disabled).toBe(false);
+    expect(select?.props['aria-describedby']).toBeUndefined();
+  });
+
   it('passes the Host terminal settings to the terminal view', async () => {
     const harness = createSessionHarness();
     await harness.settle();
@@ -2851,6 +2955,124 @@ describe('client bundle — the file tree (DSH-23)', () => {
     expect(harness.rpcCalls.filter((call) => call.method === 'sftp.list').length).toBeGreaterThan(listsBefore);
   });
 
+  /**
+   * UI2-04: an upload collision is asked about in the panel's own dialog.
+   *
+   * The old path used `window.confirm`, which blocked the page from inside a per-file loop — so
+   * the answer arrived after the whole upload had already frozen. The question is also the one
+   * place the upload loop has to *suspend*, which is what makes the promise shape worth a test
+   * of its own rather than trusting the delete path to cover it.
+   */
+  it('asks before overwriting an existing remote file, then uploads with overwrite', async () => {
+    const harness = await liveTree();
+    const uploads: Record<string, unknown>[] = [];
+    harness.setRpcHandler('sftp.upload', (params) => {
+      uploads.push(params);
+      // The host refuses an existing destination and names the code the client branches on.
+      if (params.overwrite !== true) {
+        throw Object.assign(new Error('already exists'), { code: 'sftp-conflict' });
+      }
+      return { path: params.path, size: 5, modifiedAt: 1 };
+    });
+
+    const input = findByAction(harness.tree, 'sftp-upload-input');
+    (input?.props.onChange as (event: unknown) => void)({
+      target: { files: [{ name: 'notes.txt', base64: 'aGVsbG8=' }], value: 'C:/fakepath/notes.txt' }
+    });
+    await harness.settle();
+
+    // One attempt so far, refused, and the question is on screen naming the target path.
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0].overwrite).toBe(false);
+    const dialogText = collectText(harness.tree);
+    expect(dialogText).toContain('覆盖已有文件');
+    expect(dialogText).toContain('/home/root/notes.txt');
+
+    (findByAction(harness.tree, 'confirm-accept')?.props.onClick as () => void)();
+    await harness.settle();
+
+    expect(uploads).toHaveLength(2);
+    expect(uploads[1].overwrite).toBe(true);
+    expect(uploads[1].path).toBe('/home/root/notes.txt');
+  });
+
+  it('skips the file and says so when the overwrite is refused', async () => {
+    const harness = await liveTree();
+    const uploads: Record<string, unknown>[] = [];
+    harness.setRpcHandler('sftp.upload', (params) => {
+      uploads.push(params);
+      throw Object.assign(new Error('already exists'), { code: 'sftp-conflict' });
+    });
+
+    const input = findByAction(harness.tree, 'sftp-upload-input');
+    (input?.props.onChange as (event: unknown) => void)({
+      target: { files: [{ name: 'notes.txt', base64: 'aGVsbG8=' }], value: 'C:/fakepath/notes.txt' }
+    });
+    await harness.settle();
+    (findByAction(harness.tree, 'confirm-cancel')?.props.onClick as () => void)();
+    await harness.settle();
+
+    // No retry, and the outcome is reported rather than swallowed: a selection of seven files
+    // where two were skipped has to account for all seven.
+    expect(uploads).toHaveLength(1);
+    expect(collectText(harness.tree)).toContain('已跳过');
+  });
+
+  /**
+   * UI2-11's dirty-close guard, exercised through the panel's own dialog.
+   *
+   * 关闭 sits next to 保存 in the pane's toolbar, so the expensive click and the cheap click are
+   * adjacent — a file's worth of typing used to disappear with no question and no undo. The
+   * three states are asserted separately because "asks" without "cancel keeps the editor" is a
+   * dialog that eats work more reliably than the silent close did.
+   */
+  it('asks before closing a dirty editor, and keeps it when the answer is no', async () => {
+    const harness = await liveTree();
+    (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    harness.render();
+    (findByAction(harness.tree, 'sftp-file-edit')?.props.onClick as () => void)();
+    await harness.settle();
+
+    const editor = findByAttribute(harness.tree, 'data-at-terminal-sftp-editor');
+    expect(editor, 'the editor is open').not.toBeNull();
+    (editor?.props.onChange as (event: unknown) => void)({ target: { value: 'edited text' } });
+    harness.render();
+
+    (findByAction(harness.tree, 'sftp-file-close')?.props.onClick as () => void)();
+    await harness.settle();
+    expect(collectText(harness.tree)).toContain('放弃未保存的修改');
+
+    (findByAction(harness.tree, 'confirm-cancel')?.props.onClick as () => void)();
+    await harness.settle();
+    // Still editing, and still holding the typed text.
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-editor')).not.toBeNull();
+    expect(
+      findByAttribute(harness.tree, 'data-at-terminal-sftp-editor')?.props.value
+    ).toBe('edited text');
+
+    (findByAction(harness.tree, 'sftp-file-close')?.props.onClick as () => void)();
+    await harness.settle();
+    (findByAction(harness.tree, 'confirm-accept')?.props.onClick as () => void)();
+    await harness.settle();
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-editor')).toBeNull();
+  });
+
+  it('closes a clean editor without asking', async () => {
+    // The guard has to be able to stay quiet: a dialog on every close is a dialog nobody reads,
+    // and closing a file you only looked at must stay one click.
+    const harness = await liveTree();
+    (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    harness.render();
+    (findByAction(harness.tree, 'sftp-file-edit')?.props.onClick as () => void)();
+    await harness.settle();
+
+    (findByAction(harness.tree, 'sftp-file-close')?.props.onClick as () => void)();
+    await harness.settle();
+
+    expect(findAllByClass(harness.tree, 'att-dialog')).toHaveLength(0);
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-editor')).toBeNull();
+  });
+
   it('refuses to edit a truncated file, rather than writing back only its first page', async () => {
     const harness = await liveTree();
     harness.setRpcHandler('sftp.readFile', () => ({
@@ -2943,9 +3165,16 @@ describe('client bundle — the file tree (DSH-23)', () => {
     (findByAction(harness.tree, 'sftp-menu-delete')?.props.onClick as () => void)();
     await harness.settle();
 
-    expect(harness.confirms).toHaveLength(1);
-    expect(harness.confirms[0]).toContain('app.js');
+    const dialogText = collectText(harness.tree);
+    expect(dialogText).toContain('删除远端文件');
+    expect(dialogText).toContain('app.js');
+    expect(deletedPath, 'nothing is deleted before the answer').toBeNull();
+
+    (findByAction(harness.tree, 'confirm-accept')?.props.onClick as () => void)();
+    await harness.settle();
+
     expect(deletedPath).toBe('/home/root/app.js');
+    expect(harness.confirms, 'the browser dialog is not used any more').toHaveLength(0);
   });
 
   it('cancels sftp delete when the confirm is refused', async () => {
@@ -2955,7 +3184,6 @@ describe('client bundle — the file tree (DSH-23)', () => {
       deleteCalled = true;
       return { deleted: true };
     });
-    harness.setConfirmAnswer(false);
 
     const row = rowFor(harness.tree, '/home/root/app.js');
     (row?.props.onContextMenu as (event: unknown) => void)({ preventDefault() {}, clientX: 10, clientY: 20 });
@@ -2963,9 +3191,11 @@ describe('client bundle — the file tree (DSH-23)', () => {
 
     (findByAction(harness.tree, 'sftp-menu-delete')?.props.onClick as () => void)();
     await harness.settle();
+    (findByAction(harness.tree, 'confirm-cancel')?.props.onClick as () => void)();
+    await harness.settle();
 
-    expect(harness.confirms).toHaveLength(1);
     expect(deleteCalled).toBe(false);
+    expect(findAllByClass(harness.tree, 'att-dialog')).toHaveLength(0);
   });
 
   it('opens context menu on directory and supports creating a new file via modal dialog', async () => {
