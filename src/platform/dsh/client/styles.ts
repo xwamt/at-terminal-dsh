@@ -492,7 +492,10 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 }
 .att-row:hover { background: var(--vscode-list-hoverBackground); }
 .att-row[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
-.att-row-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32%; }
+/* flex: 0 0 auto is the part that matters: without it the label is a shrinkable flex item,
+   and at 385px the address plus two badges squeezed it to about fifty pixels — the row read
+   「99....」. A ceiling on its width still applies, so a long label cannot eat the address. */
+.att-row-label { flex: 0 0 auto; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32%; }
 .att-row-addr {
   flex: 1 1 auto; min-width: 0;
   color: var(--vscode-descriptionForeground);
@@ -1195,6 +1198,31 @@ ${ROOT_SELECTOR} .primary-action:focus-visible {
   ${ROOT_SELECTOR} .form-section-grid { grid-template-columns: minmax(0, 1fr); }
   ${ROOT_SELECTOR} .form-right-col { grid-template-columns: minmax(0, 1fr); }
 }
+/*
+ * The group combobox's toggle (UI2-00 walkthrough, D3).
+ *
+ * The reused sheet fills it with the button background, and in this bridge that token IS the
+ * brand fill — which in this theme is near-white. A 48px slab of it beside a 28px input reads as
+ * a rendering fault, not as an affordance, and the literal 'v' inside it is a letter pretending
+ * to be a chevron. So: transparent, no leading border (it abuts the input), and the glyph comes
+ * from the icon set like every other disclosure in the panel.
+ */
+${ROOT_SELECTOR} .group-combobox-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: 1px solid var(--vscode-input-border);
+  border-left: 0;
+  border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;
+  cursor: pointer;
+}
+${ROOT_SELECTOR} .group-combobox-toggle:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground);
+}
 @container att-panel (max-width: 520px) {
   ${ROOT_SELECTOR} .field-grid,
   ${ROOT_SELECTOR} .auth-card-grid { grid-template-columns: minmax(0, 1fr); }
@@ -1207,6 +1235,10 @@ ${ROOT_SELECTOR} .primary-action:focus-visible {
      footer already wraps, so stacking is the readable arrangement rather than a compromise. */
   ${ROOT_SELECTOR} .secondary-action,
   ${ROOT_SELECTOR} .primary-action { width: 100%; }
+  /* The row's second badge is the first thing to go when the panel is this narrow: 口令 says
+     how the server authenticates, 已存口令 only says a password is on file. Two badges plus an
+     address left the name column with nothing, so the optional one loses its seat. */
+  ${ROOT_SELECTOR} .att-row [data-at-terminal-badge="has-password"] { display: none; }
 }
 
 /* --------------------------- Monitor & HUD Styles -------------------------- */

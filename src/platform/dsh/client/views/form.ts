@@ -27,6 +27,7 @@ import {
   type TrustLevel
 } from '../models';
 import { h, type El } from './shared';
+import { chevronDownRegular } from '../icons';
 
 export interface SaveState {
   kind: 'idle' | 'pending';
@@ -105,7 +106,10 @@ function renderGroupCombobox(t: Translate, props: FormViewProps): El {
         'aria-expanded': props.groupMenuOpen,
         onClick: props.onToggleGroupMenu
       },
-      'v'
+      // The icon set's chevron, not a letter: 'v' was drawn by whatever font the platform
+      // picked, so its weight and bearing changed with the OS and it never lined up with the
+      // disclosure glyphs elsewhere in the panel.
+      chevronDownRegular({ size: 14 })
     ),
     h(
       'div',

@@ -623,6 +623,26 @@ describe('client styles — geometry and surface tokens (UI2-05)', () => {
     expect(ruleFor(sheet, '.att-dialog')).toContain('var(--dsw-radius-lg)');
   });
 
+  /*
+   * Two defects the first real walkthrough found and the class audit could not: both were
+   * rendering *wrong* rather than missing a rule, so only a live window exposed them.
+   */
+  it('keeps the row label from being squeezed to nothing in a narrow panel', () => {
+    const label = ruleFor(sheet, '.att-row-label');
+    // Without a fixed flex basis the label is shrinkable, and at 385px the address plus two
+    // badges left it about fifty pixels wide — the row read 「99....」.
+    expect(label).toContain('flex: 0 0 auto');
+    expect(sheet).toContain('[data-at-terminal-badge="has-password"] { display: none; }');
+  });
+
+  it('does not paint the group combobox toggle with the brand fill', () => {
+    const toggle = ruleFor(sheet, '.group-combobox-toggle');
+    // --vscode-button-background is the brand fill, which is near-white in this theme; a 48px
+    // slab of it beside a 28px input read as a rendering fault.
+    expect(toggle).toContain('background: transparent');
+    expect(toggle).not.toContain('--vscode-button-background');
+  });
+
   it('marks a selected segment with the neutral overlay rather than the brand fill', () => {
     const selected = ruleFor(sheet, '.att-nav-btn[aria-selected="true"]');
     expect(selected).toContain('var(--dsw-alias-interactive-bg-active)');
