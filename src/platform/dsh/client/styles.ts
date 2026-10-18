@@ -874,6 +874,25 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
     background: var(--dsw-alias-state-warn-primary);
     animation: none;
   }
+  /*
+   * The HUD and the monitor page are the only places that animate while the user is reading
+   * them: a pulsing badge dot, a gauge bar that slides to its new width, and the floating
+   * window's own 0.15s border/box-shadow transitions. All of them are decoration — the number
+   * next to them is the information — so under reduce they stop dead rather than slow down:
+   * a slower slide is still a slide.
+   *
+   * The gauge keeps its width (that is the data) and only loses the transition, so the bar
+   * still reports the same value; it just arrives instead of travelling there.
+   */
+  .att-monitor-badge-pulse-dot,
+  .att-monitor-gauge-fill,
+  .att-hud-pill,
+  .att-floating-window,
+  .att-monitor-tab-btn,
+  .att-floating-tab-btn {
+    animation: none;
+    transition: none;
+  }
 }
 .att-banners { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
 .att-select {
@@ -912,6 +931,19 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-tab-title {
   display: inline-flex; align-items: center; gap: 6px;
   min-width: 0;
+  /*
+   * max-width: 100% is what makes the ellipsis below reachable.
+   *
+   * The chip this sits in is the host's, and the host clips overflow — so with only
+   * overflow: hidden on the text span, the span still laid out at its max-content width and
+   * the **chip** did the cutting. The user saw 家用n, i.e. a hard cut mid-word that reads as
+   * a different server name, rather than 家用… which says "there is more".
+   *
+   * Constraining the title to its container gives the text span something to shrink
+   * against, so the truncation happens in our own element and carries the ellipsis.
+   */
+  max-width: 100%;
+  overflow: hidden;
 }
 /*
  * The instance's own name, and the only part allowed to shrink.
@@ -920,6 +952,7 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
  * chip overflows and the title's tail — the part that names the server — is the piece that leaves.
  */
 .att-tab-title-text {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .att-tab-badge {
@@ -1474,21 +1507,58 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   border-color: var(--dsw-alias-brand-primary);
 }
 
+/*
+ * The chip is a **button** whenever it does something (CPU/MEM/agent open a sub-tab), so the
+ * rule that draws it has to reset the native control or the platform's own border and
+ * background reappear inside the pill. appearance: none plus an explicit font: inherit is the
+ * whole reset — the rest of the geometry is the shared chip shape.
+ */
 .att-hud-pill-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 1px 6px;
   border-radius: 10px;
+  border: none;
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 80%, transparent);
+  font: inherit;
   font-size: 11px;
   color: var(--dsw-alias-label-secondary);
+}
+button.att-hud-pill-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+button.att-hud-pill-chip:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+/* The chevron that expands the pill is a button of its own: it used to be a decorative span
+   inside a role="button" container, i.e. an action with no name a screen reader could
+   announce. It inherits the pill's surface rather than drawing a second one. */
+.att-hud-pill-expand {
+  display: inline-flex; align-items: center; justify-content: center;
+  appearance: none; -webkit-appearance: none;
+  border: none; background: transparent; padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  opacity: 0.8; cursor: pointer;
+}
+.att-hud-pill-expand:hover {
+  opacity: 1;
+  color: var(--dsw-alias-label-primary);
 }
 
 /* Draggable Floating Window */
 .att-floating-window {
-  width: 400px;
-  max-height: 540px;
+  /*
+   * min() rather than a media query: the floating window is positioned in viewport
+   * coordinates, so what matters is the viewport, not the panel the button was pressed in.
+   * At 360px wide the old fixed 400px hung 40px off the right edge and clampPosition could
+   * not pull it back — it clamped against a box that did not fit.
+   */
+  width: min(400px, calc(100vw - 16px));
+  max-height: min(540px, calc(100vh - 16px));
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 92%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);

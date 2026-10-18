@@ -94,7 +94,7 @@ export function HardwareMonitorView(props: HardwareMonitorViewProps): El {
       memory.cachedBytes !== undefined &&
         h(
           'div',
-          { style: { fontSize: '10px', color: 'var(--dsw-alias-label-caption)' } },
+          { style: { fontSize: '11px', color: 'var(--dsw-alias-label-caption)' } },
           t('monitor.mem.cached', { cached: formatFileSize(memory.cachedBytes) })
         )
     ),

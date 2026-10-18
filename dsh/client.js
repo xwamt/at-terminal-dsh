@@ -9218,11 +9218,19 @@ window.__ModuleLoader__.load({
       "monitor.float": "\u72EC\u7ACB\u60AC\u6D6E",
       "monitor.dock": "\u5438\u9644\u505C\u9760",
       "monitor.hud.toggle": "HUD \u60AC\u6D6E\u7A97",
+      "monitor.hud.title": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
       "monitor.hud.expand": "\u5C55\u5F00\u8BE6\u60C5",
       "monitor.hud.close": "\u5173\u95ED HUD",
       "monitor.hud.minimize": "\u6700\u5C0F\u5316\u4E3A\u60AC\u6D6E\u80F6\u56CA",
       "monitor.hud.openSidebar": "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00\u5B8C\u6574\u9762\u677F",
       "monitor.hud.dragTip": "\u6309\u4F4F\u6807\u9898\u680F\u62D6\u52A8 \xB7 \u53CC\u51FB\u6298\u53E0",
+      // The pill is a group of controls, not one button, so it needs its own name — the CPU/MEM
+      // chips below each carry an action-and-value label of their own.
+      "monitor.hud.pillLabel": "\u76D1\u63A7\u80F6\u56CA",
+      "monitor.hud.cpuChip": "CPU \u5360\u7528 {percent}\uFF0C\u6253\u5F00\u786C\u4EF6\u6307\u6807",
+      "monitor.hud.memChip": "\u5185\u5B58\u5360\u7528 {percent}\uFF0C\u6253\u5F00\u786C\u4EF6\u6307\u6807",
+      "monitor.hud.agentChip": "Agent {status}\uFF0C\u6253\u5F00 Agent \u6267\u884C",
+      "monitor.hud.noServer": "\u672A\u9009\u62E9\u670D\u52A1\u5668",
       "monitor.agent.ready": "\u7A7A\u95F2\u5C31\u7EEA",
       "monitor.cpu.title": "CPU \u4F7F\u7528\u7387",
       "monitor.cpu.cores": "\u6838\u5FC3\u5206\u5E03",
@@ -9253,6 +9261,14 @@ window.__ModuleLoader__.load({
       "monitor.agent.auditsEmpty": "\u6682\u65E0\u5BA1\u8BA1\u6D41\u6C34\u8BB0\u5F55",
       "monitor.status.running": "\u6267\u884C\u4E2D",
       "monitor.status.waiting": "\u7B49\u5F85\u786E\u8BA4",
+      // The pill has ~60px for this word, so it gets a short form rather than being clipped by the
+      // capsule. A full 等待确认 in a 10px-wide slot is what made the old badge read as `WAIT`.
+      "monitor.status.runningShort": "\u8FD0\u884C",
+      "monitor.status.waitingShort": "\u7B49\u5F85",
+      "monitor.risk.high": "\u9AD8",
+      "monitor.risk.medium": "\u4E2D",
+      "monitor.risk.low": "\u4F4E",
+      "monitor.risk.unknown": "\u672A\u77E5",
       "monitor.status.success": "\u6267\u884C\u6210\u529F",
       "monitor.status.denied": "\u5DF2\u62E6\u622A",
       "monitor.decision.allowed": "\u7B56\u7565\u653E\u884C",
@@ -9537,11 +9553,17 @@ window.__ModuleLoader__.load({
       "monitor.float": "Float Window",
       "monitor.dock": "Dock to Sidebar",
       "monitor.hud.toggle": "HUD Overlay",
+      "monitor.hud.title": "Monitor Window",
       "monitor.hud.expand": "Expand",
       "monitor.hud.close": "Close HUD",
       "monitor.hud.minimize": "Minimize to Pill",
       "monitor.hud.openSidebar": "Open in Sidebar Pane",
       "monitor.hud.dragTip": "Drag header to move \xB7 Double-click to collapse",
+      "monitor.hud.pillLabel": "Monitor pill",
+      "monitor.hud.cpuChip": "CPU at {percent}, open hardware metrics",
+      "monitor.hud.memChip": "Memory at {percent}, open hardware metrics",
+      "monitor.hud.agentChip": "Agent {status}, open agent execution",
+      "monitor.hud.noServer": "No server selected",
       "monitor.agent.ready": "Ready / Idle",
       "monitor.cpu.title": "CPU Usage",
       "monitor.cpu.cores": "Cores",
@@ -9572,6 +9594,12 @@ window.__ModuleLoader__.load({
       "monitor.agent.auditsEmpty": "No audit records",
       "monitor.status.running": "RUNNING",
       "monitor.status.waiting": "CONFIRMATION_WAITING",
+      "monitor.status.runningShort": "RUN",
+      "monitor.status.waitingShort": "WAIT",
+      "monitor.risk.high": "High",
+      "monitor.risk.medium": "Medium",
+      "monitor.risk.low": "Low",
+      "monitor.risk.unknown": "Unknown",
       "monitor.status.success": "SUCCESS",
       "monitor.status.denied": "DENIED",
       "monitor.decision.allowed": "Allowed",
@@ -14361,7 +14389,7 @@ window.__ModuleLoader__.load({
           ),
           memory.cachedBytes !== void 0 && h(
             "div",
-            { style: { fontSize: "10px", color: "var(--dsw-alias-label-caption)" } },
+            { style: { fontSize: "11px", color: "var(--dsw-alias-label-caption)" } },
             t("monitor.mem.cached", { cached: formatFileSize(memory.cachedBytes) })
           )
         ),
@@ -14462,7 +14490,40 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // src/platform/dsh/client/localeFormat.ts
+    var hostLocale;
+    function setFormatLocale(locale) {
+      hostLocale = typeof locale == "string" && locale.trim() !== "" ? locale : void 0;
+    }
+    function formatClock(value) {
+      let date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime()))
+        return "-";
+      try {
+        return new Intl.DateTimeFormat(hostLocale, {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: !1
+        }).format(date);
+      } catch {
+        return date.toLocaleTimeString();
+      }
+    }
+
     // src/platform/dsh/client/views/monitorAgent.ts
+    function riskLabel(t, level) {
+      switch (level) {
+        case "high":
+          return t("monitor.risk.high");
+        case "medium":
+          return t("monitor.risk.medium");
+        case "low":
+          return t("monitor.risk.low");
+        default:
+          return t("monitor.risk.unknown");
+      }
+    }
     function AgentMonitorView(props) {
       let { t, snapshot, loading, onRefresh } = props;
       if (!snapshot && loading)
@@ -14576,13 +14637,17 @@ window.__ModuleLoader__.load({
                 return h(
                   "tr",
                   { key: audit.id },
-                  h("td", { style: { whiteSpace: "nowrap", color: "var(--dsw-alias-label-caption)" } }, new Date(audit.timestamp).toLocaleTimeString()),
+                  h(
+                    "td",
+                    { style: { whiteSpace: "nowrap", color: "var(--dsw-alias-label-caption)" } },
+                    formatClock(audit.timestamp)
+                  ),
                   h(
                     "td",
                     null,
                     h("span", { className: `att-monitor-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
                   ),
-                  h("td", { style: { textTransform: "uppercase", fontSize: "10px" } }, audit.riskLevel ?? "normal"),
+                  h("td", { style: { fontSize: "11px" } }, riskLabel(t, audit.riskLevel)),
                   h("td", { style: { fontFamily: "monospace", maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, audit.command)
                 );
               })
@@ -14621,7 +14686,7 @@ window.__ModuleLoader__.load({
           setLoading(!1);
         }
       };
-      return (0, import_react6.useEffect)(() => {
+      (0, import_react6.useEffect)(() => {
         refresh();
         let timer = setInterval(() => {
           refresh();
@@ -14629,7 +14694,12 @@ window.__ModuleLoader__.load({
         return () => {
           clearInterval(timer);
         };
-      }, [selectedServerId]), h(
+      }, [selectedServerId]);
+      let onTabKeyDown = (e) => {
+        let at = activeTab === "hardware" ? 0 : 1, next = e.key === "ArrowRight" ? (at + 1) % 2 : e.key === "ArrowLeft" ? (at + 2 - 1) % 2 : e.key === "Home" ? 0 : e.key === "End" ? 1 : null;
+        next !== null && (e.preventDefault(), setActiveTab(next === 0 ? "hardware" : "agent_execution"));
+      };
+      return h(
         "div",
         {
           className: "att-monitor-container",
@@ -14642,15 +14712,20 @@ window.__ModuleLoader__.load({
           { className: "att-monitor-header" },
           h(
             "div",
-            { className: "att-monitor-nav", role: "tablist" },
+            { className: "att-monitor-nav", role: "tablist", "aria-label": t("monitor.title") },
             h(
               "button",
               {
+                id: "att-monitor-tab-hardware",
+                type: "button",
                 className: "att-monitor-tab-btn",
                 role: "tab",
                 "aria-selected": activeTab === "hardware",
+                "aria-controls": "att-monitor-tabpanel",
+                tabIndex: activeTab === "hardware" ? 0 : -1,
                 "data-active": activeTab === "hardware" ? "true" : "false",
-                onClick: () => setActiveTab("hardware")
+                onClick: () => setActiveTab("hardware"),
+                onKeyDown: onTabKeyDown
               },
               gaugeRegular({ size: 14 }),
               t("monitor.tab.hardware")
@@ -14658,11 +14733,16 @@ window.__ModuleLoader__.load({
             h(
               "button",
               {
+                id: "att-monitor-tab-agent",
+                type: "button",
                 className: "att-monitor-tab-btn",
                 role: "tab",
                 "aria-selected": activeTab === "agent_execution",
+                "aria-controls": "att-monitor-tabpanel",
+                tabIndex: activeTab === "agent_execution" ? 0 : -1,
                 "data-active": activeTab === "agent_execution" ? "true" : "false",
-                onClick: () => setActiveTab("agent_execution")
+                onClick: () => setActiveTab("agent_execution"),
+                onKeyDown: onTabKeyDown
               },
               boltRegular({ size: 14 }),
               t("monitor.tab.agent")
@@ -14699,7 +14779,15 @@ window.__ModuleLoader__.load({
           )
         ),
         // Tab Body Content
-        activeTab === "hardware" ? h(HardwareMonitorView, { t, metrics, loading, onRefresh: refresh }) : h(AgentMonitorView, { t, snapshot, loading, onRefresh: refresh })
+        h(
+          "div",
+          {
+            id: "att-monitor-tabpanel",
+            role: "tabpanel",
+            "aria-labelledby": activeTab === "hardware" ? "att-monitor-tab-hardware" : "att-monitor-tab-agent"
+          },
+          activeTab === "hardware" ? h(HardwareMonitorView, { t, metrics, loading, onRefresh: refresh }) : h(AgentMonitorView, { t, snapshot, loading, onRefresh: refresh })
+        )
       );
     }
     function AtTerminalMonitorTitle(props) {
@@ -14716,7 +14804,7 @@ window.__ModuleLoader__.load({
     var import_react7 = require("react");
     var STORAGE_KEY = "dsh.at-terminal.monitor.hud.pos";
     function clampPosition(x, y, width, height) {
-      let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, maxX = Math.max(8, winW - width - 8), maxY = Math.max(8, winH - height - 8);
+      let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, boxW = Math.min(width, Math.max(0, winW - 16)), boxH = Math.min(height, Math.max(0, winH - 16)), maxX = Math.max(8, winW - boxW - 8), maxY = Math.max(8, winH - boxH - 8);
       return {
         x: Math.max(8, Math.min(maxX, Math.round(x))),
         y: Math.max(8, Math.min(maxY, Math.round(y)))
@@ -14808,7 +14896,11 @@ window.__ModuleLoader__.load({
       }, handleHeaderDoubleClick = (e) => {
         let target = e.target;
         target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
-      }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status;
+      }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
+        setExpanded(!0), setActiveTab(tab), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
+      }, collapse = () => {
+        setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+      }, agentShort = isAgentActive ? t(agentStatus === "confirmation_waiting" ? "monitor.status.waitingShort" : "monitor.status.runningShort") : "";
       return h(
         "div",
         {
@@ -14822,18 +14914,23 @@ window.__ModuleLoader__.load({
         !expanded && h(
           "div",
           {
+            /*
+             * `role="group"`, not `role="button"`.
+             *
+             * It used to be one button whose children were `<span onClick>` — an interactive
+             * element nested inside an interactive element, which both ARIA and every screen
+             * reader reject: the outer role swallows the children, so "CPU 12%" announced as
+             * part of one long button label with no way to reach the third of it that does
+             * something. The container is a group; each chip that acts is its own button.
+             */
             className: `att-hud-pill ${isDragging ? "is-dragging" : ""}`,
-            role: "button",
-            tabIndex: 0,
-            "aria-label": t("monitor.title"),
+            role: "group",
+            "aria-label": t("monitor.hud.pillLabel"),
             title: t("monitor.hud.dragTip"),
             onPointerDown: (e) => handlePointerDown(e, !0),
             onPointerMove: handlePointerMove,
             onPointerUp: (e) => handlePointerUp(e, !0),
-            onPointerCancel: (e) => handlePointerUp(e, !0),
-            onKeyDown: (e) => {
-              (e.key === "Enter" || e.key === " ") && (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
-            }
+            onPointerCancel: (e) => handlePointerUp(e, !0)
           },
           h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, gripRegular({ size: 14 })),
           h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
@@ -14848,54 +14945,59 @@ window.__ModuleLoader__.load({
             ` ${activeLabel || activeServerId}`
           ),
           h(
-            "span",
+            "button",
             {
+              type: "button",
               className: "att-hud-pill-chip",
               title: t("monitor.tab.hardware"),
-              onClick: (e) => {
-                e.stopPropagation(), setExpanded(!0), setActiveTab("hardware"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-              }
+              "aria-label": t("monitor.hud.cpuChip", { percent: `${cpuPercent}%` }),
+              onClick: () => openExpanded("hardware")
             },
             `CPU ${cpuPercent}%`
           ),
           h(
-            "span",
+            "button",
             {
+              type: "button",
               className: "att-hud-pill-chip",
               title: t("monitor.tab.hardware"),
-              onClick: (e) => {
-                e.stopPropagation(), setExpanded(!0), setActiveTab("hardware"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-              }
+              "aria-label": t("monitor.hud.memChip", { percent: `${memPercent}%` }),
+              onClick: () => openExpanded("hardware")
             },
             `MEM ${memPercent}%`
           ),
           isAgentActive ? h(
-            "span",
+            "button",
             {
+              type: "button",
               className: `att-monitor-badge ${agentStatus === "confirmation_waiting" ? "att-monitor-badge-waiting" : "att-monitor-badge-running"}`,
-              style: { padding: "1px 6px", fontSize: "10px", cursor: "pointer" },
-              title: `${t("monitor.tab.agent")}: ${agentStatus}`,
-              onClick: (e) => {
-                e.stopPropagation(), setExpanded(!0), setActiveTab("agent"), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-              }
+              style: { padding: "1px 6px", fontSize: "11px", cursor: "pointer" },
+              title: `${t("monitor.tab.agent")}: ${agentShort}`,
+              "aria-label": t("monitor.hud.agentChip", { status: agentShort }),
+              onClick: () => openExpanded("agent")
             },
-            h("span", { className: "att-monitor-badge-pulse-dot" }),
-            agentStatus === "confirmation_waiting" ? "WAIT" : "RUN"
+            h("span", { className: "att-monitor-badge-pulse-dot", "aria-hidden": !0 }),
+            agentShort
           ) : h("span", {
             className: "att-monitor-badge-pulse-dot",
+            "aria-hidden": !0,
             style: { color: "var(--dsw-alias-state-success-primary)" }
           }),
           h(
-            "span",
+            "button",
             {
+              type: "button",
+              className: "att-hud-pill-expand",
               title: t("monitor.hud.expand"),
-              style: { opacity: 0.8, cursor: "pointer", display: "inline-flex", alignItems: "center" }
+              "aria-label": t("monitor.hud.expand"),
+              onClick: () => openExpanded(activeTab)
             },
             chevronDownRegular({ size: 14 })
           ),
           onCloseHud && h(
             "button",
             {
+              type: "button",
               className: "att-nav-btn att-icon-btn",
               style: { marginLeft: "2px", opacity: 0.7 },
               title: t("monitor.hud.close"),
@@ -14913,10 +15015,10 @@ window.__ModuleLoader__.load({
           {
             className: `att-floating-window ${isDragging ? "is-dragging" : ""}`,
             role: "dialog",
+            "aria-label": t("monitor.hud.title"),
             tabIndex: -1,
-            "aria-label": t("monitor.title"),
             onKeyDown: (e) => {
-              e.key === "Escape" && (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
+              e.key === "Escape" && collapse();
             }
           },
           // Header / Drag Handle
@@ -14936,7 +15038,7 @@ window.__ModuleLoader__.load({
               { className: "att-floating-header-left" },
               h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, gripRegular({ size: 14 })),
               h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
-              h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.title"))
+              h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.hud.title"))
             ),
             h(
               "div",
@@ -14948,7 +15050,7 @@ window.__ModuleLoader__.load({
                   title: t("monitor.hud.minimize"),
                   "aria-label": t("monitor.hud.minimize"),
                   onClick: (e) => {
-                    e.stopPropagation(), setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+                    e.stopPropagation(), collapse();
                   }
                 },
                 // A chevron rather than the `—` it used to draw: the action **collapses the window
@@ -14998,42 +15100,51 @@ window.__ModuleLoader__.load({
                   whiteSpace: "nowrap"
                 }
               },
-              activeLabel || activeServerId || metrics?.serverId || "Default"
+              activeLabel || activeServerId || metrics?.serverId || t("monitor.hud.noServer")
             )
           ),
           // Subtabs Navigation Bar
           h(
             "div",
-            { className: "att-floating-subtabs" },
-            h(
-              "button",
-              {
-                className: `att-floating-tab-btn ${activeTab === "overview" ? "is-active" : ""}`,
-                onClick: () => setActiveTab("overview")
-              },
-              t("monitor.tab.overview")
-            ),
-            h(
-              "button",
-              {
-                className: `att-floating-tab-btn ${activeTab === "hardware" ? "is-active" : ""}`,
-                onClick: () => setActiveTab("hardware")
-              },
-              t("monitor.tab.hardware")
-            ),
-            h(
-              "button",
-              {
-                className: `att-floating-tab-btn ${activeTab === "agent" ? "is-active" : ""}`,
-                onClick: () => setActiveTab("agent")
-              },
-              t("monitor.tab.agent")
+            { className: "att-floating-subtabs", role: "tablist", "aria-label": t("monitor.hud.title") },
+            ...[
+              ["overview", t("monitor.tab.overview")],
+              ["hardware", t("monitor.tab.hardware")],
+              ["agent", t("monitor.tab.agent")]
+            ].map(
+              ([key, label]) => h(
+                "button",
+                {
+                  key,
+                  id: `att-hud-tab-${key}`,
+                  type: "button",
+                  role: "tab",
+                  className: `att-floating-tab-btn ${activeTab === key ? "is-active" : ""}`,
+                  "aria-selected": activeTab === key,
+                  "aria-controls": "att-hud-tabpanel",
+                  // Roving tabindex: one stop for the whole strip, arrows move within it. Three
+                  // tabs in a floating window should not cost three Tab presses on the way to
+                  // the content behind them.
+                  tabIndex: activeTab === key ? 0 : -1,
+                  onClick: () => setActiveTab(key),
+                  onKeyDown: (e) => {
+                    let order = ["overview", "hardware", "agent"], at = order.indexOf(activeTab), next = e.key === "ArrowRight" ? order[(at + 1) % order.length] : e.key === "ArrowLeft" ? order[(at + order.length - 1) % order.length] : e.key === "Home" ? order[0] : e.key === "End" ? order[order.length - 1] : null;
+                    next !== null && (e.preventDefault(), setActiveTab(next));
+                  }
+                },
+                label
+              )
             )
           ),
           // Body Content
           h(
             "div",
-            { className: "att-floating-window-body" },
+            {
+              className: "att-floating-window-body",
+              id: "att-hud-tabpanel",
+              role: "tabpanel",
+              "aria-labelledby": `att-hud-tab-${activeTab}`
+            },
             activeTab === "overview" && h(
               "div",
               { style: { display: "flex", flexDirection: "column", gap: "8px" } },
@@ -15062,8 +15173,12 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     "div",
-                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
-                    `Load: ${metrics?.cpu.loadAvg.map((l) => l.toFixed(2)).join("/") ?? "0/0/0"}`
+                    { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+                    t("monitor.cpu.load", {
+                      l1: (metrics?.cpu.loadAvg?.[0] ?? 0).toFixed(2),
+                      l5: (metrics?.cpu.loadAvg?.[1] ?? 0).toFixed(2),
+                      l15: (metrics?.cpu.loadAvg?.[2] ?? 0).toFixed(2)
+                    })
                   )
                 ),
                 // Memory Metric Card
@@ -15087,8 +15202,11 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     "div",
-                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
-                    `${formatFileSize(memUsedBytes)} / ${formatFileSize(memTotalBytes)}`
+                    { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+                    t("monitor.mem.detail", {
+                      used: formatFileSize(memUsedBytes),
+                      total: formatFileSize(memTotalBytes)
+                    })
                   )
                 ),
                 // Disk Metric Card
@@ -15112,7 +15230,7 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     "div",
-                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
                     primaryDisk ? `${primaryDisk.mount} (${formatFileSize(primaryDisk.usedBytes)})` : "-"
                   )
                 ),
@@ -15127,9 +15245,9 @@ window.__ModuleLoader__.load({
                   ),
                   h(
                     "div",
-                    { style: { display: "flex", flexDirection: "column", gap: "2px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } },
-                    h("span", null, `\u2193 Rx: ${rxStr}`),
-                    h("span", null, `\u2191 Tx: ${txStr}`)
+                    { style: { display: "flex", flexDirection: "column", gap: "2px", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } },
+                    h("span", null, t("monitor.net.rx", { speed: rxStr })),
+                    h("span", null, t("monitor.net.tx", { speed: txStr }))
                   )
                 )
               ),
@@ -15145,13 +15263,14 @@ window.__ModuleLoader__.load({
                     "span",
                     {
                       className: `att-monitor-badge ${agentStatus === "confirmation_waiting" ? "att-monitor-badge-waiting" : "att-monitor-badge-running"}`,
-                      style: { fontSize: "10px" }
+                      style: { fontSize: "11px" }
                     },
                     t(agentStatus === "confirmation_waiting" ? "monitor.status.waiting" : "monitor.status.running")
                   ) : h(
                     "span",
                     { style: { fontSize: "11px", color: "var(--dsw-alias-state-success-primary)" } },
-                    `\u25CF ${t("monitor.agent.ready")}`
+                    h("span", { className: "att-monitor-badge-pulse-dot", "aria-hidden": !0, style: { marginRight: "4px" } }),
+                    t("monitor.agent.ready")
                   )
                 ),
                 isAgentActive ? h(
@@ -15159,7 +15278,7 @@ window.__ModuleLoader__.load({
                   { style: { display: "flex", flexDirection: "column", gap: "6px" } },
                   h(
                     "div",
-                    { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } },
+                    { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
                     t("monitor.agent.elapsed", { time: snapshot?.currentAction?.runningTimeMs ?? 0 })
                   ),
                   h("div", { className: "att-code-preview", style: { maxHeight: "70px" } }, snapshot?.currentAction?.command),
@@ -15197,9 +15316,7 @@ window.__ModuleLoader__.load({
                   {
                     className: "att-btn",
                     style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
-                    onClick: () => {
-                      setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
-                    }
+                    onClick: () => collapse()
                   },
                   t("monitor.hud.minimize")
                 )
@@ -16899,6 +17016,25 @@ window.__ModuleLoader__.load({
         background: var(--dsw-alias-state-warn-primary);
         animation: none;
       }
+      /*
+       * The HUD and the monitor page are the only places that animate while the user is reading
+       * them: a pulsing badge dot, a gauge bar that slides to its new width, and the floating
+       * window's own 0.15s border/box-shadow transitions. All of them are decoration \u2014 the number
+       * next to them is the information \u2014 so under reduce they stop dead rather than slow down:
+       * a slower slide is still a slide.
+       *
+       * The gauge keeps its width (that is the data) and only loses the transition, so the bar
+       * still reports the same value; it just arrives instead of travelling there.
+       */
+      .att-monitor-badge-pulse-dot,
+      .att-monitor-gauge-fill,
+      .att-hud-pill,
+      .att-floating-window,
+      .att-monitor-tab-btn,
+      .att-floating-tab-btn {
+        animation: none;
+        transition: none;
+      }
     }
     .att-banners { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
     .att-select {
@@ -16937,6 +17073,19 @@ window.__ModuleLoader__.load({
     .att-tab-title {
       display: inline-flex; align-items: center; gap: 6px;
       min-width: 0;
+      /*
+       * max-width: 100% is what makes the ellipsis below reachable.
+       *
+       * The chip this sits in is the host's, and the host clips overflow \u2014 so with only
+       * overflow: hidden on the text span, the span still laid out at its max-content width and
+       * the **chip** did the cutting. The user saw \u5BB6\u7528n, i.e. a hard cut mid-word that reads as
+       * a different server name, rather than \u5BB6\u7528\u2026 which says "there is more".
+       *
+       * Constraining the title to its container gives the text span something to shrink
+       * against, so the truncation happens in our own element and carries the ellipsis.
+       */
+      max-width: 100%;
+      overflow: hidden;
     }
     /*
      * The instance's own name, and the only part allowed to shrink.
@@ -16945,6 +17094,7 @@ window.__ModuleLoader__.load({
      * chip overflows and the title's tail \u2014 the part that names the server \u2014 is the piece that leaves.
      */
     .att-tab-title-text {
+      min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .att-tab-badge {
@@ -17499,21 +17649,58 @@ window.__ModuleLoader__.load({
       border-color: var(--dsw-alias-brand-primary);
     }
 
+    /*
+     * The chip is a **button** whenever it does something (CPU/MEM/agent open a sub-tab), so the
+     * rule that draws it has to reset the native control or the platform's own border and
+     * background reappear inside the pill. appearance: none plus an explicit font: inherit is the
+     * whole reset \u2014 the rest of the geometry is the shared chip shape.
+     */
     .att-hud-pill-chip {
       display: inline-flex;
       align-items: center;
       gap: 4px;
       padding: 1px 6px;
       border-radius: 10px;
+      border: none;
       background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 80%, transparent);
+      font: inherit;
       font-size: 11px;
       color: var(--dsw-alias-label-secondary);
+    }
+    button.att-hud-pill-chip {
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+    }
+    button.att-hud-pill-chip:hover {
+      background: var(--dsw-alias-interactive-bg-hover);
+      color: var(--dsw-alias-label-primary);
+    }
+    /* The chevron that expands the pill is a button of its own: it used to be a decorative span
+       inside a role="button" container, i.e. an action with no name a screen reader could
+       announce. It inherits the pill's surface rather than drawing a second one. */
+    .att-hud-pill-expand {
+      display: inline-flex; align-items: center; justify-content: center;
+      appearance: none; -webkit-appearance: none;
+      border: none; background: transparent; padding: 0;
+      color: var(--dsw-alias-label-secondary);
+      opacity: 0.8; cursor: pointer;
+    }
+    .att-hud-pill-expand:hover {
+      opacity: 1;
+      color: var(--dsw-alias-label-primary);
     }
 
     /* Draggable Floating Window */
     .att-floating-window {
-      width: 400px;
-      max-height: 540px;
+      /*
+       * min() rather than a media query: the floating window is positioned in viewport
+       * coordinates, so what matters is the viewport, not the panel the button was pressed in.
+       * At 360px wide the old fixed 400px hung 40px off the right edge and clampPosition could
+       * not pull it back \u2014 it clamped against a box that did not fit.
+       */
+      width: min(400px, calc(100vw - 16px));
+      max-height: min(540px, calc(100vh - 16px));
       background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 92%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -17920,6 +18107,11 @@ window.__ModuleLoader__.load({
     var inject = ["slots", "sidebarRightTabs", "locale", "shortcuts", "sidebarRight"];
     function apply(ctx) {
       let t = ctx.locale.bind(NS);
+      if (typeof ctx.locale.getLocale == "function")
+        try {
+          setFormatLocale(ctx.locale.getLocale());
+        } catch {
+        }
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "at-terminal: dictionaries"), ctx.effect(() => ensureStyles(document), "at-terminal: styles"), ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), "at-terminal: assets tab type"), ctx.effect(
         () => ctx.sidebarRightTabs.register(sessionDefinition(t)),
         "at-terminal: session tab type"

@@ -89,6 +89,32 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
     };
   }, [selectedServerId]);
 
+  /**
+   * Arrow keys on the tab strip.
+   *
+   * Two tabs only, so this is a wrap-around between the pair rather than an index walk: Right
+   * and Left both move to the other tab, Home/End do the same. `tabIndex` follows the selection
+   * (roving), so the whole strip costs one Tab stop and the arrows are the way in — which is
+   * what a `role="tablist"` promises a screen reader.
+   */
+  const onTabKeyDown = (e: { key: string; preventDefault: () => void }) => {
+    const total = 2;
+    const at = activeTab === 'hardware' ? 0 : 1;
+    const next =
+      e.key === 'ArrowRight'
+        ? (at + 1) % total
+        : e.key === 'ArrowLeft'
+          ? (at + total - 1) % total
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? total - 1
+              : null;
+    if (next === null) return;
+    e.preventDefault();
+    setActiveTab(next === 0 ? 'hardware' : 'agent_execution');
+  };
+
   return h(
     'div',
     {
@@ -102,15 +128,20 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
       { className: 'att-monitor-header' },
       h(
         'div',
-        { className: 'att-monitor-nav', role: 'tablist' },
+        { className: 'att-monitor-nav', role: 'tablist', 'aria-label': t('monitor.title') },
         h(
           'button',
           {
+            id: 'att-monitor-tab-hardware',
+            type: 'button',
             className: 'att-monitor-tab-btn',
             role: 'tab',
             'aria-selected': activeTab === 'hardware',
+            'aria-controls': 'att-monitor-tabpanel',
+            tabIndex: activeTab === 'hardware' ? 0 : -1,
             'data-active': activeTab === 'hardware' ? 'true' : 'false',
-            onClick: () => setActiveTab('hardware')
+            onClick: () => setActiveTab('hardware'),
+            onKeyDown: onTabKeyDown
           },
           gaugeRegular({ size: 14 }),
           t('monitor.tab.hardware')
@@ -118,11 +149,16 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
         h(
           'button',
           {
+            id: 'att-monitor-tab-agent',
+            type: 'button',
             className: 'att-monitor-tab-btn',
             role: 'tab',
             'aria-selected': activeTab === 'agent_execution',
+            'aria-controls': 'att-monitor-tabpanel',
+            tabIndex: activeTab === 'agent_execution' ? 0 : -1,
             'data-active': activeTab === 'agent_execution' ? 'true' : 'false',
-            onClick: () => setActiveTab('agent_execution')
+            onClick: () => setActiveTab('agent_execution'),
+            onKeyDown: onTabKeyDown
           },
           boltRegular({ size: 14 }),
           t('monitor.tab.agent')
@@ -161,9 +197,17 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
       )
     ),
     // Tab Body Content
-    activeTab === 'hardware'
-      ? h(HardwareMonitorView, { t, metrics, loading, onRefresh: refresh })
-      : h(AgentMonitorView, { t, snapshot, loading, onRefresh: refresh })
+    h(
+      'div',
+      {
+        id: 'att-monitor-tabpanel',
+        role: 'tabpanel',
+        'aria-labelledby': activeTab === 'hardware' ? 'att-monitor-tab-hardware' : 'att-monitor-tab-agent'
+      },
+      activeTab === 'hardware'
+        ? h(HardwareMonitorView, { t, metrics, loading, onRefresh: refresh })
+        : h(AgentMonitorView, { t, snapshot, loading, onRefresh: refresh })
+    )
   );
 }
 

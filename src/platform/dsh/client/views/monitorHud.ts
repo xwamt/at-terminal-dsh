@@ -9,12 +9,24 @@ import { h, type El } from './shared';
 
 const STORAGE_KEY = 'dsh.at-terminal.monitor.hud.pos';
 
+/**
+ * Keep the HUD inside the viewport.
+ *
+ * `width`/`height` are the box the caller *believes* it is about to show (400x520 expanded,
+ * 280x40 collapsed). The stylesheet already caps the real box with `min(400px, 100vw - 16px)`,
+ * so at 360px the caller's 400 is a lie and clamping against it pushed the window off the
+ * right edge: `maxX` became a number below `margin`, and the header — the only drag handle —
+ * went with it. Shrinking the assumed box to what actually fits is what makes the clamp
+ * correct at every viewport instead of only at the ones the fixed size happened to suit.
+ */
 export function clampPosition(x: number, y: number, width: number, height: number): { x: number; y: number } {
   const margin = 8;
   const winW = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1200;
   const winH = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 800;
-  const maxX = Math.max(margin, winW - width - margin);
-  const maxY = Math.max(margin, winH - height - margin);
+  const boxW = Math.min(width, Math.max(0, winW - margin * 2));
+  const boxH = Math.min(height, Math.max(0, winH - margin * 2));
+  const maxX = Math.max(margin, winW - boxW - margin);
+  const maxY = Math.max(margin, winH - boxH - margin);
   return {
     x: Math.max(margin, Math.min(maxX, Math.round(x))),
     y: Math.max(margin, Math.min(maxY, Math.round(y)))
@@ -193,7 +205,6 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     setExpanded(false);
     setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
   };
-
   const cpuPercent = metrics?.cpu.usagePercent ?? 0;
   const cpuLevel = cpuPercent > 85 ? 'error' : cpuPercent > 70 ? 'warn' : 'normal';
   const memUsedBytes = metrics?.memory.usedBytes ?? 0;
@@ -206,6 +217,22 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
   const txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0);
   const isAgentActive = Boolean(snapshot?.currentAction);
   const agentStatus = snapshot?.currentAction?.status;
+
+  /** Expand into a named sub-tab. Every pill control routes through this one transition. */
+  const openExpanded = (tab: 'overview' | 'hardware' | 'agent') => {
+    setExpanded(true);
+    setActiveTab(tab);
+    setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
+  };
+  const collapse = () => {
+    setExpanded(false);
+    setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+  };
+  const agentShort = isAgentActive
+    ? agentStatus === 'confirmation_waiting'
+      ? t('monitor.status.waitingShort')
+      : t('monitor.status.runningShort')
+    : '';
 
   return h(
     'div',
@@ -221,21 +248,23 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
       h(
         'div',
         {
+          /*
+           * `role="group"`, not `role="button"`.
+           *
+           * It used to be one button whose children were `<span onClick>` — an interactive
+           * element nested inside an interactive element, which both ARIA and every screen
+           * reader reject: the outer role swallows the children, so "CPU 12%" announced as
+           * part of one long button label with no way to reach the third of it that does
+           * something. The container is a group; each chip that acts is its own button.
+           */
           className: `att-hud-pill ${isDragging ? 'is-dragging' : ''}`,
-          role: 'button',
-          tabIndex: 0,
-          'aria-label': t('monitor.title'),
+          role: 'group',
+          'aria-label': t('monitor.hud.pillLabel'),
           title: t('monitor.hud.dragTip'),
           onPointerDown: (e: any) => handlePointerDown(e, true),
           onPointerMove: handlePointerMove,
           onPointerUp: (e: any) => handlePointerUp(e, true),
-          onPointerCancel: (e: any) => handlePointerUp(e, true),
-          onKeyDown: (e: { key: string }) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              setExpanded(true);
-              setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-            }
-          }
+          onPointerCancel: (e: any) => handlePointerUp(e, true)
         },
         h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, gripRegular({ size: 14 })),
         h('span', { 'aria-hidden': true }, gaugeRegular({ size: 14 })),
@@ -251,59 +280,54 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             ` ${activeLabel || activeServerId}`
           ),
         h(
-          'span',
+          'button',
           {
+            type: 'button',
             className: 'att-hud-pill-chip',
             title: t('monitor.tab.hardware'),
-            onClick: (e: any) => {
-              e.stopPropagation();
-              setExpanded(true);
-              setActiveTab('hardware');
-              setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-            }
+            'aria-label': t('monitor.hud.cpuChip', { percent: `${cpuPercent}%` }),
+            onClick: () => openExpanded('hardware')
           },
           `CPU ${cpuPercent}%`
         ),
         h(
-          'span',
+          'button',
           {
+            type: 'button',
             className: 'att-hud-pill-chip',
             title: t('monitor.tab.hardware'),
-            onClick: (e: any) => {
-              e.stopPropagation();
-              setExpanded(true);
-              setActiveTab('hardware');
-              setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-            }
+            'aria-label': t('monitor.hud.memChip', { percent: `${memPercent}%` }),
+            onClick: () => openExpanded('hardware')
           },
           `MEM ${memPercent}%`
         ),
         isAgentActive
           ? h(
-              'span',
+              'button',
               {
+                type: 'button',
                 className: `att-monitor-badge ${agentStatus === 'confirmation_waiting' ? 'att-monitor-badge-waiting' : 'att-monitor-badge-running'}`,
-                style: { padding: '1px 6px', fontSize: '10px', cursor: 'pointer' },
-                title: `${t('monitor.tab.agent')}: ${agentStatus}`,
-                onClick: (e: any) => {
-                  e.stopPropagation();
-                  setExpanded(true);
-                  setActiveTab('agent');
-                  setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-                }
+                style: { padding: '1px 6px', fontSize: '11px', cursor: 'pointer' },
+                title: `${t('monitor.tab.agent')}: ${agentShort}`,
+                'aria-label': t('monitor.hud.agentChip', { status: agentShort }),
+                onClick: () => openExpanded('agent')
               },
-              h('span', { className: 'att-monitor-badge-pulse-dot' }),
-              agentStatus === 'confirmation_waiting' ? 'WAIT' : 'RUN'
+              h('span', { className: 'att-monitor-badge-pulse-dot', 'aria-hidden': true }),
+              agentShort
             )
           : h('span', {
               className: 'att-monitor-badge-pulse-dot',
+              'aria-hidden': true,
               style: { color: 'var(--dsw-alias-state-success-primary)' }
             }),
         h(
-          'span',
+          'button',
           {
+            type: 'button',
+            className: 'att-hud-pill-expand',
             title: t('monitor.hud.expand'),
-            style: { opacity: 0.8, cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }
+            'aria-label': t('monitor.hud.expand'),
+            onClick: () => openExpanded(activeTab)
           },
           chevronDownRegular({ size: 14 })
         ),
@@ -311,6 +335,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           h(
             'button',
             {
+              type: 'button',
               className: 'att-nav-btn att-icon-btn',
               style: { marginLeft: '2px', opacity: 0.7 },
               title: t('monitor.hud.close'),
@@ -331,12 +356,11 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
         {
           className: `att-floating-window ${isDragging ? 'is-dragging' : ''}`,
           role: 'dialog',
+          'aria-label': t('monitor.hud.title'),
           tabIndex: -1,
-          'aria-label': t('monitor.title'),
           onKeyDown: (e: { key: string }) => {
             if (e.key === 'Escape') {
-              setExpanded(false);
-              setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+              collapse();
             }
           }
         },
@@ -357,7 +381,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             { className: 'att-floating-header-left' },
             h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, gripRegular({ size: 14 })),
             h('span', { 'aria-hidden': true }, gaugeRegular({ size: 14 })),
-            h('span', { style: { fontWeight: 600, fontSize: '12px' } }, t('monitor.title'))
+            h('span', { style: { fontWeight: 600, fontSize: '12px' } }, t('monitor.hud.title'))
           ),
           h(
             'div',
@@ -370,8 +394,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 'aria-label': t('monitor.hud.minimize'),
                 onClick: (e: { stopPropagation: () => void }) => {
                   e.stopPropagation();
-                  setExpanded(false);
-                  setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+                  collapse();
                 }
               },
               // A chevron rather than the `—` it used to draw: the action **collapses the window
@@ -424,44 +447,68 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 whiteSpace: 'nowrap'
               }
             },
-            activeLabel || activeServerId || metrics?.serverId || 'Default'
+            activeLabel || activeServerId || metrics?.serverId || t('monitor.hud.noServer')
           )
         ),
 
         // Subtabs Navigation Bar
         h(
           'div',
-          { className: 'att-floating-subtabs' },
-          h(
-            'button',
-            {
-              className: `att-floating-tab-btn ${activeTab === 'overview' ? 'is-active' : ''}`,
-              onClick: () => setActiveTab('overview')
-            },
-            t('monitor.tab.overview')
-          ),
-          h(
-            'button',
-            {
-              className: `att-floating-tab-btn ${activeTab === 'hardware' ? 'is-active' : ''}`,
-              onClick: () => setActiveTab('hardware')
-            },
-            t('monitor.tab.hardware')
-          ),
-          h(
-            'button',
-            {
-              className: `att-floating-tab-btn ${activeTab === 'agent' ? 'is-active' : ''}`,
-              onClick: () => setActiveTab('agent')
-            },
-            t('monitor.tab.agent')
+          { className: 'att-floating-subtabs', role: 'tablist', 'aria-label': t('monitor.hud.title') },
+          ...(
+            [
+              ['overview', t('monitor.tab.overview')],
+              ['hardware', t('monitor.tab.hardware')],
+              ['agent', t('monitor.tab.agent')]
+            ] as const
+          ).map(([key, label]) =>
+            h(
+              'button',
+              {
+                key,
+                id: `att-hud-tab-${key}`,
+                type: 'button',
+                role: 'tab',
+                className: `att-floating-tab-btn ${activeTab === key ? 'is-active' : ''}`,
+                'aria-selected': activeTab === key,
+                'aria-controls': 'att-hud-tabpanel',
+                // Roving tabindex: one stop for the whole strip, arrows move within it. Three
+                // tabs in a floating window should not cost three Tab presses on the way to
+                // the content behind them.
+                tabIndex: activeTab === key ? 0 : -1,
+                onClick: () => setActiveTab(key),
+                onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+                  const order = ['overview', 'hardware', 'agent'] as const;
+                  const at = order.indexOf(activeTab);
+                  const next =
+                    e.key === 'ArrowRight'
+                      ? order[(at + 1) % order.length]
+                      : e.key === 'ArrowLeft'
+                        ? order[(at + order.length - 1) % order.length]
+                        : e.key === 'Home'
+                          ? order[0]
+                          : e.key === 'End'
+                            ? order[order.length - 1]
+                            : null;
+                  if (next === null) return;
+                  e.preventDefault();
+                  setActiveTab(next);
+                }
+              },
+              label
+            )
           )
         ),
 
         // Body Content
         h(
           'div',
-          { className: 'att-floating-window-body' },
+          {
+            className: 'att-floating-window-body',
+            id: 'att-hud-tabpanel',
+            role: 'tabpanel',
+            'aria-labelledby': `att-hud-tab-${activeTab}`
+          },
           activeTab === 'overview' &&
             h(
               'div',
@@ -491,8 +538,12 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   ),
                   h(
                     'div',
-                    { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } },
-                    `Load: ${metrics?.cpu.loadAvg.map((l) => l.toFixed(2)).join('/') ?? '0/0/0'}`
+                    { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                    t('monitor.cpu.load', {
+                      l1: (metrics?.cpu.loadAvg?.[0] ?? 0).toFixed(2),
+                      l5: (metrics?.cpu.loadAvg?.[1] ?? 0).toFixed(2),
+                      l15: (metrics?.cpu.loadAvg?.[2] ?? 0).toFixed(2)
+                    })
                   )
                 ),
                 // Memory Metric Card
@@ -516,8 +567,11 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   ),
                   h(
                     'div',
-                    { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } },
-                    `${formatFileSize(memUsedBytes)} / ${formatFileSize(memTotalBytes)}`
+                    { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                    t('monitor.mem.detail', {
+                      used: formatFileSize(memUsedBytes),
+                      total: formatFileSize(memTotalBytes)
+                    })
                   )
                 ),
                 // Disk Metric Card
@@ -541,7 +595,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   ),
                   h(
                     'div',
-                    { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } },
+                    { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
                     primaryDisk ? `${primaryDisk.mount} (${formatFileSize(primaryDisk.usedBytes)})` : '-'
                   )
                 ),
@@ -556,9 +610,9 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   ),
                   h(
                     'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '10px', color: 'var(--dsw-alias-label-secondary)', marginTop: '2px' } },
-                    h('span', null, `↓ Rx: ${rxStr}`),
-                    h('span', null, `↑ Tx: ${txStr}`)
+                    { style: { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '2px' } },
+                    h('span', null, t('monitor.net.rx', { speed: rxStr })),
+                    h('span', null, t('monitor.net.tx', { speed: txStr }))
                   )
                 )
               ),
@@ -576,14 +630,15 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                         'span',
                         {
                           className: `att-monitor-badge ${agentStatus === 'confirmation_waiting' ? 'att-monitor-badge-waiting' : 'att-monitor-badge-running'}`,
-                          style: { fontSize: '10px' }
+                          style: { fontSize: '11px' }
                         },
                         agentStatus === 'confirmation_waiting' ? t('monitor.status.waiting') : t('monitor.status.running')
                       )
                     : h(
                         'span',
                         { style: { fontSize: '11px', color: 'var(--dsw-alias-state-success-primary)' } },
-                        `● ${t('monitor.agent.ready')}`
+                        h('span', { className: 'att-monitor-badge-pulse-dot', 'aria-hidden': true, style: { marginRight: '4px' } }),
+                        t('monitor.agent.ready')
                       )
                 ),
                 isAgentActive
@@ -592,7 +647,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                       { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
                       h(
                         'div',
-                        { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } },
+                        { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
                         t('monitor.agent.elapsed', { time: snapshot?.currentAction?.runningTimeMs ?? 0 })
                       ),
                       h('div', { className: 'att-code-preview', style: { maxHeight: '70px' } }, snapshot?.currentAction?.command),
@@ -633,10 +688,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   {
                     className: 'att-btn',
                     style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
-                    onClick: () => {
-                      setExpanded(false);
-                      setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
-                    }
+                    onClick: () => collapse()
                   },
                   t('monitor.hud.minimize')
                 )

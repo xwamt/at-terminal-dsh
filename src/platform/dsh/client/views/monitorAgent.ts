@@ -1,7 +1,31 @@
 import type { AgentExecutionSnapshot, Translate } from '../models';
 import { formatFileSize } from '../../../../sftp/FileSize';
 import { formatThroughput } from '../models';
+import { formatClock } from '../localeFormat';
 import { h, type El } from './shared';
+
+/**
+ * The audit row's risk column.
+ *
+ * It used to print `audit.riskLevel ?? 'normal'` with `text-transform: uppercase` — a raw wire
+ * value (`low` / `medium` / `high`, from `AgentExecutionBridge`) leaking into the UI, and an
+ * English fallback that existed in no dictionary. Both are the same defect: the column showed
+ * the transport's vocabulary instead of the panel's. The keys are enumerated rather than
+ * interpolated (`monitor.risk.${level}`) because the wire value set is closed, and a key that
+ * does not exist renders as its own name — a visible `monitor.risk.` on screen.
+ */
+function riskLabel(t: Translate, level: string | undefined): string {
+  switch (level) {
+    case 'high':
+      return t('monitor.risk.high');
+    case 'medium':
+      return t('monitor.risk.medium');
+    case 'low':
+      return t('monitor.risk.low');
+    default:
+      return t('monitor.risk.unknown');
+  }
+}
 
 export interface AgentMonitorViewProps {
   t: Translate;
@@ -150,13 +174,17 @@ export function AgentMonitorView(props: AgentMonitorViewProps): El {
                 return h(
                   'tr',
                   { key: audit.id },
-                  h('td', { style: { whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-caption)' } }, new Date(audit.timestamp).toLocaleTimeString()),
+                  h(
+                    'td',
+                    { style: { whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-caption)' } },
+                    formatClock(audit.timestamp)
+                  ),
                   h(
                     'td',
                     null,
                     h('span', { className: `att-monitor-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
                   ),
-                  h('td', { style: { textTransform: 'uppercase', fontSize: '10px' } }, audit.riskLevel ?? 'normal'),
+                  h('td', { style: { fontSize: '11px' } }, riskLabel(t, audit.riskLevel)),
                   h('td', { style: { fontFamily: 'monospace', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, audit.command)
                 );
               })

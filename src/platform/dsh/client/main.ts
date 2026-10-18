@@ -58,6 +58,7 @@ import {
 } from './sessions';
 import { ensureStyles } from './styles';
 import { clearAllTabState, clearTabState } from './tabState';
+import { setFormatLocale } from './localeFormat';
 import { gaugeRegular, guideTerminalArtwork } from './icons';
 import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
@@ -69,6 +70,8 @@ export interface ClientContext {
   locale: {
     bind(ns: string): Translate;
     register(ns: string, dicts: { zh: Record<string, string>; en: Record<string, string> }): () => void;
+    /** Optional in the host's service directory — probed, never assumed. See `apply`. */
+    getLocale?: () => string;
   };
   shortcuts: {
     register(command: ShortcutCommand): () => void;
@@ -611,6 +614,23 @@ export const inject = ['slots', 'sidebarRightTabs', 'locale', 'shortcuts', 'side
 /** Client plugin body. Every registration is owned by an effect, so unloading removes it. */
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS);
+
+  /*
+   * Hand the host's locale to the clock formatter.
+   *
+   * `getLocale` is optional in the service directory, so this probes instead of assuming: on a
+   * host that does not expose it the formatter keeps the runtime default, which is exactly the
+   * old behaviour — no throw, no blank column. Read once at activation because the panel has no
+   * subscription to locale changes and a re-read on every render would cost more than the drift
+   * it fixes.
+   */
+  if (typeof ctx.locale.getLocale === 'function') {
+    try {
+      setFormatLocale(ctx.locale.getLocale());
+    } catch {
+      // A locale service that throws on read is not worth failing activation over.
+    }
+  }
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'at-terminal: dictionaries');
   ctx.effect(() => ensureStyles(document), 'at-terminal: styles');
