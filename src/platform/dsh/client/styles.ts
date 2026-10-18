@@ -475,7 +475,15 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
  */
 .att-row {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 10px;
+  /*
+   * The right padding is the actions' seat, reserved unconditionally.
+   *
+   * They used to be absolutely positioned over the row with only a gradient behind them, which
+   * looked fine over the flexible address and then **covered the 已存口令 badge** — the badges are
+   * flex:0 0 auto at the end of the row, so they sit exactly where the buttons land. Reserving
+   * 58px costs the address some width and costs nothing else: it already truncates.
+   */
+  padding: 5px 58px 5px 10px;
   border-radius: var(--dsw-radius-md);
   user-select: none;
   /* The anchor for .att-row-actions, which is taken out of the flow so it can appear on hover
@@ -495,22 +503,17 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 /*
  * The row's hover/focus actions: 连接 and the menu.
  *
- * Out of the flow and over the row's right edge, with a fade-in — the alternative (reserving
- * 56px on every row) either steals that width from the address or makes the row taller, and a
- * list where nothing moves as the pointer travels down it is the point.
+ * Out of the flow, inside the 58px the row reserves for them (see .att-row). No backdrop any
+ * more: the first version faded a gradient behind the buttons, which only works while whatever is
+ * underneath is the plain row — over a badge it did nothing, and the buttons sat on top of it.
  *
  * opacity and not display: the buttons stay in the accessibility tree and in the tab order,
  * which is what makes the '⋯' reachable by keyboard at all. :focus-within is what reveals them
  * for that keyboard user — without it, tabbing into an invisible button would land on nothing.
- *
- * A solid backdrop rather than a transparent one: the address runs underneath, and two labels
- * overlapping at 12px is unreadable regardless of opacity.
  */
 .att-row-actions {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
   display: flex; align-items: center; gap: 2px;
-  padding-left: 10px;
-  background: linear-gradient(to right, transparent, var(--vscode-list-hoverBackground) 12px);
   opacity: 0;
   pointer-events: none;
 }
@@ -519,9 +522,6 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-row[aria-selected="true"] .att-row-actions {
   opacity: 1;
   pointer-events: auto;
-}
-.att-row[aria-selected="true"] .att-row-actions {
-  background: linear-gradient(to right, transparent, var(--vscode-list-activeSelectionBackground) 12px);
 }
 .att-row-action {
   display: inline-flex; align-items: center; justify-content: center;

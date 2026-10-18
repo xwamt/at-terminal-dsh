@@ -2,13 +2,19 @@
  * The monitor glyph: a dial, not a bar chart.
  *
  * A chart would say "statistics"; this panel shows the **current** state of one machine — CPU,
- * memory, load, agent activity — which is a dial's subject, not a report's. The needle also
- * survives the sizes this glyph is used at (16px in a toolbar, 12px in a HUD pill) where three
- * bars would collapse into a smudge.
+ * memory, load, agent activity — which is a dial's subject, not a report's.
  *
- * Geometry: a 220-degree arc with a gap at the bottom, and a needle from the centre out to the
- * upper right. The gap is what keeps it from reading as a clock, and the needle's endpoint stays
- * clear of the arc so the two never touch at 1px.
+ * **Why the arc is two paths.** A 220-degree dial cannot be written as one `A` command without
+ * answering a question the path data does not make obvious: with endpoints at the same height,
+ * one `large-arc-flag` value draws the 220-degree arc and the other draws the 140-degree one, and
+ * which is which depends on the sweep direction — a coin flip that already came up wrong once
+ * (the shipped glyph was a 140-degree dome, i.e. a hat). Two arcs of 110 degrees each are under
+ * the half-circle limit, so `large-arc-flag` is 0 for both and there is nothing left to get wrong.
+ * The seam at the top is invisible: both halves are tangent there.
+ *
+ * The hub is filled rather than stroked, and it is what makes the mark read as an instrument at
+ * 16px: without it the needle merges into the arc and the whole glyph collapses into a caret.
+ * Geometry: centre (8, 9.4), radius 5.5, from 200 degrees round to -20.
  */
 
 import { lineIcon, MEDIUM_STROKE, REGULAR_STROKE, type IconOptions, type SvgChild } from './frame';
@@ -16,14 +22,18 @@ import type { El } from '../views/shared';
 
 const VIEW_BOX = '0 0 16 16';
 
-/** The arc, then the needle. One path each, so a weight change moves both together. */
-const ARC = 'M2.6 11.2A5.8 5.8 0 0 1 13.4 11.2';
-const NEEDLE = 'M8 9.6L10.6 6.6';
+/** 200° → 90° → -20°, as two sub-180° arcs that meet at the top. */
+const ARC_LEFT = 'M2.83 11.28A5.5 5.5 0 0 1 8 3.9';
+const ARC_RIGHT = 'M8 3.9A5.5 5.5 0 0 1 13.17 11.28';
+/** From the hub out to the upper right, stopping short of the arc. */
+const NEEDLE = 'M8 9.4L10.9 6.15';
 
 function gaugeLine(strokeWidth: number, options: IconOptions): El {
   const children: SvgChild[] = [
-    ['path', { d: ARC }],
-    ['path', { d: NEEDLE }]
+    ['path', { d: ARC_LEFT }],
+    ['path', { d: ARC_RIGHT }],
+    ['path', { d: NEEDLE }],
+    ['circle', { cx: 8, cy: 9.4, r: 0.95, fill: 'currentColor' }]
   ];
   return lineIcon({
     name: 'gauge',

@@ -609,7 +609,15 @@ describe('client styles — geometry and surface tokens (UI2-05)', () => {
 
     const row = ruleFor(sheet, '.att-row');
     expect(row).toContain('var(--dsw-radius-md)');
-    expect(row).toContain('padding: 5px 10px');
+    /*
+     * 5/10 on the left and top, 58 on the right — and the asymmetry is the fix, not an accident.
+     *
+     * The row's 连接/⋯ buttons are absolutely positioned, so they need a seat that the flex
+     * content does not use; with a symmetric 5/10 they landed on top of the 已存口令 badge and
+     * covered it. Asserted as the literal string because "the badge is visible" is not something
+     * a text test can see, while "the seat is reserved" is exactly what prevents it.
+     */
+    expect(row).toContain('padding: 5px 58px 5px 10px');
 
     expect(ruleFor(sheet, '.att-menu')).toContain('var(--dsw-radius-md)');
     expect(ruleFor(sheet, '.att-dialog')).toContain('var(--dsw-radius-lg)');

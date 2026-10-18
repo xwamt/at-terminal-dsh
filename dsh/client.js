@@ -10392,11 +10392,13 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/icons/gauge.ts
-    var VIEW_BOX7 = "0 0 16 16", ARC2 = "M2.6 11.2A5.8 5.8 0 0 1 13.4 11.2", NEEDLE = "M8 9.6L10.6 6.6";
+    var VIEW_BOX7 = "0 0 16 16", ARC_LEFT = "M2.83 11.28A5.5 5.5 0 0 1 8 3.9", ARC_RIGHT = "M8 3.9A5.5 5.5 0 0 1 13.17 11.28", NEEDLE = "M8 9.4L10.9 6.15";
     function gaugeLine(strokeWidth, options) {
       let children = [
-        ["path", { d: ARC2 }],
-        ["path", { d: NEEDLE }]
+        ["path", { d: ARC_LEFT }],
+        ["path", { d: ARC_RIGHT }],
+        ["path", { d: NEEDLE }],
+        ["circle", { cx: 8, cy: 9.4, r: 0.95, fill: "currentColor" }]
       ];
       return lineIcon({
         name: "gauge",
@@ -16495,7 +16497,15 @@ window.__ModuleLoader__.load({
      */
     .att-row {
       display: flex; align-items: center; gap: 8px;
-      padding: 5px 10px;
+      /*
+       * The right padding is the actions' seat, reserved unconditionally.
+       *
+       * They used to be absolutely positioned over the row with only a gradient behind them, which
+       * looked fine over the flexible address and then **covered the \u5DF2\u5B58\u53E3\u4EE4 badge** \u2014 the badges are
+       * flex:0 0 auto at the end of the row, so they sit exactly where the buttons land. Reserving
+       * 58px costs the address some width and costs nothing else: it already truncates.
+       */
+      padding: 5px 58px 5px 10px;
       border-radius: var(--dsw-radius-md);
       user-select: none;
       /* The anchor for .att-row-actions, which is taken out of the flow so it can appear on hover
@@ -16515,22 +16525,17 @@ window.__ModuleLoader__.load({
     /*
      * The row's hover/focus actions: \u8FDE\u63A5 and the menu.
      *
-     * Out of the flow and over the row's right edge, with a fade-in \u2014 the alternative (reserving
-     * 56px on every row) either steals that width from the address or makes the row taller, and a
-     * list where nothing moves as the pointer travels down it is the point.
+     * Out of the flow, inside the 58px the row reserves for them (see .att-row). No backdrop any
+     * more: the first version faded a gradient behind the buttons, which only works while whatever is
+     * underneath is the plain row \u2014 over a badge it did nothing, and the buttons sat on top of it.
      *
      * opacity and not display: the buttons stay in the accessibility tree and in the tab order,
      * which is what makes the '\u22EF' reachable by keyboard at all. :focus-within is what reveals them
      * for that keyboard user \u2014 without it, tabbing into an invisible button would land on nothing.
-     *
-     * A solid backdrop rather than a transparent one: the address runs underneath, and two labels
-     * overlapping at 12px is unreadable regardless of opacity.
      */
     .att-row-actions {
       position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
       display: flex; align-items: center; gap: 2px;
-      padding-left: 10px;
-      background: linear-gradient(to right, transparent, var(--vscode-list-hoverBackground) 12px);
       opacity: 0;
       pointer-events: none;
     }
@@ -16539,9 +16544,6 @@ window.__ModuleLoader__.load({
     .att-row[aria-selected="true"] .att-row-actions {
       opacity: 1;
       pointer-events: auto;
-    }
-    .att-row[aria-selected="true"] .att-row-actions {
-      background: linear-gradient(to right, transparent, var(--vscode-list-activeSelectionBackground) 12px);
     }
     .att-row-action {
       display: inline-flex; align-items: center; justify-content: center;
