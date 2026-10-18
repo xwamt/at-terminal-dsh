@@ -772,11 +772,27 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   outline-offset: -1px;
 }
 .att-check { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+/*
+ * A failure banner: the state is carried by the **frame**, the words are carried by plain text.
+ *
+ * It used to paint the whole banner in --vscode-errorForeground, which measured 4.4976:1 on the
+ * light theme's panel fill — under the 4.5 floor, and under it *on the one surface a user has to
+ * read to understand what went wrong*. Red body copy is also the harder-to-read option at 12px.
+ *
+ * So the error colour moves to where it costs nothing to read: a 3px left edge and the 1px frame.
+ * The heading keeps the weight, the copy keeps label-primary, and nothing in the banner is
+ * below the contrast floor in either theme. Colour-blind users lose nothing: the heading says
+ * 操作失败 / Operation failed in words.
+ */
 .att-banner {
   display: flex; flex-direction: column; gap: 2px;
-  border: 1px solid var(--vscode-errorForeground); border-radius: 6px;
-  padding: 8px 10px; font-size: 12px; color: var(--vscode-errorForeground);
+  border: 1px solid var(--vscode-errorForeground);
+  border-left-width: 3px;
+  border-radius: var(--dsw-radius-sm);
+  padding: 8px 10px; font-size: 12px;
+  color: var(--dsw-alias-label-primary);
 }
+.att-banner > div:first-child { font-weight: 600; }
 .att-banner.info { border-color: var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
 .att-banner .att-banner-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 .att-progress-card {

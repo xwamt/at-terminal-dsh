@@ -1118,7 +1118,9 @@ describe('client bundle — apply wiring', () => {
     expect(monitor.id).toBe(MONITOR_KEY);
     expect(monitor.kind).toBe('at-terminal-monitor');
     expect(monitor.guide).toBeUndefined();
-    expect((monitor.title as () => string)()).toBe('监控悬浮窗');
+    // 「监控」, not 「监控悬浮窗」: this is the **sidebar tab**, which is not a floating window.
+    // The floating one keeps the longer name under `monitor.hud.title` (UI2-10).
+    expect((monitor.title as () => string)()).toBe('监控');
   });
 
   /**

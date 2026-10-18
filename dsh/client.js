@@ -8917,7 +8917,10 @@ window.__ModuleLoader__.load({
       // key so a strip holding both kinds is readable without reading the titles.
       "session.label": "AT \u7EC8\u7AEF",
       "guide.title": "AT Terminal",
-      "guide.description": "\u7BA1\u7406 SSH \u670D\u52A1\u5668\u8D44\u4EA7\uFF1B\u53CC\u51FB\u4E00\u53F0\u670D\u52A1\u5668\u5373\u5728\u65B0\u6807\u7B7E\u9875\u4E2D\u6253\u5F00\u7EC8\u7AEF",
+      // The guide card gives this one 11px line. The old sentence named the double-click, which the
+      // card had to truncate — a hint that is cut in half is worse than no hint, and the empty state
+      // and the help text both still carry it.
+      "guide.description": "SSH \u670D\u52A1\u5668\u8D44\u4EA7\u4E0E\u7EC8\u7AEF",
       "body.heading": "AT Terminal",
       // The 终端 tab's two pages. `mode.assets` names the 资产 tab in the command list, where the three
       // pages of the old single body are still listed together.
@@ -8991,7 +8994,7 @@ window.__ModuleLoader__.load({
       "servers.removeMissing": "\u8BE5\u670D\u52A1\u5668\u5DF2\u4E0D\u5B58\u5728\uFF0C\u5217\u8868\u5DF2\u5237\u65B0\u3002",
       "auth.password": "\u53E3\u4EE4",
       "auth.privateKey": "\u79C1\u94A5",
-      "auth.agent": "agent",
+      "auth.agent": "SSH Agent",
       "auth.password.title": "\u53E3\u4EE4",
       "auth.password.copy": "\u5B89\u5168\u4FDD\u5B58\u5728\u5BBF\u4E3B\u51ED\u636E\u5E93\u4E2D\uFF0C\u4EC5\u53EF\u5199\u5165\u3001\u7EDD\u4E0D\u56DE\u663E\u3002",
       "auth.privateKey.title": "\u79C1\u94A5",
@@ -9027,7 +9030,7 @@ window.__ModuleLoader__.load({
       "form.trust.policy": "\u6309\u7B56\u7565\u8BE2\u95EE",
       "form.trust.full": "\u5B8C\u5168\u4FE1\u4EFB",
       "form.trustHelpNone": "\u6BCF\u6761\u8FDC\u7A0B\u547D\u4EE4\u90FD\u4F1A\u8BF7\u6C42\u786E\u8BA4\u3002",
-      "form.trustHelpPolicy": "\u9ED1\u540D\u5355\u4E0A\u7684\u7834\u574F\u6027\u547D\u4EE4\uFF08rm\u3001chmod\u3001systemctl restart\u3001apt\u3001docker exec\u3001iptables -F\uFF09\u59CB\u7EC8\u8BE2\u95EE\uFF1B\u5176\u4F59\u547D\u4EE4\uFF08\u542B\u672A\u77E5\u547D\u4EE4\uFF09\u76F4\u63A5\u6267\u884C\uFF1B\u65E0\u6CD5 plainly \u8BFB\u53D6\u7684\u547D\u4EE4\uFF08\u547D\u4EE4\u66FF\u6362\u3001\u6587\u4EF6\u91CD\u5B9A\u5411\uFF09\u59CB\u7EC8\u8BE2\u95EE\u3002",
+      "form.trustHelpPolicy": "\u9ED1\u540D\u5355\u4E0A\u7684\u7834\u574F\u6027\u547D\u4EE4\uFF08rm\u3001chmod\u3001systemctl restart\u3001apt\u3001docker exec\u3001iptables -F\uFF09\u59CB\u7EC8\u8BE2\u95EE\uFF1B\u5176\u4F59\u547D\u4EE4\uFF08\u542B\u672A\u77E5\u547D\u4EE4\uFF09\u76F4\u63A5\u6267\u884C\uFF1B\u65E0\u6CD5\u76F4\u63A5\u8BFB\u53D6\u7684\u547D\u4EE4\uFF08\u547D\u4EE4\u66FF\u6362\u3001\u6587\u4EF6\u91CD\u5B9A\u5411\uFF09\u59CB\u7EC8\u8BE2\u95EE\u3002",
       "form.trustHelpFull": "\u8FDC\u7A0B\u547D\u4EE4\u4E0E SFTP \u5199\u5165\u4E0D\u518D\u8BF7\u6C42\u786E\u8BA4\u3002",
       "form.background": "\u5141\u8BB8 Agent \u540E\u53F0\u8FDE\u63A5",
       "form.save": "\u4FDD\u5B58",
@@ -9211,8 +9214,8 @@ window.__ModuleLoader__.load({
       "error.sftpWriteFailed": "\u5199\u5165\u8FDC\u7AEF\u6587\u4EF6\u5931\u8D25\u3002\u53EF\u91CD\u8BD5\uFF1B\u82E5\u4E00\u76F4\u5931\u8D25\uFF0C\u8BF7\u5230\u300C\u7EC8\u7AEF\u300D\u9875\u786E\u8BA4\u8BE5\u4F1A\u8BDD\u4ECD\u7136\u6B63\u5E38\u3002",
       "error.sftpBadParams": "\u6587\u4EF6\u64CD\u4F5C\u7F3A\u5C11\u5FC5\u8981\u53C2\u6570\uFF08\u8DEF\u5F84\u6216\u5185\u5BB9\uFF09\u3002",
       "error.noFileReader": "\u5F53\u524D\u9875\u9762\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6587\u4EF6\uFF08\u7F3A\u5C11 FileReader \u652F\u6301\uFF09\uFF0C\u56E0\u6B64\u4E0D\u80FD\u4E0A\u4F20\u3002",
-      "monitor.title": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
-      "monitor.guideTitle": "\u76D1\u63A7\u60AC\u6D6E\u7A97",
+      "monitor.title": "\u76D1\u63A7",
+      "monitor.guideTitle": "\u76D1\u63A7",
       "monitor.guideDescription": "\u5B9E\u65F6\u67E5\u770B\u4E3B\u673A\u786C\u4EF6\u6307\u6807\u4E0E Agent \u6267\u884C\u5BA1\u8BA1",
       "monitor.tab.overview": "\u603B\u89C8",
       "monitor.tab.hardware": "\u786C\u4EF6\u6307\u6807",
@@ -9287,7 +9290,7 @@ window.__ModuleLoader__.load({
       "type.label": "AT Terminal",
       "session.label": "AT Terminal",
       "guide.title": "AT Terminal",
-      "guide.description": "Manage SSH server assets; double-click a server to open a terminal in a new tab",
+      "guide.description": "SSH server assets and terminals",
       "body.heading": "AT Terminal",
       "mode.assets": "Assets",
       "mode.sftp": "Files",
@@ -9338,7 +9341,7 @@ window.__ModuleLoader__.load({
       "servers.removeMissing": "That server is already gone; the list has been refreshed.",
       "auth.password": "password",
       "auth.privateKey": "private key",
-      "auth.agent": "agent",
+      "auth.agent": "SSH Agent",
       "auth.password.title": "Password",
       "auth.password.copy": "Stored in the host credential store; write-only, never echoed back.",
       "auth.privateKey.title": "Private Key",
@@ -9547,8 +9550,8 @@ window.__ModuleLoader__.load({
       "error.sftpWriteFailed": "Writing the remote file failed. Retrying may work; if it keeps failing, confirm the session on the Terminal page is still healthy.",
       "error.sftpBadParams": "The file operation is missing a required parameter (a path or the content).",
       "error.noFileReader": "This page cannot read local files (no FileReader support), so uploading is not possible.",
-      "monitor.title": "Monitor Window",
-      "monitor.guideTitle": "Monitor Window",
+      "monitor.title": "Monitor",
+      "monitor.guideTitle": "Monitor",
       "monitor.guideDescription": "Real-time host hardware metrics and Agent execution audits",
       "monitor.tab.overview": "Overview",
       "monitor.tab.hardware": "Hardware Metrics",
@@ -17007,11 +17010,27 @@ window.__ModuleLoader__.load({
       outline-offset: -1px;
     }
     .att-check { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+    /*
+     * A failure banner: the state is carried by the **frame**, the words are carried by plain text.
+     *
+     * It used to paint the whole banner in --vscode-errorForeground, which measured 4.4976:1 on the
+     * light theme's panel fill \u2014 under the 4.5 floor, and under it *on the one surface a user has to
+     * read to understand what went wrong*. Red body copy is also the harder-to-read option at 12px.
+     *
+     * So the error colour moves to where it costs nothing to read: a 3px left edge and the 1px frame.
+     * The heading keeps the weight, the copy keeps label-primary, and nothing in the banner is
+     * below the contrast floor in either theme. Colour-blind users lose nothing: the heading says
+     * \u64CD\u4F5C\u5931\u8D25 / Operation failed in words.
+     */
     .att-banner {
       display: flex; flex-direction: column; gap: 2px;
-      border: 1px solid var(--vscode-errorForeground); border-radius: 6px;
-      padding: 8px 10px; font-size: 12px; color: var(--vscode-errorForeground);
+      border: 1px solid var(--vscode-errorForeground);
+      border-left-width: 3px;
+      border-radius: var(--dsw-radius-sm);
+      padding: 8px 10px; font-size: 12px;
+      color: var(--dsw-alias-label-primary);
     }
+    .att-banner > div:first-child { font-weight: 600; }
     .att-banner.info { border-color: var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
     .att-banner .att-banner-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .att-progress-card {
