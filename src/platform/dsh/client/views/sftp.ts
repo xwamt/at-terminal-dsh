@@ -71,6 +71,15 @@ export interface SftpViewProps {
   rows: SftpRow[];
   expanded: readonly string[];
   busy: boolean;
+  /**
+   * The scrolling tree column, so the body can put it back where the user left it (UI2-11).
+   *
+   * A ref object rather than a callback for the same reason the asset list takes one: the write
+   * happens after an asynchronous read lands, which is not a moment React calls anything back on.
+   */
+  scrollRef?: { current: HTMLElement | null };
+  /** Reported on scroll only — the offset never re-renders the tree. */
+  onScrollTop?(top: number): void;
   onToggle(path: string): void;
   onGoUp(): void;
   onRefresh(): void;
@@ -563,7 +572,30 @@ function renderStatus(t: Translate, props: SftpViewProps): El[] {
     // A failed read renders as a failure **with its code** — never as an empty tree. The
     // Host's `sftp-disconnected` and `no-active-terminal` mean different things, and a
     // silently empty listing would hide both.
-    nodes.push(h('div', { key: 'failed', role: 'status' }, renderFailure(t, state)));
+    //
+    // The 重试 button is not decoration: `error.sftpReadFailed` says 「可重试」 in as many words,
+    // and this banner used to end there with nothing to press. Two of the four causes are
+    // transient (a dropped session, a subsystem that was just enabled on the server), so the
+    // retry is the only action that resolves them without leaving the page.
+    nodes.push(
+      h(
+        'div',
+        { key: 'failed', role: 'status' },
+        renderFailure(t, state, [
+          h(
+            'button',
+            {
+              key: 'retry',
+              type: 'button',
+              className: 'att-btn',
+              onClick: () => props.onRefresh(),
+              'data-at-terminal-action': 'sftp-retry'
+            },
+            t('toolbar.refresh')
+          )
+        ])
+      )
+    );
     return nodes;
   }
 
@@ -885,6 +917,9 @@ export function renderSftpView(props: SftpViewProps): El {
       'div',
       {
         className: 'att-content',
+        ref: props.scrollRef,
+        onScroll: (event: { currentTarget?: { scrollTop?: unknown } }) =>
+          props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0)),
         onContextMenu: (event: { preventDefault(): void; clientX: number; clientY: number }) => {
           event.preventDefault();
           props.onContainerContextMenu?.(event);

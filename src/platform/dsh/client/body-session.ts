@@ -75,6 +75,7 @@ import {
   type TerminalSession
 } from './sessions';
 import { useMenuFocus } from './menuFocus';
+import { readSftpState, saveSftpState } from './tabState';
 import { renderSftpView } from './views/sftp';
 import { renderSftpFileView } from './views/sftpFile';
 import { renderConfirmDialog, type ConfirmDialogProps } from './views/dialogs';
@@ -245,7 +246,9 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   const [sftpVisited, setSftpVisited] = React.useState(session.page === 'sftp');
   const [sftpBusy, setSftpBusy] = React.useState(false);
   const [sftpFailure, setSftpFailure] = React.useState<{ code: string; message: string } | null>(null);
-  const [sftpExpanded, setSftpExpanded] = React.useState<string[]>([]);
+  const [sftpExpanded, setSftpExpanded] = React.useState<string[]>(() => [
+    ...(readSftpState(key)?.expanded ?? [])
+  ]);
   const [sftpChildren, setSftpChildren] = React.useState<Record<string, SftpChildState | undefined>>({});
 
   /**
@@ -333,6 +336,52 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     // why the cache is only dropped by an explicit refresh.
     if (!isOpen && sftpChildren[path] === undefined) void fetchSftpChildren(path);
   }
+
+  /* ------------------- what survives a tab switch (UI2-11) ------------------- */
+
+  /**
+   * The expansion list and the reading position, kept outside React.
+   *
+   * The frame unmounts a background tab's body, so `useState` alone lost both the moment the
+   * user glanced at the terminal: they came back to a collapsed tree scrolled to the top, and
+   * re-opening `/root/docker` meant re-reading every level above it.
+   *
+   * The **children cache is deliberately not restored** — only the paths. A cached listing from
+   * before the unmount can be minutes old, and a tree that looks expanded but shows a stale file
+   * list is worse than one that re-reads: the re-read is visible (pending rows), the staleness is
+   * not. `body.ts` stores the same shape for the asset list.
+   */
+  const sftpScrollTopRef = React.useRef<number>(readSftpState(key)?.scrollTop ?? 0);
+  const sftpScrollRef = React.useRef<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    saveSftpState(key, { expanded: sftpExpanded, scrollTop: sftpScrollTopRef.current });
+  }, [key, sftpExpanded]);
+
+  /**
+   * Re-read the layers the restored list says are open.
+   *
+   * Keyed on the root read landing rather than running once on mount, for the same reason the
+   * asset list is: on the first paint the tree has no rows, so "expand /root/docker" has nothing
+   * to attach to. It also does the work `reloadSftp` relies on — that function drops the children
+   * cache and expects the open directories to be fetched again, which nothing used to do.
+   */
+  React.useEffect(() => {
+    if (sftpState.kind !== 'ok') return;
+    for (const path of sftpExpanded) {
+      if (sftpChildren[path] === undefined) void fetchSftpChildren(path);
+    }
+    // `sftpChildren` is read but not depended on: the body sets it to `pending` on the way in, and
+    // depending on it would re-run this effect on every child read that lands.
+  }, [sftpState.kind, sftpRevision, sftpExpanded]);
+
+  /** Put the tree back where the user left it, once it has rows to scroll. */
+  React.useEffect(() => {
+    if (sftpState.kind !== 'ok') return;
+    const node = sftpScrollRef.current;
+    if (node === null) return;
+    node.scrollTop = sftpScrollTopRef.current;
+  }, [sftpState.kind]);
 
   /**
    * Re-read the tree. `dropCache` is the difference between 刷新 and re-entering the page: the host
@@ -928,6 +977,12 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
       }),
       expanded: sftpExpanded,
       busy: sftpBusy,
+      scrollRef: sftpScrollRef,
+      onScrollTop: (top) => {
+        sftpScrollTopRef.current = top;
+        const stored = readSftpState(key);
+        if (stored !== undefined) saveSftpState(key, { ...stored, scrollTop: top });
+      },
       onToggle: toggleSftpDirectory,
       onGoUp: () => void goUpSftp(),
       onRefresh: () => reloadSftp(true),

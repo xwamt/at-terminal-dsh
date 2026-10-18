@@ -32,14 +32,26 @@ export function failedState(error: { code?: unknown; message?: unknown }): Async
   };
 }
 
-/** The failure banner: what happened, the code-specific copy, and the raw evidence line. */
-export function renderFailure(t: Translate, failure: { code: string; message: string }): El {
+/**
+ * The failure banner: what happened, the code-specific copy, and the raw evidence line.
+ *
+ * `actions` exists because the copy for several codes ends in 「可重试」 — and a banner that tells
+ * the user a retry is possible while offering nowhere to press is worse than one that stays
+ * silent about it: they go looking for the control instead of reading the rest. The slot is
+ * optional and rendered last so the banner still reads top-down as statement → detail → verb.
+ */
+export function renderFailure(
+  t: Translate,
+  failure: { code: string; message: string },
+  actions: El[] = []
+): El {
   return h(
     'div',
     { className: 'att-banner', 'data-at-terminal-error': failure.code },
     h('div', null, t('error.title')),
     h('div', null, t(errorKey(failure.code))),
-    h('div', null, t('error.detail', { code: failure.code, message: failure.message }))
+    h('div', null, t('error.detail', { code: failure.code, message: failure.message })),
+    ...(actions.length === 0 ? [] : [h('div', { key: 'actions', className: 'att-banner-actions' }, ...actions)])
   );
 }
 

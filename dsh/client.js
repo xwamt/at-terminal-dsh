@@ -10225,6 +10225,13 @@ window.__ModuleLoader__.load({
       let target = bucket(key);
       target !== null && (target.assets = { ...state, form: draftForm(state.form) });
     }
+    function readSftpState(key) {
+      return buckets.get(key)?.sftp;
+    }
+    function saveSftpState(key, state) {
+      let target = bucket(key);
+      target !== null && (target.sftp = state);
+    }
     function clearTabState(key, kind) {
       if (key === "") return;
       if (kind === void 0) {
@@ -10248,13 +10255,14 @@ window.__ModuleLoader__.load({
         message: String(error.message ?? "")
       };
     }
-    function renderFailure(t, failure) {
+    function renderFailure(t, failure, actions = []) {
       return h(
         "div",
         { className: "att-banner", "data-at-terminal-error": failure.code },
         h("div", null, t("error.title")),
         h("div", null, t(errorKey(failure.code))),
-        h("div", null, t("error.detail", { code: failure.code, message: failure.message }))
+        h("div", null, t("error.detail", { code: failure.code, message: failure.message })),
+        ...actions.length === 0 ? [] : [h("div", { key: "actions", className: "att-banner-actions" }, ...actions)]
       );
     }
     function pathLabel(path, options = {}) {
@@ -12473,7 +12481,25 @@ window.__ModuleLoader__.load({
           )
         ), nodes;
       if (state.kind === "failed")
-        return nodes.push(h("div", { key: "failed", role: "status" }, renderFailure(t, state))), nodes;
+        return nodes.push(
+          h(
+            "div",
+            { key: "failed", role: "status" },
+            renderFailure(t, state, [
+              h(
+                "button",
+                {
+                  key: "retry",
+                  type: "button",
+                  className: "att-btn",
+                  onClick: () => props.onRefresh(),
+                  "data-at-terminal-action": "sftp-retry"
+                },
+                t("toolbar.refresh")
+              )
+            ])
+          )
+        ), nodes;
       let listing = sftpListing(state.result);
       return listing.kind === "none" ? (nodes.push(
         h(
@@ -12678,6 +12704,8 @@ window.__ModuleLoader__.load({
           "div",
           {
             className: "att-content",
+            ref: props.scrollRef,
+            onScroll: (event) => props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0)),
             onContextMenu: (event) => {
               event.preventDefault(), props.onContainerContextMenu?.(event);
             }
@@ -13741,7 +13769,9 @@ window.__ModuleLoader__.load({
         let badgeKind = session.failure !== null ? "problem" : session.state.kind === "connected" ? "connected" : "connecting";
         publishTabBadge(key, { label: server.label === "" ? server.host : server.label, kind: badgeKind });
       }, [key, servers, session, session.serverId, session.state.kind, session.failure]);
-      let [sftpRevision, setSftpRevision] = import_react6.default.useState(0), [sftpVisited, setSftpVisited] = import_react6.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react6.default.useState(!1), [sftpFailure, setSftpFailure] = import_react6.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react6.default.useState([]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), [confirm2, setConfirm] = import_react6.default.useState(null);
+      let [sftpRevision, setSftpRevision] = import_react6.default.useState(0), [sftpVisited, setSftpVisited] = import_react6.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react6.default.useState(!1), [sftpFailure, setSftpFailure] = import_react6.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react6.default.useState(() => [
+        ...readSftpState(key)?.expanded ?? []
+      ]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), [confirm2, setConfirm] = import_react6.default.useState(null);
       function requestConfirm(request) {
         return new Promise((resolve) => setConfirm({ request, resolve }));
       }
@@ -13771,6 +13801,18 @@ window.__ModuleLoader__.load({
         let isOpen = sftpExpanded.includes(path);
         setSftpExpanded(isOpen ? sftpExpanded.filter((value) => value !== path) : [...sftpExpanded, path]), !isOpen && sftpChildren[path] === void 0 && fetchSftpChildren(path);
       }
+      let sftpScrollTopRef = import_react6.default.useRef(readSftpState(key)?.scrollTop ?? 0), sftpScrollRef = import_react6.default.useRef(null);
+      import_react6.default.useEffect(() => {
+        saveSftpState(key, { expanded: sftpExpanded, scrollTop: sftpScrollTopRef.current });
+      }, [key, sftpExpanded]), import_react6.default.useEffect(() => {
+        if (sftpState.kind === "ok")
+          for (let path of sftpExpanded)
+            sftpChildren[path] === void 0 && fetchSftpChildren(path);
+      }, [sftpState.kind, sftpRevision, sftpExpanded]), import_react6.default.useEffect(() => {
+        if (sftpState.kind !== "ok") return;
+        let node = sftpScrollRef.current;
+        node !== null && (node.scrollTop = sftpScrollTopRef.current);
+      }, [sftpState.kind]);
       function reloadSftp(dropCache) {
         dropCache && callRpc("sftp.refresh", { terminalId: session.hostTerminalId }).catch(
           (error) => setSftpFailure(asFailure(error))
@@ -14132,6 +14174,12 @@ window.__ModuleLoader__.load({
           }),
           expanded: sftpExpanded,
           busy: sftpBusy,
+          scrollRef: sftpScrollRef,
+          onScrollTop: (top) => {
+            sftpScrollTopRef.current = top;
+            let stored = readSftpState(key);
+            stored !== void 0 && saveSftpState(key, { ...stored, scrollTop: top });
+          },
           onToggle: toggleSftpDirectory,
           onGoUp: () => void goUpSftp(),
           onRefresh: () => reloadSftp(!0),
