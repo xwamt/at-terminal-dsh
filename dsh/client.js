@@ -8964,9 +8964,16 @@ window.__ModuleLoader__.load({
       "summary.directoryLabel": "\u79C1\u94A5\u76EE\u5F55\uFF1A",
       "servers.title": "\u670D\u52A1\u5668",
       "servers.pending": "\u6B63\u5728\u8BFB\u53D6\u670D\u52A1\u5668\u5217\u8868 \u2026",
-      "servers.empty": "\u8FD8\u6CA1\u6709\u670D\u52A1\u5668\u3002\u70B9\u300C\u65B0\u589E\u670D\u52A1\u5668\u300D\u521B\u5EFA\uFF0C\u6216\u4ECE VS Code \u53D8\u4F53\u300C\u5BFC\u5165\u300D\u8D44\u4EA7\u5305\u3002",
+      "servers.emptyTitle": "\u8FD8\u6CA1\u6709\u670D\u52A1\u5668",
+      // No 「VS Code 变体」: that is where the user's records *came from*, not where they import them
+      // here, and this panel has its own 导入 button two lines up.
+      "servers.empty": "\u70B9\u300C\u65B0\u589E\u670D\u52A1\u5668\u300D\u521B\u5EFA\u4E00\u53F0\uFF0C\u6216\u7528\u300C\u5BFC\u5165\u300D\u8F7D\u5165 .at-terminal-assets \u8D44\u4EA7\u5305\u3002",
       "servers.ungrouped": "\u672A\u5206\u7EC4",
-      "servers.hint": "\u53CC\u51FB\u67D0\u53F0\u670D\u52A1\u5668\u5373\u5728\u65B0\u6807\u7B7E\u9875\u4E2D\u6253\u5F00\u7EC8\u7AEF\uFF1B\u53F3\u952E\u53EF\u6253\u5F00\u7EC8\u7AEF\u3001\u7F16\u8F91\u3001\u590D\u5236\u5730\u5740\u6216\u5220\u9664\u3002",
+      "servers.hint": "\u53CC\u51FB\u67D0\u53F0\u670D\u52A1\u5668\u5373\u5728\u65B0\u6807\u7B7E\u9875\u4E2D\u6253\u5F00\u7EC8\u7AEF\uFF1B\u53F3\u952E\u6216\u884C\u5C3E\u7684\u300C\u22EF\u300D\u53EF\u6253\u5F00\u3001\u7F16\u8F91\u3001\u590D\u5236\u5730\u5740\u6216\u5220\u9664\u3002",
+      "servers.search": "\u641C\u7D22\u670D\u52A1\u5668",
+      "servers.more": "\u66F4\u591A\u64CD\u4F5C",
+      "servers.noMatch": "\u6CA1\u6709\u5339\u914D\u7684\u670D\u52A1\u5668",
+      "servers.noMatchHint": "\u6362\u4E2A\u5173\u952E\u5B57\uFF0C\u6216\u6E05\u7A7A\u641C\u7D22\u6846\u770B\u5168\u90E8\u3002",
       "servers.tabRefused": "\u65E0\u6CD5\u6253\u5F00\u65B0\u6807\u7B7E\u9875\uFF1A\u53F3\u4FA7\u680F\u5F53\u524D\u6CA1\u6709\u53EF\u653E\u7F6E\u6807\u7B7E\u7684\u533A\u57DF\u3002\u8BF7\u5148\u5C55\u5F00\u53F3\u4FA7\u680F\uFF0C\u518D\u53CC\u51FB\u8FDE\u63A5\u3002",
       "servers.connect": "\u8FDE\u63A5",
       "servers.edit": "\u7F16\u8F91",
@@ -9292,9 +9299,14 @@ window.__ModuleLoader__.load({
       "summary.directoryLabel": "Private key directory: ",
       "servers.title": "Servers",
       "servers.pending": "Reading the server list \u2026",
-      "servers.empty": 'No servers yet. Create one with "New Server", or import an asset package from the VS Code variant.',
+      "servers.emptyTitle": "No servers yet",
+      "servers.empty": 'Create one with "New Server", or load an .at-terminal-assets package with "Import".',
       "servers.ungrouped": "Ungrouped",
-      "servers.hint": "Double-click a server to open a terminal for it in a new tab; right-click to open a terminal, edit, copy the address or delete.",
+      "servers.hint": "Double-click a server to open a terminal for it in a new tab; right-click, or the \u22EF at the end of a row, to open, edit, copy the address or delete.",
+      "servers.search": "Search servers",
+      "servers.more": "More actions",
+      "servers.noMatch": "No matching servers",
+      "servers.noMatchHint": "Try another term, or clear the search to see them all.",
       "servers.tabRefused": "Could not open a new tab: the right sidebar has no area to place one in. Expand the sidebar and double-click again.",
       "servers.connect": "Connect",
       "servers.edit": "Edit",
@@ -10426,6 +10438,9 @@ window.__ModuleLoader__.load({
     function chevronRightRegular(options = {}) {
       return chevronLine("right", REGULAR_STROKE, options);
     }
+    function chevronUpRegular(options = {}) {
+      return chevronLine("up", REGULAR_STROKE, options);
+    }
 
     // src/platform/dsh/client/icons/close.ts
     var VIEW_BOX9 = "0 0 16 16", CROSS = "M4.5 4.5L11.5 11.5M11.5 4.5L4.5 11.5";
@@ -10506,6 +10521,52 @@ window.__ModuleLoader__.load({
       });
     }
 
+    // src/platform/dsh/client/icons/transfer.ts
+    var VIEW_BOX11 = "0 0 16 16", TRAY = "M3 9.5V12.5C3 13.0523 3.44772 13.5 4 13.5H12C12.5523 13.5 13 13.0523 13 12.5V9.5", ARROW_IN = ["M8 2.5V9.5", "M5.4 6.9L8 9.5L10.6 6.9"], ARROW_OUT = ["M8 9.5V2.5", "M5.4 5.1L8 2.5L10.6 5.1"];
+    function trayArrow(direction, strokeWidth, options) {
+      let shaft = direction === "in" ? ARROW_IN : ARROW_OUT, children = [
+        ["path", { d: TRAY }],
+        ["path", { d: shaft[0] }],
+        ["path", { d: shaft[1] }]
+      ];
+      return lineIcon({
+        name: direction === "in" ? "import" : "export",
+        viewBox: VIEW_BOX11,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        children
+      });
+    }
+    function importRegular(options = {}) {
+      return trayArrow("in", REGULAR_STROKE, options);
+    }
+    function exportRegular(options = {}) {
+      return trayArrow("out", REGULAR_STROKE, options);
+    }
+
+    // src/platform/dsh/client/icons/overflow.ts
+    var VIEW_BOX12 = "0 0 16 16", DOTS = [
+      ["circle", { cx: 4.4, cy: 8, r: 1.05, fill: "currentColor" }],
+      ["circle", { cx: 8, cy: 8, r: 1.05, fill: "currentColor" }],
+      ["circle", { cx: 11.6, cy: 8, r: 1.05, fill: "currentColor" }]
+    ];
+    function overflowDots(strokeWidth, options) {
+      return lineIcon({
+        name: "overflow",
+        viewBox: VIEW_BOX12,
+        strokeWidth,
+        size: options.size ?? 16,
+        className: options.className,
+        // The dots are filled, so the stroke never paints. It is passed anyway so the caller can treat
+        // every icon the same way without knowing which ones are filled.
+        children: DOTS
+      });
+    }
+    function overflowRegular(options = {}) {
+      return overflowDots(REGULAR_STROKE, options);
+    }
+
     // src/platform/dsh/client/views/assets.ts
     function toolbarButton(t, key, labelKey, onClick, disabled, primary = !1) {
       return h(
@@ -10520,6 +10581,34 @@ window.__ModuleLoader__.load({
         },
         t(labelKey)
       );
+    }
+    function iconButton(key, label, icon, onClick, disabled = !1, action = key) {
+      return h(
+        "button",
+        {
+          key,
+          type: "button",
+          className: "att-btn att-icon-btn",
+          title: label,
+          "aria-label": label,
+          disabled,
+          onClick,
+          "data-at-terminal-action": action
+        },
+        icon
+      );
+    }
+    function menuAnchor(event) {
+      let rect = event.currentTarget?.getBoundingClientRect?.();
+      return rect !== void 0 && (event.clientX === void 0 || event.clientX === 0) ? { clientX: rect.left, clientY: rect.bottom } : { clientX: Number(event.clientX ?? 0), clientY: Number(event.clientY ?? 0) };
+    }
+    function matchesQuery(server, needle) {
+      return needle === "" ? !0 : [
+        text(server.label),
+        text(server.host),
+        text(server.username),
+        text(server.group ?? "")
+      ].join(" ").toLowerCase().includes(needle.toLowerCase());
     }
     function renderRow(t, server, props) {
       let selected = props.selectedId === text(server.id);
@@ -10549,7 +10638,52 @@ window.__ModuleLoader__.load({
           "span",
           { className: "att-badge", "data-at-terminal-badge": "has-password" },
           t("servers.hasPassword")
-        ) : null
+        ) : null,
+        /*
+         * The row's own actions, revealed on hover/focus.
+         *
+         * Right-click is the menu's only route for a mouse user who never tries it, and no route at all
+         * for a touch screen — so the `⋯` is the visible half of the same menu, and 连接 is the
+         * discoverable form of the double-click. Both call the handlers the gesture already calls, so
+         * there is no second implementation to keep in step; they are absolutely positioned inside the
+         * row (`.att-row-actions`) so they take no width when hidden and cannot reflow the address.
+         */
+        h(
+          "span",
+          { className: "att-row-actions" },
+          h(
+            "button",
+            {
+              key: "connect",
+              type: "button",
+              className: "att-row-action",
+              title: t("servers.connect"),
+              "aria-label": `${t("servers.connect")} ${text(server.label)}`,
+              onClick: (event) => {
+                event.stopPropagation(), props.onOpenInNewTab(server);
+              },
+              "data-at-terminal-action": "row-connect"
+            },
+            terminalRegular({ size: 14 })
+          ),
+          h(
+            "button",
+            {
+              key: "menu",
+              type: "button",
+              className: "att-row-action",
+              title: t("servers.more"),
+              "aria-label": `${t("servers.more")} ${text(server.label)}`,
+              "aria-haspopup": "menu",
+              onClick: (event) => {
+                event.stopPropagation(), props.onSelect(server), props.onRowMenu({ preventDefault() {
+                }, ...menuAnchor(event) }, server);
+              },
+              "data-at-terminal-action": "row-menu"
+            },
+            overflowRegular({ size: 14 })
+          )
+        )
       );
     }
     function renderPending(t, labelKey) {
@@ -10561,27 +10695,50 @@ window.__ModuleLoader__.load({
         h("span", { "aria-hidden": "true" }, label)
       );
     }
-    function renderList(t, props) {
-      let nodes = [], state = props.serversState;
-      if (state.kind === "pending")
-        return nodes.push(renderPending(t, "servers.pending")), nodes;
-      if (state.kind === "failed")
-        return nodes.push(h("div", { key: "failed" }, renderFailure(t, state))), nodes;
-      let servers = serverViews(state.result);
-      if (props.savedLabel !== null && nodes.push(
+    function renderEmpty(t, props, filtering) {
+      return filtering ? h(
+        "div",
+        { key: "empty", className: "att-empty", "data-at-terminal-empty": "filtered" },
+        h("span", { className: "att-empty-icon", "aria-hidden": "true" }, serverRegular({ size: 28 })),
+        h("span", { className: "att-empty-title" }, t("servers.noMatch")),
+        h("span", { className: "att-empty-text" }, t("servers.noMatchHint"))
+      ) : h(
+        "div",
+        { key: "empty", className: "att-empty", "data-at-terminal-empty": "none" },
+        h("span", { className: "att-empty-icon", "aria-hidden": "true" }, serverRegular({ size: 28 })),
+        h("span", { className: "att-empty-title" }, t("servers.emptyTitle")),
+        h("span", { className: "att-empty-text" }, t("servers.empty")),
         h(
-          "div",
-          { key: "saved", className: "att-line", "data-at-terminal-save": "ok" },
-          t("form.saved", { label: props.savedLabel })
-        )
-      ), props.removal.kind === "ok" && nodes.push(
-        h(
-          "div",
-          { key: "removed", className: "att-line", "data-at-terminal-remove": "ok" },
-          props.removal.removed ? t("servers.removed", { label: props.removal.label }) : t("servers.removeMissing")
-        )
-      ), props.removal.kind === "failed" && nodes.push(h("div", { key: "remove-failed" }, renderFailure(t, props.removal))), servers.length === 0)
-        return nodes.push(h("div", { key: "empty", className: "att-hint" }, t("servers.empty"))), nodes;
+          "span",
+          { className: "att-empty-actions" },
+          h(
+            "button",
+            {
+              key: "empty-new",
+              type: "button",
+              className: "att-btn primary",
+              onClick: props.onNew,
+              "data-at-terminal-action": "empty-new"
+            },
+            t("toolbar.new")
+          ),
+          h(
+            "button",
+            {
+              key: "empty-import",
+              type: "button",
+              className: "att-btn",
+              onClick: props.onImport,
+              "data-at-terminal-action": "empty-import"
+            },
+            t("toolbar.import")
+          )
+        ),
+        h("span", { className: "att-empty-hint" }, t("servers.hint"))
+      );
+    }
+    function renderRows(t, props, servers) {
+      let nodes = [];
       for (let group of groupServers(servers)) {
         let groupKey = group.name ?? "__ungrouped__", isCollapsed = props.collapsedGroups?.includes(groupKey) ?? !1;
         if (nodes.push(
@@ -10608,7 +10765,23 @@ window.__ModuleLoader__.load({
         ), !isCollapsed)
           for (let server of group.servers) nodes.push(renderRow(t, server, props));
       }
-      return nodes.push(h("div", { key: "hint", className: "att-hint" }, t("servers.hint"))), nodes;
+      return nodes;
+    }
+    function renderNotices(t, props) {
+      let nodes = [];
+      return props.savedLabel !== null && nodes.push(
+        h(
+          "div",
+          { key: "saved", className: "att-line", "data-at-terminal-save": "ok" },
+          t("form.saved", { label: props.savedLabel })
+        )
+      ), props.removal.kind === "ok" && nodes.push(
+        h(
+          "div",
+          { key: "removed", className: "att-line", "data-at-terminal-remove": "ok" },
+          props.removal.removed ? t("servers.removed", { label: props.removal.label }) : t("servers.removeMissing")
+        )
+      ), props.removal.kind === "failed" && nodes.push(h("div", { key: "remove-failed" }, renderFailure(t, props.removal))), nodes;
     }
     function renderStatusbar(t, summaryState) {
       if (summaryState.kind !== "ok")
@@ -10617,13 +10790,22 @@ window.__ModuleLoader__.load({
           { className: "att-statusbar", role: "status", "data-at-terminal-summary": summaryState.kind },
           summaryState.kind === "pending" ? t("summary.pending") : t("error.title")
         );
-      let result = summaryState.result ?? {};
+      let result = summaryState.result ?? {}, detail = [
+        t("summary.passwords", { count: count(result.passwords) }),
+        t("summary.privateKeys", { count: count(result.privateKeyFiles) })
+      ].join(" \xB7 ");
       return h(
         "div",
         { className: "att-statusbar", role: "status", "data-at-terminal-summary": "ok" },
-        h("span", { "data-at-terminal-summary-count": "servers" }, t("summary.servers", { count: count(result.servers) })),
-        h("span", { "data-at-terminal-summary-count": "passwords" }, t("summary.passwords", { count: count(result.passwords) })),
-        h("span", { "data-at-terminal-summary-count": "privateKeys" }, t("summary.privateKeys", { count: count(result.privateKeyFiles) })),
+        h(
+          "span",
+          {
+            "data-at-terminal-summary-count": "servers",
+            title: detail,
+            "data-at-terminal-summary-detail": detail
+          },
+          t("summary.servers", { count: count(result.servers) })
+        ),
         // The label stays outside the path element so the path can be one `PathLabel`
         // with a dimmed directory and a primary-colored leaf; folding the sentence into
         // the same span would color the label as if it were part of the path.
@@ -10636,7 +10818,7 @@ window.__ModuleLoader__.load({
       );
     }
     function renderAssetsView(props) {
-      let { t } = props;
+      let { t } = props, state = props.serversState, all = state.kind === "ok" ? serverViews(state.result) : [], filtering = props.query.trim() !== "", visible = all.filter((server) => matchesQuery(server, props.query.trim()));
       return h(
         "div",
         {
@@ -10653,12 +10835,39 @@ window.__ModuleLoader__.load({
         h(
           "div",
           { className: "att-toolbar" },
+          /*
+           * Search first, because it is the only control that scales with the list. It filters
+           * locally: `servers.list` has already returned every record, so a round trip per keystroke
+           * would be slower and would also empty the list while the user is still typing.
+           *
+           * `type="search"` rather than `text`: the browser's own clear affordance and Escape are then
+           * free, and a filter box with no visible way out is the one thing users get stuck on.
+           */
+          h("input", {
+            className: "att-search",
+            type: "search",
+            value: props.query,
+            placeholder: t("servers.search"),
+            "aria-label": t("servers.search"),
+            "data-at-terminal-search": "servers",
+            onChange: (event) => props.onQuery(text(event?.target?.value))
+          }),
           h("div", { className: "att-spacer" }),
           props.copied !== null ? h("span", { className: "att-copied" }, props.copied) : null,
           toolbarButton(t, "new-server", "toolbar.new", props.onNew, props.busy, !0),
-          toolbarButton(t, "import", "toolbar.import", props.onImport, props.busy),
-          toolbarButton(t, "export", "toolbar.export", props.onExport, props.busy),
-          toolbarButton(t, "refresh", "toolbar.refresh", props.onRefresh, props.busy)
+          // Four icon buttons instead of four words: at 380px the four labels alone wrapped the
+          // toolbar onto a second row. Each keeps `data-at-terminal-action`, so the tests that drive
+          // them by name are untouched by the change of surface.
+          iconButton("import", t("toolbar.import"), importRegular({ size: 16 }), props.onImport, props.busy),
+          iconButton("export", t("toolbar.export"), exportRegular({ size: 16 }), props.onExport, props.busy),
+          iconButton("refresh", t("toolbar.refresh"), refreshRegular({ size: 16 }), props.onRefresh, props.busy),
+          props.onOpenMonitor === void 0 ? null : iconButton(
+            "open-monitor",
+            t("monitor.title"),
+            gaugeRegular({ size: 16 }),
+            () => props.onOpenMonitor?.(),
+            props.busy
+          )
         ),
         // Directly under the toolbar rather than in the list: the list may be mid-read or empty when
         // the gesture is refused, and a notice inside a region that failed to load is a notice nobody
@@ -10672,12 +10881,15 @@ window.__ModuleLoader__.load({
           "div",
           {
             className: "att-content",
-            role: "listbox",
-            "aria-label": t("servers.title"),
             ref: props.scrollRef,
             onScroll: (event) => props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0))
           },
-          renderList(t, props)
+          renderNotices(t, props),
+          state.kind === "pending" ? renderPending(t, "servers.pending") : state.kind === "failed" ? h("div", { key: "failed" }, renderFailure(t, state)) : visible.length === 0 ? renderEmpty(t, props, filtering) : h(
+            "div",
+            { role: "listbox", "aria-label": t("servers.title") },
+            renderRows(t, props, visible)
+          )
         ),
         renderStatusbar(t, props.summaryState)
       );
@@ -11599,7 +11811,7 @@ window.__ModuleLoader__.load({
       }
       let [includePasswords, setIncludePasswords] = import_react3.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react3.default.useState(!1), [exportPassword, setExportPassword] = import_react3.default.useState(""), [exportState, setExportState] = import_react3.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react3.default.useState(null), [importPassword, setImportPassword] = import_react3.default.useState(""), [importStrategy, setImportStrategy] = import_react3.default.useState("skip"), [importState, setImportState] = import_react3.default.useState({ kind: "idle" }), importReadRef = import_react3.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react3.default.useState([
         ...restored?.collapsedGroups ?? []
-      ]);
+      ]), [query, setQuery] = import_react3.default.useState("");
       import_react3.default.useEffect(() => {
         saveAssetsState(tabKey, {
           formOpen,
@@ -11757,6 +11969,8 @@ window.__ModuleLoader__.load({
           busy,
           copied,
           notice,
+          query,
+          onQuery: setQuery,
           onSelect: (server) => setListSelectedId(text(server.id)),
           onOpenInNewTab: openAssetInSessionTab,
           onEdit: (server) => {
@@ -11780,7 +11994,9 @@ window.__ModuleLoader__.load({
           onRefresh: () => {
             setServersRevision((value) => value + 1), setSummaryRevision((value) => value + 1);
           },
-          onOpenMonitor: openMonitorTab ? (server) => openMonitorTab({ serverId: text(server.id), target: "hardware" }) : void 0,
+          // The toolbar button opens the monitor without naming a server: it is a page-level entry, and
+          // the row menu's 监控 item (below) is the one that carries a target.
+          onOpenMonitor: openMonitorTab ? () => void openMonitorTab({ target: "hardware" }) : void 0,
           collapsedGroups,
           scrollRef,
           onScrollTop: (top) => {
@@ -12179,18 +12395,21 @@ window.__ModuleLoader__.load({
       return nodes;
     }
     function renderUploadControl(t, props) {
-      let disabled = props.busy || props.uploading;
+      let disabled = props.busy || props.uploading, label = props.uploading ? t("sftp.uploading") : t("sftp.upload");
       return h(
         "label",
         {
           key: "upload",
-          className: "att-btn att-upload",
+          className: "att-btn att-icon-btn att-upload",
           // The destination, named on the control: the tree can be rooted anywhere, and "where
-          // did my file go" is the one question an upload must not leave open.
-          title: t("sftp.uploadTo", { path: props.uploadTarget }),
+          // did my file go" is the one question an upload must not leave open. The action verb leads,
+          // because an icon button's tooltip is the only place its name appears.
+          title: `${label} \u2014 ${t("sftp.uploadTo", { path: props.uploadTarget })}`,
           "data-at-terminal-action": "sftp-upload"
         },
-        props.uploading ? t("sftp.uploading") : t("sftp.upload"),
+        // The icon is the visible half; the name is on the input below, which is the focusable element
+        // inside this label — and on the tooltip, which is what a mouse user reads.
+        h("span", { "aria-hidden": "true" }, importRegular({ size: 16 })),
         h("input", {
           type: "file",
           multiple: !0,
@@ -12210,21 +12429,60 @@ window.__ModuleLoader__.load({
       );
     }
     function renderToolbar(t, props) {
-      let state = props.state, listing = state.kind === "ok" ? sftpListing(state.result) : void 0, live = listing !== void 0 && listing.kind === "active", canGoUp = live && listing.rootPath !== "" && listing.rootPath !== "/", selected = props.selectedPath, fileActionDisabled = props.busy || !live || selected === null;
+      let state = props.state, listing = state.kind === "ok" ? sftpListing(state.result) : void 0, canGoUp = listing !== void 0 && listing.kind === "active" && listing.rootPath !== "" && listing.rootPath !== "/";
       return h(
         "div",
         { className: "att-toolbar" },
         renderNav(t, props.mode, props.onMode, "sftp"),
         h("div", { className: "att-spacer" }),
         listing !== void 0 && listing.serverLabel !== "" ? h("span", { className: "att-chip", "data-at-terminal-sftp-server": listing.serverLabel }, listing.serverLabel) : null,
+        /*
+         * Upload, up and refresh stay in the toolbar as 28px icon buttons; the three *file* actions do
+         * not, and the split is the point. These three act on the directory, so they are always true and
+         * always true of the same thing. 查看/编辑/下载 act on one row, and keeping them here cost a
+         * third of a 380px toolbar for controls that spend most of their life disabled — see
+         * `renderFileActions`.
+         */
+        renderUploadControl(t, props),
+        iconAction(t("sftp.goUp"), chevronUpRegular({ size: 16 }), "sftp-toolbar-up", props.onGoUp, props.busy || !canGoUp),
+        iconAction(t("toolbar.refresh"), refreshRegular({ size: 16 }), "sftp-refresh", props.onRefresh, props.busy)
+      );
+    }
+    function iconAction(label, icon, action, onClick, disabled = !1) {
+      return h(
+        "button",
+        {
+          key: action,
+          type: "button",
+          className: "att-btn att-icon-btn",
+          title: label,
+          "aria-label": label,
+          disabled,
+          onClick,
+          "data-at-terminal-action": action
+        },
+        icon
+      );
+    }
+    function renderFileActions(t, props) {
+      let selected = props.selectedPath;
+      if (selected === null) return null;
+      let state = props.state, listing = state.kind === "ok" ? sftpListing(state.result) : void 0;
+      if (listing === void 0 || listing.kind !== "active") return null;
+      let name = selected.slice(selected.lastIndexOf("/") + 1), disabled = props.busy;
+      return h(
+        "div",
+        { className: "att-contextbar", "data-at-terminal-context": "file" },
+        h("span", { className: "att-contextbar-name", title: selected }, name),
+        h("div", { className: "att-spacer" }),
         h(
           "button",
           {
             key: "view",
             type: "button",
             className: "att-btn",
-            disabled: fileActionDisabled,
-            onClick: () => selected !== null && props.onOpen(selected, "view"),
+            disabled,
+            onClick: () => props.onOpen(selected, "view"),
             "data-at-terminal-action": "sftp-file-view"
           },
           t("sftp.view")
@@ -12235,8 +12493,8 @@ window.__ModuleLoader__.load({
             key: "edit",
             type: "button",
             className: "att-btn",
-            disabled: fileActionDisabled,
-            onClick: () => selected !== null && props.onOpen(selected, "edit"),
+            disabled,
+            onClick: () => props.onOpen(selected, "edit"),
             "data-at-terminal-action": "sftp-file-edit"
           },
           t("sftp.edit")
@@ -12247,36 +12505,11 @@ window.__ModuleLoader__.load({
             key: "download",
             type: "button",
             className: "att-btn",
-            disabled: fileActionDisabled || props.downloading === !0,
-            onClick: () => selected !== null && props.onDownload(selected),
+            disabled: disabled || props.downloading === !0,
+            onClick: () => props.onDownload(selected),
             "data-at-terminal-action": "sftp-download"
           },
           props.downloading === !0 ? t("sftp.downloading") : t("sftp.download")
-        ),
-        renderUploadControl(t, props),
-        h(
-          "button",
-          {
-            key: "up",
-            type: "button",
-            className: "att-btn",
-            disabled: props.busy || !canGoUp,
-            onClick: props.onGoUp,
-            "data-at-terminal-action": "sftp-toolbar-up"
-          },
-          t("sftp.goUp")
-        ),
-        h(
-          "button",
-          {
-            key: "refresh",
-            type: "button",
-            className: "att-btn",
-            disabled: props.busy,
-            onClick: props.onRefresh,
-            "data-at-terminal-action": "sftp-refresh"
-          },
-          t("toolbar.refresh")
         )
       );
     }
@@ -12307,6 +12540,7 @@ window.__ModuleLoader__.load({
           "aria-labelledby": navTabId("sftp", "sftp")
         },
         renderToolbar(t, props),
+        renderFileActions(t, props),
         h(
           "div",
           {
@@ -12390,7 +12624,7 @@ window.__ModuleLoader__.load({
       ];
       return h("div", { className: "att-statusbar" }, nodes);
     }
-    function renderNotices(t, props, file) {
+    function renderNotices2(t, props, file) {
       let nodes = [];
       file.truncated && nodes.push(
         h(
@@ -12532,7 +12766,7 @@ window.__ModuleLoader__.load({
             )
           )
         ];
-      let editing = pane.mode === "edit" && !pane.file.truncated, nodes = renderNotices(t, props, pane.file);
+      let editing = pane.mode === "edit" && !pane.file.truncated, nodes = renderNotices2(t, props, pane.file);
       return pane.mode === "edit" && pane.file.truncated ? (nodes.push(
         h("div", { key: "edit-blocked", className: "att-hint", role: "status" }, t("sftp.fileEditBlocked"))
       ), nodes) : (editing ? nodes.push(
@@ -13224,7 +13458,7 @@ window.__ModuleLoader__.load({
             // A 16px dial instead of `📊`: the emoji is colour on every platform and answers to no
             // token, so it was the loudest mark in a toolbar of 12px text.
             gaugeRegular({ size: 16 })
-          ) : null,
+          ) : null
           /**
            * No 「新建终端」 button here any more.
            *
@@ -13237,12 +13471,21 @@ window.__ModuleLoader__.load({
            *
            * Reverse-tested: restoring a control carrying `data-at-terminal-action="term-new-tab"`
            * fails the assertion in `client-bundle.test.ts`.
+           *
+           * The 「Ctrl/⌘+F 查找」 chip that used to sit here is gone for the same reason: it is a
+           * keyboard hint, not a control, and it occupied the toolbar's scarcest space permanently to
+           * teach one shortcut. It now rides the terminal surface's tooltip (see the `main` below),
+           * where it costs nothing and is still one hover away.
            */
-          h("span", { className: "att-chip" }, t("terminal.searchHint"))
         ),
         h(
           "main",
-          { className: "terminal-shell" },
+          {
+            className: "terminal-shell",
+            // The shortcut hint that used to be a permanent chip in the toolbar. A tooltip on the
+            // surface it applies to is where a keyboard hint belongs: discoverable, zero-layout.
+            title: t("terminal.searchHint")
+          },
           h(
             "header",
             {
@@ -16148,6 +16391,25 @@ window.__ModuleLoader__.load({
       border-radius: var(--dsw-radius-md);
       background: var(--vscode-input-background);
     }
+    /*
+     * The file-action bar, which appears only while a file is selected.
+     *
+     * A second row rather than a floating popover: the tree below it must not be covered, and a bar
+     * that pushes the list down by 34px is a change the user caused and can undo by clicking elsewhere.
+     * The name sits on the left so the bar answers "which file" before offering what to do with it.
+     */
+    .att-contextbar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      min-height: 34px;
+      padding: 3px 10px;
+      border-bottom: .5px solid var(--dsw-alias-border-l3);
+      background: var(--dsw-alias-bg-layer-1);
+    }
+    .att-contextbar-name {
+      min-width: 0; max-width: 45%;
+      font-size: 12px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .att-nav-btn {
       display: inline-flex; align-items: center; justify-content: center;
       height: 28px; padding: 0 10px;
@@ -16236,6 +16498,9 @@ window.__ModuleLoader__.load({
       padding: 5px 10px;
       border-radius: var(--dsw-radius-md);
       user-select: none;
+      /* The anchor for .att-row-actions, which is taken out of the flow so it can appear on hover
+         without the address column re-wrapping every time the pointer crosses a row. */
+      position: relative;
     }
     .att-row:hover { background: var(--vscode-list-hoverBackground); }
     .att-row[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
@@ -16243,16 +16508,100 @@ window.__ModuleLoader__.load({
     .att-row-addr {
       flex: 1 1 auto; min-width: 0;
       color: var(--vscode-descriptionForeground);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+      font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 12px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .att-row[aria-selected="true"] .att-row-addr { color: inherit; }
+    /*
+     * The row's hover/focus actions: \u8FDE\u63A5 and the menu.
+     *
+     * Out of the flow and over the row's right edge, with a fade-in \u2014 the alternative (reserving
+     * 56px on every row) either steals that width from the address or makes the row taller, and a
+     * list where nothing moves as the pointer travels down it is the point.
+     *
+     * opacity and not display: the buttons stay in the accessibility tree and in the tab order,
+     * which is what makes the '\u22EF' reachable by keyboard at all. :focus-within is what reveals them
+     * for that keyboard user \u2014 without it, tabbing into an invisible button would land on nothing.
+     *
+     * A solid backdrop rather than a transparent one: the address runs underneath, and two labels
+     * overlapping at 12px is unreadable regardless of opacity.
+     */
+    .att-row-actions {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      display: flex; align-items: center; gap: 2px;
+      padding-left: 10px;
+      background: linear-gradient(to right, transparent, var(--vscode-list-hoverBackground) 12px);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .att-row:hover .att-row-actions,
+    .att-row:focus-within .att-row-actions,
+    .att-row[aria-selected="true"] .att-row-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .att-row[aria-selected="true"] .att-row-actions {
+      background: linear-gradient(to right, transparent, var(--vscode-list-activeSelectionBackground) 12px);
+    }
+    .att-row-action {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; padding: 0;
+      border: none; border-radius: var(--dsw-radius-sm);
+      background: transparent; color: var(--vscode-foreground);
+      cursor: pointer;
+    }
+    .att-row-action:hover { background: var(--dsw-alias-interactive-bg-hover); }
+    .att-row-action:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--vscode-focusBorder); }
     .att-badge {
       flex: 0 0 auto; font-size: 11px; padding: 0 7px; border-radius: 999px;
       background: var(--vscode-badge-background); border: 1px solid var(--vscode-panel-border);
       color: var(--vscode-foreground);
     }
     .att-hint { color: var(--vscode-descriptionForeground); font-size: 12px; padding: 6px; }
+    /*
+     * The list filter.
+     *
+     * A type="search" input, so the browser supplies the clear button and Escape for free. It takes
+     * the free width up to 240px: narrower than that and the toolbar still wraps at 380, wider and it
+     * starts competing with the \u65B0\u589E button for the row.
+     */
+    .att-search {
+      flex: 1 1 120px; min-width: 88px; max-width: 240px;
+      height: 28px; padding: 0 8px;
+      font: inherit; font-size: 12px;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: var(--dsw-radius-sm);
+    }
+    .att-search::placeholder { color: var(--vscode-descriptionForeground); }
+    .att-search:focus-visible {
+      outline: var(--dsw-focus-ring-width, 2px) solid var(--vscode-focusBorder);
+      outline-offset: -1px;
+    }
+    /*
+     * The empty / no-match state: an answer, not a sentence.
+     *
+     * Centred in the space the list would have occupied, so the eye lands on it instead of on the
+     * toolbar above. padding rather than height: 100% because the parent is a scroll container
+     * whose content height is what it is; the block simply sits at the top with breathing room.
+     */
+    .att-empty {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 40px 16px 32px;
+      text-align: center;
+    }
+    .att-empty-icon { color: var(--vscode-descriptionForeground); opacity: 0.55; }
+    .att-empty-title { font-size: 13px; font-weight: 600; color: var(--vscode-foreground); }
+    .att-empty-text {
+      font-size: 12px; line-height: 1.6; max-width: 30ch;
+      color: var(--vscode-descriptionForeground);
+    }
+    .att-empty-actions { display: flex; gap: 8px; margin-top: 6px; }
+    .att-empty-hint {
+      margin-top: 10px; font-size: 11px; line-height: 1.6; max-width: 34ch;
+      color: var(--vscode-descriptionForeground); opacity: 0.8;
+    }
     .att-statusbar {
       display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
       min-height: 28px;

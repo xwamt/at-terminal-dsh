@@ -36,8 +36,11 @@ import {
 import {
   chevronDownRegular,
   chevronRightRegular,
+  chevronUpRegular,
   fileRegular,
   folderRegular,
+  importRegular,
+  refreshRegular,
   symlinkRegular,
   warningTriangleRegular
 } from '../icons';
@@ -681,17 +684,21 @@ function renderTree(t: Translate, props: SftpViewProps, focusedKey: string | nul
  */
 function renderUploadControl(t: Translate, props: SftpViewProps): El {
   const disabled = props.busy || props.uploading;
+  const label = props.uploading ? t('sftp.uploading') : t('sftp.upload');
   return h(
     'label',
     {
       key: 'upload',
-      className: 'att-btn att-upload',
+      className: 'att-btn att-icon-btn att-upload',
       // The destination, named on the control: the tree can be rooted anywhere, and "where
-      // did my file go" is the one question an upload must not leave open.
-      title: t('sftp.uploadTo', { path: props.uploadTarget }),
+      // did my file go" is the one question an upload must not leave open. The action verb leads,
+      // because an icon button's tooltip is the only place its name appears.
+      title: `${label} — ${t('sftp.uploadTo', { path: props.uploadTarget })}`,
       'data-at-terminal-action': 'sftp-upload'
     },
-    props.uploading ? t('sftp.uploading') : t('sftp.upload'),
+    // The icon is the visible half; the name is on the input below, which is the focusable element
+    // inside this label — and on the tooltip, which is what a mouse user reads.
+    h('span', { 'aria-hidden': 'true' }, importRegular({ size: 16 })),
     h('input', {
       type: 'file',
       multiple: true,
@@ -720,11 +727,6 @@ function renderToolbar(t: Translate, props: SftpViewProps): El {
   const listing = state.kind === 'ok' ? sftpListing(state.result) : undefined;
   const live = listing !== undefined && listing.kind === 'active';
   const canGoUp = live && listing.rootPath !== '' && listing.rootPath !== '/';
-  const selected = props.selectedPath;
-  // Every file action needs a live connection *and* a named file: listing a stale tree is
-  // fine, acting on it is not, and the Host would refuse anyway — this is so the button says
-  // why rather than the banner afterwards.
-  const fileActionDisabled = props.busy || !live || selected === null;
   return h(
     'div',
     { className: 'att-toolbar' },
@@ -733,14 +735,81 @@ function renderToolbar(t: Translate, props: SftpViewProps): El {
     listing !== undefined && listing.serverLabel !== ''
       ? h('span', { className: 'att-chip', 'data-at-terminal-sftp-server': listing.serverLabel }, listing.serverLabel)
       : null,
+    /*
+     * Upload, up and refresh stay in the toolbar as 28px icon buttons; the three *file* actions do
+     * not, and the split is the point. These three act on the directory, so they are always true and
+     * always true of the same thing. 查看/编辑/下载 act on one row, and keeping them here cost a
+     * third of a 380px toolbar for controls that spend most of their life disabled — see
+     * `renderFileActions`.
+     */
+    renderUploadControl(t, props),
+    iconAction(t('sftp.goUp'), chevronUpRegular({ size: 16 }), 'sftp-toolbar-up', props.onGoUp, props.busy || !canGoUp),
+    iconAction(t('toolbar.refresh'), refreshRegular({ size: 16 }), 'sftp-refresh', props.onRefresh, props.busy)
+  );
+}
+
+/**
+ * One 28px icon button with a name on both the tooltip and the accessibility tree.
+ *
+ * Kept local rather than lifted into `shared.ts`: `assets.ts` has its own copy for the same reason,
+ * and a presentational helper shared across pages is a third place to look when a button behaves
+ * oddly.
+ */
+function iconAction(
+  label: string,
+  icon: El,
+  action: string,
+  onClick: () => void,
+  disabled = false
+): El {
+  return h(
+    'button',
+    {
+      key: action,
+      type: 'button',
+      className: 'att-btn att-icon-btn',
+      title: label,
+      'aria-label': label,
+      disabled,
+      onClick,
+      'data-at-terminal-action': action
+    },
+    icon
+  );
+}
+
+/**
+ * The file actions, in a bar that exists only while a file is selected.
+ *
+ * The selection is the precondition, so the bar *is* the statement that these three now apply to
+ * something. That is a stronger guarantee than three disabled buttons: a disabled control still
+ * costs the attention of deciding whether it will ever light up.
+ *
+ * All three keep their original `data-at-terminal-action` names, because they are the same three
+ * actions — only their seat moved.
+ */
+function renderFileActions(t: Translate, props: SftpViewProps): El | null {
+  const selected = props.selectedPath;
+  if (selected === null) return null;
+  const state = props.state;
+  const listing = state.kind === 'ok' ? sftpListing(state.result) : undefined;
+  // A stale tree can still be read, but acting on it cannot: the path may be gone.
+  if (listing === undefined || listing.kind !== 'active') return null;
+  const name = selected.slice(selected.lastIndexOf('/') + 1);
+  const disabled = props.busy;
+  return h(
+    'div',
+    { className: 'att-contextbar', 'data-at-terminal-context': 'file' },
+    h('span', { className: 'att-contextbar-name', title: selected }, name),
+    h('div', { className: 'att-spacer' }),
     h(
       'button',
       {
         key: 'view',
         type: 'button',
         className: 'att-btn',
-        disabled: fileActionDisabled,
-        onClick: () => selected !== null && props.onOpen(selected, 'view'),
+        disabled,
+        onClick: () => props.onOpen(selected, 'view'),
         'data-at-terminal-action': 'sftp-file-view'
       },
       t('sftp.view')
@@ -751,8 +820,8 @@ function renderToolbar(t: Translate, props: SftpViewProps): El {
         key: 'edit',
         type: 'button',
         className: 'att-btn',
-        disabled: fileActionDisabled,
-        onClick: () => selected !== null && props.onOpen(selected, 'edit'),
+        disabled,
+        onClick: () => props.onOpen(selected, 'edit'),
         'data-at-terminal-action': 'sftp-file-edit'
       },
       t('sftp.edit')
@@ -763,36 +832,11 @@ function renderToolbar(t: Translate, props: SftpViewProps): El {
         key: 'download',
         type: 'button',
         className: 'att-btn',
-        disabled: fileActionDisabled || props.downloading === true,
-        onClick: () => selected !== null && props.onDownload(selected),
+        disabled: disabled || props.downloading === true,
+        onClick: () => props.onDownload(selected),
         'data-at-terminal-action': 'sftp-download'
       },
       props.downloading === true ? t('sftp.downloading') : t('sftp.download')
-    ),
-    renderUploadControl(t, props),
-    h(
-      'button',
-      {
-        key: 'up',
-        type: 'button',
-        className: 'att-btn',
-        disabled: props.busy || !canGoUp,
-        onClick: props.onGoUp,
-        'data-at-terminal-action': 'sftp-toolbar-up'
-      },
-      t('sftp.goUp')
-    ),
-    h(
-      'button',
-      {
-        key: 'refresh',
-        type: 'button',
-        className: 'att-btn',
-        disabled: props.busy,
-        onClick: props.onRefresh,
-        'data-at-terminal-action': 'sftp-refresh'
-      },
-      t('toolbar.refresh')
     )
   );
 }
@@ -836,6 +880,7 @@ export function renderSftpView(props: SftpViewProps): El {
       'aria-labelledby': navTabId('sftp', 'sftp')
     },
     renderToolbar(t, props),
+    renderFileActions(t, props),
     h(
       'div',
       {

@@ -1440,7 +1440,7 @@ describe('client bundle — assets page', () => {
     expect(findByFunctionName(tree, 'TerminalView')).toBeNull();
     // And the body says which surface it is, which is what the shortcut command reads.
     expect(findByAttribute(tree, 'data-at-terminal-body')?.props['data-at-terminal-body']).toBe('assets');
-    // The rows: identity only — management lives in the toolbar and the context menu.
+    // The rows: identity plus their own two actions.
     const rows = findAllByClass(tree, 'att-row');
     expect(rows).toHaveLength(2);
     for (const row of rows) {
@@ -1448,7 +1448,29 @@ describe('client bundle — assets page', () => {
       walk(row.props.children, (node) => {
         if (node.type === 'button') buttons.push(node);
       });
-      expect(buttons).toHaveLength(0);
+      /*
+       * Exactly two, and that number is the assertion.
+       *
+       * UI2-07 replaced "no inline row buttons" with this. The old shape put every per-server
+       * action in the context menu, which meant a touch screen had no way to reach any of them and
+       * a mouse user had to guess that right-click did something. These two are the visible half
+       * of that same menu — not a second menu — and `⋯` opens the identical component.
+       */
+      expect(buttons).toHaveLength(2);
+      expect(buttons.map((button) => button.props['data-at-terminal-action'])).toEqual([
+        'row-connect',
+        'row-menu'
+      ]);
+      // Both are icon-only, so both must carry a name; and the menu must announce that it opens one.
+      for (const button of buttons) {
+        expect(button.props['aria-label'], 'icon-only rows need a name').toBeTruthy();
+        expect(button.props.title, 'and a tooltip for the mouse').toBeTruthy();
+        // The announced name is the tooltip plus the server, so two 连接 buttons in one list are
+        // distinguishable when a screen reader reads the tab order.
+        expect(button.props['aria-label']).toContain(button.props.title);
+        expect(String(button.props['aria-label']).length).toBeGreaterThan(String(button.props.title).length);
+      }
+      expect(buttons[1].props['aria-haspopup']).toBe('menu');
     }
     // Group heading for the named group, and the grouped server is under it.
     const text = collectText(tree);
@@ -1456,9 +1478,14 @@ describe('client bundle — assets page', () => {
     expect(text).toContain('未分组');
     expect(text).toContain('root@10.0.0.1:22');
     expect(text).toContain('已存口令');
-    // The status bar carries the summary counts.
+    // The status bar keeps the two facts a user acts on, and moves the other two into a tooltip —
+    // at 380px three counts plus a path pushed the path onto a second line.
     expect(text).toContain('服务器：2');
-    expect(text).toContain('私钥文件：3');
+    expect(text).not.toContain('私钥文件：3');
+    const summary = // the servers span carries the rest of the numbers as its title
+      findByAttribute(tree, 'data-at-terminal-summary-detail');
+    expect(summary?.props.title).toContain('私钥文件：3');
+    expect(summary?.props.title).toContain('已存口令');
   });
 
   /**
@@ -2757,24 +2784,30 @@ describe('client bundle — the file tree (DSH-23)', () => {
     return found;
   }
 
-  it('keeps 查看/编辑/下载 disabled until a **file** is selected', async () => {
+  it('offers 查看/编辑/下载 only while a **file** is selected', async () => {
     const harness = await liveTree();
 
-    // Nothing selected: three controls that would have nothing to act on stay disabled
-    // rather than being offered and then refusing.
+    /*
+     * Nothing selected: the bar is absent, not disabled.
+     *
+     * UI2-07 moved these three out of the toolbar into a bar that exists only when there is
+     * something to act on. Absence is the stronger statement — three permanently disabled buttons
+     * also occupy the toolbar's scarcest space — and it is what lets the toolbar fit at 380px.
+     */
     for (const action of ['sftp-file-view', 'sftp-file-edit', 'sftp-download']) {
-      expect(findByAction(harness.tree, action)?.props.disabled, action).toBe(true);
+      expect(findByAction(harness.tree, action), `${action} should not exist yet`).toBeNull();
     }
 
     // A directory row is not selectable at all: the three actions mean nothing for one.
     (rowFor(harness.tree, '/home/root/sub')?.props.onClick as (() => void) | undefined)?.();
     harness.render();
-    expect(findByAction(harness.tree, 'sftp-file-view')?.props.disabled).toBe(true);
+    expect(findByAction(harness.tree, 'sftp-file-view')).toBeNull();
 
     // A file row is.
     (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
     harness.render();
     for (const action of ['sftp-file-view', 'sftp-file-edit', 'sftp-download']) {
+      expect(findByAction(harness.tree, action), action).not.toBeNull();
       expect(findByAction(harness.tree, action)?.props.disabled, action).toBe(false);
     }
     expect(rowFor(harness.tree, '/home/root/app.js')?.props['aria-selected']).toBe(true);

@@ -1,6 +1,6 @@
 /**
- * The panel's icon set: six glyphs, each at the official `Regular` (1px) and `Medium`
- * (1.3px) weights.
+ * The panel's icon set, each glyph at the official `Regular` (1px) and `Medium` (1.3px)
+ * weights wherever a stroke can differ.
  *
  * Geometry is copied from `@deepseek-ai/dsh-client-ui-primitives`, which this package
  * deliberately does not import (see `frame.ts` for why that is a load failure rather
@@ -41,5 +41,9 @@ export {
 export { closeMedium, closeRegular, gripRegular } from './close';
 export { boltMedium, boltRegular, symlinkMedium, symlinkRegular } from './bolt';
 export { guideTerminalArtwork } from './artwork';
+
+/* ---- UI2-07: the toolbar buttons that were text, and the row's visible menu ---- */
+export { exportMedium, exportRegular, importMedium, importRegular } from './transfer';
+export { overflowMedium, overflowRegular } from './overflow';
 
 export { MEDIUM_STROKE, REGULAR_STROKE, type IconOptions } from './frame';

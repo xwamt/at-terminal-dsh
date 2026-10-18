@@ -605,6 +605,12 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
   const [collapsedGroups, setCollapsedGroups] = React.useState<string[]>([
     ...(restored?.collapsedGroups ?? [])
   ]);
+  /**
+   * The list filter. Deliberately *not* persisted across tab switches: coming back to a tab whose
+   * list looks half-empty because of a query you typed minutes ago is worse than losing the query,
+   * and `servers.list` is one RPC away from the full list anyway.
+   */
+  const [query, setQuery] = React.useState('');
 
   /* --------------------------- state that outlives us ------------------------- */
 
@@ -890,6 +896,8 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
       busy,
       copied,
       notice,
+      query,
+      onQuery: setQuery,
       onSelect: (server) => setListSelectedId(text(server.id)),
       onOpenInNewTab: openAssetInSessionTab,
       onEdit: (server) => {
@@ -919,9 +927,9 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         setServersRevision((value) => value + 1);
         setSummaryRevision((value) => value + 1);
       },
-      onOpenMonitor: openMonitorTab
-        ? (server) => openMonitorTab({ serverId: text(server.id), target: 'hardware' })
-        : undefined,
+      // The toolbar button opens the monitor without naming a server: it is a page-level entry, and
+      // the row menu's 监控 item (below) is the one that carries a target.
+      onOpenMonitor: openMonitorTab ? () => void openMonitorTab({ target: 'hardware' }) : undefined,
       collapsedGroups,
       scrollRef,
       onScrollTop: (top) => {

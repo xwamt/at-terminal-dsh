@@ -371,6 +371,25 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   border-radius: var(--dsw-radius-md);
   background: var(--vscode-input-background);
 }
+/*
+ * The file-action bar, which appears only while a file is selected.
+ *
+ * A second row rather than a floating popover: the tree below it must not be covered, and a bar
+ * that pushes the list down by 34px is a change the user caused and can undo by clicking elsewhere.
+ * The name sits on the left so the bar answers "which file" before offering what to do with it.
+ */
+.att-contextbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  min-height: 34px;
+  padding: 3px 10px;
+  border-bottom: .5px solid var(--dsw-alias-border-l3);
+  background: var(--dsw-alias-bg-layer-1);
+}
+.att-contextbar-name {
+  min-width: 0; max-width: 45%;
+  font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .att-nav-btn {
   display: inline-flex; align-items: center; justify-content: center;
   height: 28px; padding: 0 10px;
@@ -459,6 +478,9 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   padding: 5px 10px;
   border-radius: var(--dsw-radius-md);
   user-select: none;
+  /* The anchor for .att-row-actions, which is taken out of the flow so it can appear on hover
+     without the address column re-wrapping every time the pointer crosses a row. */
+  position: relative;
 }
 .att-row:hover { background: var(--vscode-list-hoverBackground); }
 .att-row[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
@@ -466,16 +488,100 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
 .att-row-addr {
   flex: 1 1 auto; min-width: 0;
   color: var(--vscode-descriptionForeground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 12px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .att-row[aria-selected="true"] .att-row-addr { color: inherit; }
+/*
+ * The row's hover/focus actions: 连接 and the menu.
+ *
+ * Out of the flow and over the row's right edge, with a fade-in — the alternative (reserving
+ * 56px on every row) either steals that width from the address or makes the row taller, and a
+ * list where nothing moves as the pointer travels down it is the point.
+ *
+ * opacity and not display: the buttons stay in the accessibility tree and in the tab order,
+ * which is what makes the '⋯' reachable by keyboard at all. :focus-within is what reveals them
+ * for that keyboard user — without it, tabbing into an invisible button would land on nothing.
+ *
+ * A solid backdrop rather than a transparent one: the address runs underneath, and two labels
+ * overlapping at 12px is unreadable regardless of opacity.
+ */
+.att-row-actions {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 2px;
+  padding-left: 10px;
+  background: linear-gradient(to right, transparent, var(--vscode-list-hoverBackground) 12px);
+  opacity: 0;
+  pointer-events: none;
+}
+.att-row:hover .att-row-actions,
+.att-row:focus-within .att-row-actions,
+.att-row[aria-selected="true"] .att-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.att-row[aria-selected="true"] .att-row-actions {
+  background: linear-gradient(to right, transparent, var(--vscode-list-activeSelectionBackground) 12px);
+}
+.att-row-action {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  border: none; border-radius: var(--dsw-radius-sm);
+  background: transparent; color: var(--vscode-foreground);
+  cursor: pointer;
+}
+.att-row-action:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.att-row-action:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--vscode-focusBorder); }
 .att-badge {
   flex: 0 0 auto; font-size: 11px; padding: 0 7px; border-radius: 999px;
   background: var(--vscode-badge-background); border: 1px solid var(--vscode-panel-border);
   color: var(--vscode-foreground);
 }
 .att-hint { color: var(--vscode-descriptionForeground); font-size: 12px; padding: 6px; }
+/*
+ * The list filter.
+ *
+ * A type="search" input, so the browser supplies the clear button and Escape for free. It takes
+ * the free width up to 240px: narrower than that and the toolbar still wraps at 380, wider and it
+ * starts competing with the 新增 button for the row.
+ */
+.att-search {
+  flex: 1 1 120px; min-width: 88px; max-width: 240px;
+  height: 28px; padding: 0 8px;
+  font: inherit; font-size: 12px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: var(--dsw-radius-sm);
+}
+.att-search::placeholder { color: var(--vscode-descriptionForeground); }
+.att-search:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+/*
+ * The empty / no-match state: an answer, not a sentence.
+ *
+ * Centred in the space the list would have occupied, so the eye lands on it instead of on the
+ * toolbar above. padding rather than height: 100% because the parent is a scroll container
+ * whose content height is what it is; the block simply sits at the top with breathing room.
+ */
+.att-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 40px 16px 32px;
+  text-align: center;
+}
+.att-empty-icon { color: var(--vscode-descriptionForeground); opacity: 0.55; }
+.att-empty-title { font-size: 13px; font-weight: 600; color: var(--vscode-foreground); }
+.att-empty-text {
+  font-size: 12px; line-height: 1.6; max-width: 30ch;
+  color: var(--vscode-descriptionForeground);
+}
+.att-empty-actions { display: flex; gap: 8px; margin-top: 6px; }
+.att-empty-hint {
+  margin-top: 10px; font-size: 11px; line-height: 1.6; max-width: 34ch;
+  color: var(--vscode-descriptionForeground); opacity: 0.8;
+}
 .att-statusbar {
   display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
   min-height: 28px;

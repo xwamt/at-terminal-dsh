@@ -234,12 +234,21 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
        *
        * Reverse-tested: restoring a control carrying `data-at-terminal-action="term-new-tab"`
        * fails the assertion in `client-bundle.test.ts`.
+       *
+       * The 「Ctrl/⌘+F 查找」 chip that used to sit here is gone for the same reason: it is a
+       * keyboard hint, not a control, and it occupied the toolbar's scarcest space permanently to
+       * teach one shortcut. It now rides the terminal surface's tooltip (see the `main` below),
+       * where it costs nothing and is still one hover away.
        */
-      h('span', { className: 'att-chip' }, t('terminal.searchHint'))
     ),
     h(
       'main',
-      { className: 'terminal-shell' },
+      {
+        className: 'terminal-shell',
+        // The shortcut hint that used to be a permanent chip in the toolbar. A tooltip on the
+        // surface it applies to is where a keyboard hint belongs: discoverable, zero-layout.
+        title: t('terminal.searchHint')
+      },
       h(
         'header',
         {
