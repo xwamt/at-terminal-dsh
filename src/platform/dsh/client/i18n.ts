@@ -72,6 +72,10 @@ export const zh: Record<string, string> = {
   'servers.hint': '双击某台服务器即在新标签页中打开终端；右键或行尾的「⋯」可打开、编辑、复制地址或删除。',
   'servers.search': '搜索服务器',
   'servers.more': '更多操作',
+  // The accessible name of a context menu. Its own key because two different surfaces open one —
+  // the asset row and the SFTP entry — and a file menu labelled with a `servers.*` string is the
+  // kind of copy drift that reads as a bug to anyone using a screen reader.
+  'menu.more': '更多操作',
   'servers.noMatch': '没有匹配的服务器',
   'servers.noMatchHint': '换个关键字，或清空搜索框看全部。',
   'servers.tabRefused': '无法打开新标签页：右侧栏当前没有可放置标签的区域。请先展开右侧栏，再双击连接。',
@@ -423,6 +427,7 @@ export const en: Record<string, string> = {
   'servers.hint': 'Double-click a server to open a terminal for it in a new tab; right-click, or the ⋯ at the end of a row, to open, edit, copy the address or delete.',
   'servers.search': 'Search servers',
   'servers.more': 'More actions',
+  'menu.more': 'More actions',
   'servers.noMatch': 'No matching servers',
   'servers.noMatchHint': 'Try another term, or clear the search to see them all.',
   'servers.tabRefused': 'Could not open a new tab: the right sidebar has no area to place one in. Expand the sidebar and double-click again.',

@@ -26,6 +26,7 @@ import {
   type Translate
 } from '../models';
 import { h, pathLabel, renderFailure, type AsyncState, type El } from './shared';
+import { moveRowFocus } from '../listNav';
 import {
   chevronDownRegular,
   chevronRightRegular,
@@ -205,7 +206,7 @@ function matchesQuery(server: ServerView, needle: string): boolean {
   return haystack.includes(needle.toLowerCase());
 }
 
-function renderRow(t: Translate, server: ServerView, props: AssetsViewProps): El {
+function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, roving: boolean): El {
   const selected = props.selectedId === text(server.id);
   return h(
     'div',
@@ -214,12 +215,42 @@ function renderRow(t: Translate, server: ServerView, props: AssetsViewProps): El
       className: 'att-row',
       role: 'option',
       'aria-selected': selected,
+      /*
+       * Roving tabindex: exactly one row is a Tab stop.
+       *
+       * `role="option"` with no tabindex was the defect — the row was announced as selectable and
+       * could not be reached at all from the keyboard, so the whole list was mouse-only while
+       * *looking* accessible. One stop for the list is the standard listbox model: Tab enters it,
+       * arrows move inside, Tab leaves.
+       */
+      tabIndex: roving ? 0 : -1,
       'data-at-terminal-row': text(server.id),
       onClick: () => props.onSelect(server),
-      // A double-click opens a **terminal tab** for this server. The keyboard route to the same act
-      // is the `atTerminal.newTab` shortcut; `role="option"` has no key gesture of its own, so
-      // nothing here claims one.
+      // A double-click opens a **terminal tab** for this server. Enter does the same from the
+      // keyboard (below); the `atTerminal.newTab` shortcut is the second route.
       onDoubleClick: () => props.onOpenInNewTab(server),
+      onKeyDown: (event: {
+        key?: string;
+        currentTarget?: unknown;
+        preventDefault?: () => void;
+      }) => {
+        const key = String(event?.key ?? '');
+        if (key === 'Enter') {
+          event.preventDefault?.();
+          props.onOpenInNewTab(server);
+          return;
+        }
+        if (key === ' ' || key === 'Spacebar') {
+          // Space selects. Without the preventDefault the list would also scroll under the
+          // cursor, which is the one thing a Space press must not do.
+          event.preventDefault?.();
+          props.onSelect(server);
+          return;
+        }
+        // Selection follows focus, which is what makes the shortcut and the row menu act on the
+        // row the user is looking at.
+        moveRowFocus(event, '[data-at-terminal-row]');
+      },
       onContextMenu: (event: { preventDefault(): void; clientX: number; clientY: number }) =>
         props.onRowMenu(event, server)
     },
@@ -385,34 +416,61 @@ function renderEmpty(t: Translate, props: AssetsViewProps, filtering: boolean): 
  */
 function renderRows(t: Translate, props: AssetsViewProps, servers: ServerView[]): El[] {
   const nodes: El[] = [];
+  // Which row owns the list's single Tab stop: the selected one if it is on screen, otherwise
+  // the first. Without the fallback an unselected list has no stop at all and Tab skips it.
+  const selectedOnScreen = servers.some((server) => text(server.id) === props.selectedId);
+  const rovingId = selectedOnScreen ? props.selectedId : text(servers[0]?.id ?? '');
   for (const group of groupServers(servers)) {
     const groupKey = group.name ?? '__ungrouped__';
     const isCollapsed = props.collapsedGroups?.includes(groupKey) ?? false;
+    const headerId = `att-group-${groupKey.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+    /*
+     * Each group is a `group` named by its own header, and the header is a real button.
+     *
+     * It used to be a `div` carrying `aria-expanded` with no role and no tabindex: a disclosure
+     * that a screen reader could not identify as one and a keyboard could not operate. `group`
+     * is the one role a `listbox` accepts besides `option`, so the wrapper keeps the list valid
+     * rather than nesting a button directly under the list.
+     *
+     * No `onKeyDown` for Enter/Space: a `<button>` already fires its click for both, and adding a
+     * handler would make one press toggle twice.
+     */
     nodes.push(
       h(
         'div',
         {
           key: `group:${group.name ?? ''}`,
-          className: 'att-group-name',
-          'data-at-terminal-group': group.name ?? '',
-          'aria-expanded': !isCollapsed,
-          onClick: () => props.onToggleGroup?.(groupKey)
+          className: 'att-group',
+          role: 'group',
+          'aria-labelledby': headerId,
+          'data-at-terminal-group-wrap': group.name ?? ''
         },
-        // The disclosure is a glyph rather than a `▶`/`▼` character: those two are drawn by the
-        // ambient font, so their weight and bearing changed with the platform and they never lined
-        // up with the 16px icons in the rows below.
         h(
-          'span',
-          { className: 'att-group-disclosure', 'aria-hidden': 'true' },
-          isCollapsed ? chevronRightRegular({ size: 12 }) : chevronDownRegular({ size: 12 })
+          'button',
+          {
+            id: headerId,
+            type: 'button',
+            className: 'att-group-name',
+            'data-at-terminal-group': group.name ?? '',
+            'aria-expanded': !isCollapsed,
+            onClick: () => props.onToggleGroup?.(groupKey)
+          },
+          // The disclosure is a glyph rather than a `▶`/`▼` character: those two are drawn by the
+          // ambient font, so their weight and bearing changed with the platform and they never
+          // lined up with the 16px icons in the rows below.
+          h(
+            'span',
+            { className: 'att-group-disclosure', 'aria-hidden': 'true' },
+            isCollapsed ? chevronRightRegular({ size: 12 }) : chevronDownRegular({ size: 12 })
+          ),
+          group.name === null ? t('servers.ungrouped') : group.name,
+          h('span', { className: 'att-group-count', 'aria-hidden': 'true' }, `(${group.servers.length})`)
         ),
-        group.name === null ? t('servers.ungrouped') : group.name,
-        h('span', { className: 'att-group-count', 'aria-hidden': 'true' }, `(${group.servers.length})`)
+        ...(isCollapsed
+          ? []
+          : group.servers.map((server) => renderRow(t, server, props, text(server.id) === rovingId)))
       )
     );
-    if (!isCollapsed) {
-      for (const server of group.servers) nodes.push(renderRow(t, server, props));
-    }
   }
   return nodes;
 }

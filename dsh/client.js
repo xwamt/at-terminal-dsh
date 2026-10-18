@@ -8351,7 +8351,7 @@ window.__ModuleLoader__.load({
       sessionDefinition: () => sessionDefinition
     });
     module.exports = __toCommonJS(main_exports);
-    var import_react8 = require("react");
+    var import_react9 = require("react");
 
     // src/sftp/FileSize.ts
     var UNITS = ["B", "KB", "MB", "GB", "TB"];
@@ -8972,6 +8972,10 @@ window.__ModuleLoader__.load({
       "servers.hint": "\u53CC\u51FB\u67D0\u53F0\u670D\u52A1\u5668\u5373\u5728\u65B0\u6807\u7B7E\u9875\u4E2D\u6253\u5F00\u7EC8\u7AEF\uFF1B\u53F3\u952E\u6216\u884C\u5C3E\u7684\u300C\u22EF\u300D\u53EF\u6253\u5F00\u3001\u7F16\u8F91\u3001\u590D\u5236\u5730\u5740\u6216\u5220\u9664\u3002",
       "servers.search": "\u641C\u7D22\u670D\u52A1\u5668",
       "servers.more": "\u66F4\u591A\u64CD\u4F5C",
+      // The accessible name of a context menu. Its own key because two different surfaces open one —
+      // the asset row and the SFTP entry — and a file menu labelled with a `servers.*` string is the
+      // kind of copy drift that reads as a bug to anyone using a screen reader.
+      "menu.more": "\u66F4\u591A\u64CD\u4F5C",
       "servers.noMatch": "\u6CA1\u6709\u5339\u914D\u7684\u670D\u52A1\u5668",
       "servers.noMatchHint": "\u6362\u4E2A\u5173\u952E\u5B57\uFF0C\u6216\u6E05\u7A7A\u641C\u7D22\u6846\u770B\u5168\u90E8\u3002",
       "servers.tabRefused": "\u65E0\u6CD5\u6253\u5F00\u65B0\u6807\u7B7E\u9875\uFF1A\u53F3\u4FA7\u680F\u5F53\u524D\u6CA1\u6709\u53EF\u653E\u7F6E\u6807\u7B7E\u7684\u533A\u57DF\u3002\u8BF7\u5148\u5C55\u5F00\u53F3\u4FA7\u680F\uFF0C\u518D\u53CC\u51FB\u8FDE\u63A5\u3002",
@@ -9321,6 +9325,7 @@ window.__ModuleLoader__.load({
       "servers.hint": "Double-click a server to open a terminal for it in a new tab; right-click, or the \u22EF at the end of a row, to open, edit, copy the address or delete.",
       "servers.search": "Search servers",
       "servers.more": "More actions",
+      "menu.more": "More actions",
       "servers.noMatch": "No matching servers",
       "servers.noMatchHint": "Try another term, or clear the search to see them all.",
       "servers.tabRefused": "Could not open a new tab: the right sidebar has no area to place one in. Expand the sidebar and double-click again.",
@@ -9613,7 +9618,7 @@ window.__ModuleLoader__.load({
     };
 
     // src/platform/dsh/client/body.ts
-    var import_react3 = __toESM(require("react"), 1);
+    var import_react4 = __toESM(require("react"), 1);
 
     // src/platform/dsh/client/sessions.ts
     var import_react = __toESM(require("react"), 1);
@@ -10133,6 +10138,66 @@ window.__ModuleLoader__.load({
       return session.failure !== null && session.failure.fingerprint !== "" ? session.failure : null;
     }
 
+    // src/platform/dsh/client/menuFocus.ts
+    var import_react2 = __toESM(require("react"), 1);
+
+    // src/platform/dsh/client/listNav.ts
+    function nextIndex(current, total, key) {
+      if (total <= 0) return null;
+      switch (key) {
+        case "ArrowDown":
+          return Math.min(total - 1, Math.max(0, current + 1));
+        case "ArrowUp":
+          return Math.max(0, Math.min(total - 1, current - 1));
+        case "Home":
+          return 0;
+        case "End":
+          return total - 1;
+        default:
+          return null;
+      }
+    }
+    function moveRowFocus(event, selector) {
+      let doc = typeof document > "u" ? void 0 : document;
+      if (doc === void 0) return !1;
+      let rows = Array.from(doc.querySelectorAll(selector));
+      if (rows.length === 0) return !1;
+      let at = rows.indexOf(event.currentTarget);
+      if (at < 0) return !1;
+      let next = nextIndex(at, rows.length, String(event.key ?? ""));
+      if (next === null) return !1;
+      event.preventDefault?.();
+      let node = rows[next];
+      return node?.focus?.(), node?.click?.(), !0;
+    }
+
+    // src/platform/dsh/client/menuFocus.ts
+    function useMenuFocus(open, onClose) {
+      let ref = import_react2.default.useRef(null), closeRef = import_react2.default.useRef(onClose);
+      return import_react2.default.useEffect(() => {
+        closeRef.current = onClose;
+      }, [onClose]), import_react2.default.useEffect(() => {
+        if (!open) return;
+        let doc = typeof document > "u" ? void 0 : document;
+        if (doc === void 0) return;
+        let trigger = doc.activeElement;
+        (ref.current === null ? [] : Array.from(ref.current.querySelectorAll('[role="menuitem"]')))[0]?.focus?.();
+        let close = () => closeRef.current(), onKeydown = (event) => {
+          event.key === "Escape" && (closeRef.current(), trigger?.focus?.());
+        }, onScroll = () => closeRef.current();
+        return doc.addEventListener("click", close), doc.addEventListener("keydown", onKeydown), doc.addEventListener("scroll", onScroll, !0), () => {
+          doc.removeEventListener("click", close), doc.removeEventListener("keydown", onKeydown), doc.removeEventListener("scroll", onScroll, !0);
+        };
+      }, [open]), { ref, onKeyDown: (event) => {
+        let host = event.currentTarget, nodes = Array.from(
+          host?.querySelectorAll?.('[role="menuitem"]') ?? []
+        );
+        if (nodes.length === 0) return;
+        let doc = typeof document > "u" ? void 0 : document, at = doc === void 0 ? -1 : nodes.indexOf(doc.activeElement), next = nextIndex(at, nodes.length, String(event?.key ?? ""));
+        next !== null && (event.preventDefault?.(), nodes[next]?.focus?.());
+      } };
+    }
+
     // src/platform/dsh/client/tabState.ts
     var buckets = /* @__PURE__ */ new Map();
     function bucket(key) {
@@ -10171,8 +10236,8 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/views/shared.ts
-    var import_react2 = __toESM(require("react"), 1);
-    var h = import_react2.default.createElement, pendingState = { kind: "pending" };
+    var import_react3 = __toESM(require("react"), 1);
+    var h = import_react3.default.createElement, pendingState = { kind: "pending" };
     function failedState(error) {
       return {
         kind: "failed",
@@ -10640,7 +10705,7 @@ window.__ModuleLoader__.load({
         text(server.group ?? "")
       ].join(" ").toLowerCase().includes(needle.toLowerCase());
     }
-    function renderRow(t, server, props) {
+    function renderRow(t, server, props, roving) {
       let selected = props.selectedId === text(server.id);
       return h(
         "div",
@@ -10649,12 +10714,32 @@ window.__ModuleLoader__.load({
           className: "att-row",
           role: "option",
           "aria-selected": selected,
+          /*
+           * Roving tabindex: exactly one row is a Tab stop.
+           *
+           * `role="option"` with no tabindex was the defect — the row was announced as selectable and
+           * could not be reached at all from the keyboard, so the whole list was mouse-only while
+           * *looking* accessible. One stop for the list is the standard listbox model: Tab enters it,
+           * arrows move inside, Tab leaves.
+           */
+          tabIndex: roving ? 0 : -1,
           "data-at-terminal-row": text(server.id),
           onClick: () => props.onSelect(server),
-          // A double-click opens a **terminal tab** for this server. The keyboard route to the same act
-          // is the `atTerminal.newTab` shortcut; `role="option"` has no key gesture of its own, so
-          // nothing here claims one.
+          // A double-click opens a **terminal tab** for this server. Enter does the same from the
+          // keyboard (below); the `atTerminal.newTab` shortcut is the second route.
           onDoubleClick: () => props.onOpenInNewTab(server),
+          onKeyDown: (event) => {
+            let key = String(event?.key ?? "");
+            if (key === "Enter") {
+              event.preventDefault?.(), props.onOpenInNewTab(server);
+              return;
+            }
+            if (key === " " || key === "Spacebar") {
+              event.preventDefault?.(), props.onSelect(server);
+              return;
+            }
+            moveRowFocus(event, "[data-at-terminal-row]");
+          },
           onContextMenu: (event) => props.onRowMenu(event, server)
         },
         h("span", { className: "att-row-label" }, text(server.label)),
@@ -10768,32 +10853,43 @@ window.__ModuleLoader__.load({
       );
     }
     function renderRows(t, props, servers) {
-      let nodes = [];
+      let nodes = [], rovingId = servers.some((server) => text(server.id) === props.selectedId) ? props.selectedId : text(servers[0]?.id ?? "");
       for (let group of groupServers(servers)) {
-        let groupKey = group.name ?? "__ungrouped__", isCollapsed = props.collapsedGroups?.includes(groupKey) ?? !1;
-        if (nodes.push(
+        let groupKey = group.name ?? "__ungrouped__", isCollapsed = props.collapsedGroups?.includes(groupKey) ?? !1, headerId = `att-group-${groupKey.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+        nodes.push(
           h(
             "div",
             {
               key: `group:${group.name ?? ""}`,
-              className: "att-group-name",
-              "data-at-terminal-group": group.name ?? "",
-              "aria-expanded": !isCollapsed,
-              onClick: () => props.onToggleGroup?.(groupKey)
+              className: "att-group",
+              role: "group",
+              "aria-labelledby": headerId,
+              "data-at-terminal-group-wrap": group.name ?? ""
             },
-            // The disclosure is a glyph rather than a `▶`/`▼` character: those two are drawn by the
-            // ambient font, so their weight and bearing changed with the platform and they never lined
-            // up with the 16px icons in the rows below.
             h(
-              "span",
-              { className: "att-group-disclosure", "aria-hidden": "true" },
-              isCollapsed ? chevronRightRegular({ size: 12 }) : chevronDownRegular({ size: 12 })
+              "button",
+              {
+                id: headerId,
+                type: "button",
+                className: "att-group-name",
+                "data-at-terminal-group": group.name ?? "",
+                "aria-expanded": !isCollapsed,
+                onClick: () => props.onToggleGroup?.(groupKey)
+              },
+              // The disclosure is a glyph rather than a `▶`/`▼` character: those two are drawn by the
+              // ambient font, so their weight and bearing changed with the platform and they never
+              // lined up with the 16px icons in the rows below.
+              h(
+                "span",
+                { className: "att-group-disclosure", "aria-hidden": "true" },
+                isCollapsed ? chevronRightRegular({ size: 12 }) : chevronDownRegular({ size: 12 })
+              ),
+              group.name === null ? t("servers.ungrouped") : group.name,
+              h("span", { className: "att-group-count", "aria-hidden": "true" }, `(${group.servers.length})`)
             ),
-            group.name === null ? t("servers.ungrouped") : group.name,
-            h("span", { className: "att-group-count", "aria-hidden": "true" }, `(${group.servers.length})`)
+            ...isCollapsed ? [] : group.servers.map((server) => renderRow(t, server, props, text(server.id) === rovingId))
           )
-        ), !isCollapsed)
-          for (let server of group.servers) nodes.push(renderRow(t, server, props));
+        );
       }
       return nodes;
     }
@@ -11682,7 +11778,7 @@ window.__ModuleLoader__.load({
       scrollback: 1e4,
       semanticHighlight: !0,
       zebraStripes: !1
-    }, BodyLocale = import_react3.default.createContext((key) => key);
+    }, BodyLocale = import_react4.default.createContext((key) => key);
     function wrapWithLocale(Component, t, extras = { openSessionTab: () => !1 }) {
       return function(props) {
         return h(BodyLocale.Provider, { value: t }, h(Component, { t, ...extras, ...props }));
@@ -11721,10 +11817,10 @@ window.__ModuleLoader__.load({
       return navigation !== null && typeof navigation == "object" ? navigation : null;
     }
     function useTabParams(props) {
-      let navigation = readTabNavigation(props), propsRef = import_react3.default.useRef(props);
+      let navigation = readTabNavigation(props), propsRef = import_react4.default.useRef(props);
       propsRef.current = props;
-      let [, bump] = import_react3.default.useReducer((value) => value + 1, 0), seenRef = import_react3.default.useRef(JSON.stringify(readTabParams(props)));
-      return import_react3.default.useEffect(() => {
+      let [, bump] = import_react4.default.useReducer((value) => value + 1, 0), seenRef = import_react4.default.useRef(JSON.stringify(readTabParams(props)));
+      return import_react4.default.useEffect(() => {
         if (navigation === null || typeof navigation.subscribe != "function") return;
         let unsubscribe;
         try {
@@ -11742,8 +11838,8 @@ window.__ModuleLoader__.load({
       return signal !== null && typeof signal == "object" && "aborted" in signal ? signal : void 0;
     }
     function AtTerminalTitle(props) {
-      let t = import_react3.default.useContext(BodyLocale), key = readTabKey(props), kind = readTabKind(props), badge = useTabBadge(key);
-      import_react3.default.useEffect(() => {
+      let t = import_react4.default.useContext(BodyLocale), key = readTabKey(props), kind = readTabKind(props), badge = useTabBadge(key);
+      import_react4.default.useEffect(() => {
         postDiagnostic(
           "info",
           `at-terminal title rendered tab=${key || "(none)"} badge=${badge === void 0 ? "none" : badge.kind}`,
@@ -11790,8 +11886,8 @@ window.__ModuleLoader__.load({
       };
     }
     function useUiSettings() {
-      let [settings, setSettings] = import_react3.default.useState(DEFAULT_UI_SETTINGS), [version, setVersion] = import_react3.default.useState(0);
-      return import_react3.default.useEffect(() => {
+      let [settings, setSettings] = import_react4.default.useState(DEFAULT_UI_SETTINGS), [version, setVersion] = import_react4.default.useState(0);
+      return import_react4.default.useEffect(() => {
         let cancelled = !1;
         return callRpc("settings.get", {}).then(
           (result) => {
@@ -11805,8 +11901,8 @@ window.__ModuleLoader__.load({
       }, []), { settings, version };
     }
     function useHostRead(method, revision, enabled = !0, params = {}) {
-      let [state, setState] = import_react3.default.useState(pendingState), paramKey = JSON.stringify(params);
-      return import_react3.default.useEffect(() => {
+      let [state, setState] = import_react4.default.useState(pendingState), paramKey = JSON.stringify(params);
+      return import_react4.default.useEffect(() => {
         if (!enabled) return;
         let cancelled = !1;
         return setState(pendingState), callRpc(method, JSON.parse(paramKey)).then(
@@ -11826,7 +11922,7 @@ window.__ModuleLoader__.load({
       return Object.keys(left).some((field) => left[field] !== right[field]);
     }
     function AtTerminalBody(props = {}) {
-      let t = import_react3.default.useContext(BodyLocale), tabId = readTabId(props), tabKey = readTabKey(props) || ANONYMOUS_TAB_KEY, restored = readAssetsState(tabKey), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, [formOpen, setFormOpen] = import_react3.default.useState(restored?.formOpen ?? !1), [dialog, setDialog] = import_react3.default.useState("none"), [menu, setMenu] = import_react3.default.useState(null), [copied, setCopied] = import_react3.default.useState(null), [listSelectedId, setListSelectedId] = import_react3.default.useState(restored?.listSelectedId ?? ""), scrollRef = import_react3.default.useRef(null), scrollTopRef = import_react3.default.useRef(restored?.scrollTop ?? 0), [notice, setNotice] = import_react3.default.useState(null), [summaryRevision, setSummaryRevision] = import_react3.default.useState(0), [serversRevision, setServersRevision] = import_react3.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react3.default.useState(restored?.form ?? emptyForm), [formError, setFormError] = import_react3.default.useState(null), [saveState, setSaveState] = import_react3.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react3.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react3.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react3.default.useState(!1), formBaselineRef = import_react3.default.useRef(form), [confirm2, setConfirm] = import_react3.default.useState(null);
+      let t = import_react4.default.useContext(BodyLocale), tabId = readTabId(props), tabKey = readTabKey(props) || ANONYMOUS_TAB_KEY, restored = readAssetsState(tabKey), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, [formOpen, setFormOpen] = import_react4.default.useState(restored?.formOpen ?? !1), [dialog, setDialog] = import_react4.default.useState("none"), [menu, setMenu] = import_react4.default.useState(null), [copied, setCopied] = import_react4.default.useState(null), [listSelectedId, setListSelectedId] = import_react4.default.useState(restored?.listSelectedId ?? ""), scrollRef = import_react4.default.useRef(null), scrollTopRef = import_react4.default.useRef(restored?.scrollTop ?? 0), [notice, setNotice] = import_react4.default.useState(null), [summaryRevision, setSummaryRevision] = import_react4.default.useState(0), [serversRevision, setServersRevision] = import_react4.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react4.default.useState(restored?.form ?? emptyForm), [formError, setFormError] = import_react4.default.useState(null), [saveState, setSaveState] = import_react4.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react4.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react4.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react4.default.useState(!1), formBaselineRef = import_react4.default.useRef(form), [confirm2, setConfirm] = import_react4.default.useState(null);
       function requestConfirm(request) {
         return new Promise((resolve) => setConfirm({ request, resolve }));
       }
@@ -11842,10 +11938,10 @@ window.__ModuleLoader__.load({
           danger: !0
         }) : !0;
       }
-      let [includePasswords, setIncludePasswords] = import_react3.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react3.default.useState(!1), [exportPassword, setExportPassword] = import_react3.default.useState(""), [exportState, setExportState] = import_react3.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react3.default.useState(null), [importPassword, setImportPassword] = import_react3.default.useState(""), [importStrategy, setImportStrategy] = import_react3.default.useState("skip"), [importState, setImportState] = import_react3.default.useState({ kind: "idle" }), importReadRef = import_react3.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react3.default.useState([
+      let [includePasswords, setIncludePasswords] = import_react4.default.useState(!1), [includePrivateKeys, setIncludePrivateKeys] = import_react4.default.useState(!1), [exportPassword, setExportPassword] = import_react4.default.useState(""), [exportState, setExportState] = import_react4.default.useState({ kind: "idle" }), [importFileName, setImportFileName] = import_react4.default.useState(null), [importPassword, setImportPassword] = import_react4.default.useState(""), [importStrategy, setImportStrategy] = import_react4.default.useState("skip"), [importState, setImportState] = import_react4.default.useState({ kind: "idle" }), importReadRef = import_react4.default.useRef(null), [collapsedGroups, setCollapsedGroups] = import_react4.default.useState([
         ...restored?.collapsedGroups ?? []
-      ]), [query, setQuery] = import_react3.default.useState("");
-      import_react3.default.useEffect(() => {
+      ]), [query, setQuery] = import_react4.default.useState("");
+      import_react4.default.useEffect(() => {
         saveAssetsState(tabKey, {
           formOpen,
           form,
@@ -11853,20 +11949,12 @@ window.__ModuleLoader__.load({
           collapsedGroups,
           scrollTop: scrollTopRef.current
         });
-      }, [tabKey, formOpen, form, listSelectedId, collapsedGroups]), import_react3.default.useEffect(() => {
+      }, [tabKey, formOpen, form, listSelectedId, collapsedGroups]), import_react4.default.useEffect(() => {
         if (serversState.kind !== "ok") return;
         let node = scrollRef.current;
         node !== null && (node.scrollTop = scrollTopRef.current);
-      }, [serversState.kind]), import_react3.default.useEffect(() => {
-        if (menu === null) return;
-        let close = () => setMenu(null), onKeydown = (event) => {
-          event.key === "Escape" && close();
-        };
-        return document.addEventListener("click", close), document.addEventListener("keydown", onKeydown), () => {
-          document.removeEventListener("click", close), document.removeEventListener("keydown", onKeydown);
-        };
-      }, [menu]);
-      let exportBusy = exportState.kind === "pending", importBusy = importState.kind === "pending", busy = exportBusy || importBusy || saveState.kind === "pending";
+      }, [serversState.kind]);
+      let menuFocus = useMenuFocus(menu !== null, () => setMenu(null)), exportBusy = exportState.kind === "pending", importBusy = importState.kind === "pending", busy = exportBusy || importBusy || saveState.kind === "pending";
       function runExport() {
         if (!exportBusy) {
           if (exportPassword === "") {
@@ -12086,6 +12174,12 @@ window.__ModuleLoader__.load({
             type: "button",
             className: danger ? "att-menu-item danger" : "att-menu-item",
             role: "menuitem",
+            /*
+             * Every item is `-1`: the menu owns one focus stop (set by the open effect) and arrows
+             * move inside it. Tab therefore leaves the menu rather than walking its five items,
+             * which is what a `role="menu"` promises.
+             */
+            tabIndex: -1,
             onClick,
             "data-at-terminal-action": `menu-${key}`
           },
@@ -12096,11 +12190,14 @@ window.__ModuleLoader__.load({
             "div",
             {
               key: "menu",
+              ref: menuFocus.ref,
               className: "att-menu",
               role: "menu",
+              "aria-label": t("menu.more"),
               style: { left: `${menu.x}px`, top: `${menu.y}px` },
               "data-at-terminal-menu": text(menu.server.id),
-              onClick: (event) => event.stopPropagation()
+              onClick: (event) => event.stopPropagation(),
+              onKeyDown: menuFocus.onKeyDown
             },
             // 「连接」 opens a session tab too, and for the same reason the double-click does: this
             // body has no terminal to connect *in*. The label says so rather than promising a
@@ -12119,7 +12216,7 @@ window.__ModuleLoader__.load({
           )
         );
       }
-      return import_react3.default.useEffect(() => {
+      return import_react4.default.useEffect(() => {
         postDiagnostic(
           "info",
           `at-terminal body rendered tab=${tabId || "(none)"} page=${formOpen ? "form" : "assets"}`,
@@ -12135,7 +12232,7 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/body-session.ts
-    var import_react5 = __toESM(require("react"), 1);
+    var import_react6 = __toESM(require("react"), 1);
 
     // src/platform/dsh/client/views/sftp.ts
     var focusedRowKey = null;
@@ -12864,7 +12961,7 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/views/terminal.ts
-    var import_react4 = __toESM(require("react"), 1);
+    var import_react5 = __toESM(require("react"), 1);
 
     // webview/terminal/clipboard.ts
     function createTerminalKeyboardHandler(terminal, options) {
@@ -13376,8 +13473,8 @@ window.__ModuleLoader__.load({
       return detail === "" ? label : `${label} \u2014 ${detail}`;
     }
     function TerminalView(props) {
-      let containerRef = import_react4.default.useRef(null), rootRef = import_react4.default.useRef(null), barRef = import_react4.default.useRef(null), inputRef = import_react4.default.useRef(null), prevRef = import_react4.default.useRef(null), nextRef = import_react4.default.useRef(null), closeRef = import_react4.default.useRef(null), visibleRef = import_react4.default.useRef(props.visible), engineRef = import_react4.default.useRef(null), { settingsVersion, encoding } = props;
-      import_react4.default.useEffect(() => {
+      let containerRef = import_react5.default.useRef(null), rootRef = import_react5.default.useRef(null), barRef = import_react5.default.useRef(null), inputRef = import_react5.default.useRef(null), prevRef = import_react5.default.useRef(null), nextRef = import_react5.default.useRef(null), closeRef = import_react5.default.useRef(null), visibleRef = import_react5.default.useRef(props.visible), engineRef = import_react5.default.useRef(null), { settingsVersion, encoding } = props;
+      import_react5.default.useEffect(() => {
         let container = containerRef.current, root = rootRef.current, bar = barRef.current, input = inputRef.current, prev = prevRef.current, next = nextRef.current, close = closeRef.current;
         if (container === null || root === null || bar === null || input === null || prev === null || next === null || close === null)
           return;
@@ -13392,7 +13489,7 @@ window.__ModuleLoader__.load({
         return engineRef.current = engine, props.onEngine(engine), () => {
           engine.dispose(), engineRef.current = null, props.onEngine(null);
         };
-      }, [settingsVersion, encoding]), import_react4.default.useEffect(() => {
+      }, [settingsVersion, encoding]), import_react5.default.useEffect(() => {
         props.visible && !visibleRef.current && (engineRef.current?.fit(), engineRef.current?.focus()), visibleRef.current = props.visible;
       }, [props.visible]);
       let { t, termState } = props, live = termState.kind === "connected" || termState.kind === "connecting", chosen = props.servers.find((server) => text(server.id) === props.selectedServerId), statusClass = resolveTerminalStatusClass(termState.kind);
@@ -13610,22 +13707,22 @@ window.__ModuleLoader__.load({
     }
     var ANONYMOUS_KEY = "anonymous";
     function AtTerminalSessionBody(props = {}) {
-      let t = import_react5.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
-      import_react5.default.useEffect(() => {
+      let t = import_react6.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
+      import_react6.default.useEffect(() => {
         retainSessionSignal(session, signal);
-      }, [session, signal]), import_react5.default.useEffect(() => (markSessionActive(key), () => {
+      }, [session, signal]), import_react6.default.useEffect(() => (markSessionActive(key), () => {
         unmarkSessionActive(key);
       }), [key]);
       let requested = requestedServerId(params);
-      import_react5.default.useEffect(() => {
+      import_react6.default.useEffect(() => {
         if (requested !== "") {
           adoptSessionTarget(session, requested);
           return;
         }
         adoptSessionTarget(session, takeSessionSeed(session.createdAt), "seed");
-      }, [session, requested]), import_react5.default.useEffect(() => {
+      }, [session, requested]), import_react6.default.useEffect(() => {
         maybeAutoConnect(session, session.serverId);
-      }, [session, session.serverId]), import_react5.default.useEffect(() => {
+      }, [session, session.serverId]), import_react6.default.useEffect(() => {
         postDiagnostic(
           "info",
           `at-terminal session body mount key=${key} params=${JSON.stringify(params)} target=${session.serverId} buffered=${session.retainedBytes}/${session.retained.length}`,
@@ -13635,13 +13732,13 @@ window.__ModuleLoader__.load({
         );
       }, []);
       let serversState = useHostRead("servers.list", 0), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], { settings, version: settingsVersion } = useUiSettings(), chosen = servers.find((server) => text(server.id) === session.serverId);
-      import_react5.default.useEffect(() => {
+      import_react6.default.useEffect(() => {
         let server = servers.find((entry) => text(entry.id) === session.serverId);
         if (server === void 0) return;
         let badgeKind = session.failure !== null ? "problem" : session.state.kind === "connected" ? "connected" : "connecting";
         publishTabBadge(key, { label: server.label === "" ? server.host : server.label, kind: badgeKind });
       }, [key, servers, session, session.serverId, session.state.kind, session.failure]);
-      let [sftpRevision, setSftpRevision] = import_react5.default.useState(0), [sftpVisited, setSftpVisited] = import_react5.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react5.default.useState(!1), [sftpFailure, setSftpFailure] = import_react5.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react5.default.useState([]), [sftpChildren, setSftpChildren] = import_react5.default.useState({}), [sftpFile, setSftpFile] = import_react5.default.useState(null), [sftpSelected, setSftpSelected] = import_react5.default.useState(null), [sftpUploading, setSftpUploading] = import_react5.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react5.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react5.default.useState(null), [sftpNotice, setSftpNotice] = import_react5.default.useState(null), [sftpMenu, setSftpMenu] = import_react5.default.useState(null), [newFileDialog, setNewFileDialog] = import_react5.default.useState(null), sftpUploadTargetRef = import_react5.default.useRef(""), sftpFileInputRef = import_react5.default.useRef(null), [confirm2, setConfirm] = import_react5.default.useState(null);
+      let [sftpRevision, setSftpRevision] = import_react6.default.useState(0), [sftpVisited, setSftpVisited] = import_react6.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react6.default.useState(!1), [sftpFailure, setSftpFailure] = import_react6.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react6.default.useState([]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), [confirm2, setConfirm] = import_react6.default.useState(null);
       function requestConfirm(request) {
         return new Promise((resolve) => setConfirm({ request, resolve }));
       }
@@ -13649,16 +13746,7 @@ window.__ModuleLoader__.load({
         let pending = confirm2;
         pending !== null && (setConfirm(null), pending.resolve(answer));
       }
-      import_react5.default.useEffect(() => {
-        if (sftpMenu === null) return;
-        let close = () => setSftpMenu(null), onKeydown = (event) => {
-          event.key === "Escape" && close();
-        };
-        return document.addEventListener("click", close), document.addEventListener("keydown", onKeydown), () => {
-          document.removeEventListener("click", close), document.removeEventListener("keydown", onKeydown);
-        };
-      }, [sftpMenu]);
-      let sftpScope = import_react5.default.useMemo(
+      let sftpMenuFocus = useMenuFocus(sftpMenu !== null, () => setSftpMenu(null)), sftpScope = import_react6.default.useMemo(
         () => ({ terminalId: session.hostTerminalId, revision: sftpRevision }),
         [session.hostTerminalId, sftpRevision]
       ), sftpState = useHostRead("sftp.list", sftpRevision, sftpVisited, sftpScope), sftpList = sftpState.kind === "ok" ? sftpListing(sftpState.result) : null;
@@ -13932,14 +14020,14 @@ window.__ModuleLoader__.load({
         }
         setSftpVisited(!0), reloadSftp(!1);
       }
-      let inputHandlerRef = import_react5.default.useRef(() => {
-      }), resizeHandlerRef = import_react5.default.useRef(() => {
-      }), hooksRef = import_react5.default.useRef(null), hooks = hooksRef.current;
+      let inputHandlerRef = import_react6.default.useRef(() => {
+      }), resizeHandlerRef = import_react6.default.useRef(() => {
+      }), hooksRef = import_react6.default.useRef(null), hooks = hooksRef.current;
       hooks === null && (hooks = {
         onInput: (data) => inputHandlerRef.current(data),
         onResize: (rows, cols) => resizeHandlerRef.current(rows, cols)
       }, hooksRef.current = hooks), inputHandlerRef.current = (data) => sendSessionInput(session, data), resizeHandlerRef.current = (rows, cols) => sendSessionResize(session, rows, cols);
-      let engineRef = import_react5.default.useRef(null);
+      let engineRef = import_react6.default.useRef(null);
       function onEngine(engine) {
         let previous = engineRef.current;
         if (engineRef.current = engine, engine === null) {
@@ -13948,7 +14036,7 @@ window.__ModuleLoader__.load({
         }
         engine.setEncoding(chosen?.encoding), attachEngine(session, engine);
       }
-      let [trustPending, setTrustPending] = import_react5.default.useState(!1), refusal = refusedHostKey(session);
+      let [trustPending, setTrustPending] = import_react6.default.useState(!1), refusal = refusedHostKey(session);
       function runTrust(action) {
         trustPending || (setTrustPending(!0), action(session).then(
           () => setTrustPending(!1),
@@ -14104,6 +14192,8 @@ window.__ModuleLoader__.load({
               type: "button",
               className: danger ? "att-menu-item danger" : "att-menu-item",
               role: "menuitem",
+              // One focus stop for the whole menu; arrows move inside it (`sftpMenuFocus`).
+              tabIndex: -1,
               onClick,
               "data-at-terminal-action": `sftp-menu-${itemKey}`
             },
@@ -14162,11 +14252,14 @@ window.__ModuleLoader__.load({
               "div",
               {
                 key: "sftp-menu",
+                ref: sftpMenuFocus.ref,
                 className: "att-menu",
                 role: "menu",
+                "aria-label": t("menu.more"),
                 style: { left: `${sftpMenu.x}px`, top: `${sftpMenu.y}px` },
                 "data-at-terminal-sftp-menu": "true",
-                onClick: (event) => event.stopPropagation()
+                onClick: (event) => event.stopPropagation(),
+                onKeyDown: sftpMenuFocus.onKeyDown
               },
               ...menuItems
             )
@@ -14307,7 +14400,7 @@ window.__ModuleLoader__.load({
           onConfirm: () => answerConfirm(!0),
           onClose: () => answerConfirm(!1)
         })
-      ), import_react5.default.useEffect(() => {
+      ), import_react6.default.useEffect(() => {
         postBodyRendered(key, session.page);
       }, [key, session.page]), h("div", { className: "att-root", "data-at-terminal-body": session.page }, children);
     }
@@ -14316,7 +14409,7 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/views/monitorPane.ts
-    var import_react6 = require("react");
+    var import_react7 = require("react");
 
     // src/platform/dsh/client/views/monitorHardware.ts
     function HardwareMonitorView(props) {
@@ -14659,8 +14752,8 @@ window.__ModuleLoader__.load({
 
     // src/platform/dsh/client/views/monitorPane.ts
     function AtTerminalMonitorBody(props) {
-      let { t, useTabInfo } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react6.useState)(initialTarget), [servers, setServers] = (0, import_react6.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react6.useState)(initialServerId), [metrics, setMetrics] = (0, import_react6.useState)(null), [snapshot, setSnapshot] = (0, import_react6.useState)(null), [loading, setLoading] = (0, import_react6.useState)(!0);
-      (0, import_react6.useEffect)(() => {
+      let { t, useTabInfo } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react7.useState)(initialTarget), [servers, setServers] = (0, import_react7.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react7.useState)(initialServerId), [metrics, setMetrics] = (0, import_react7.useState)(null), [snapshot, setSnapshot] = (0, import_react7.useState)(null), [loading, setLoading] = (0, import_react7.useState)(!0);
+      (0, import_react7.useEffect)(() => {
         let unmounted = !1;
         return callRpc("servers.list", {}).then((res) => {
           !unmounted && res?.servers && (setServers(res.servers), !selectedServerId && res.servers.length > 0 && setSelectedServerId(res.servers[0].id));
@@ -14668,7 +14761,7 @@ window.__ModuleLoader__.load({
         }), () => {
           unmounted = !0;
         };
-      }, []), (0, import_react6.useEffect)(() => {
+      }, []), (0, import_react7.useEffect)(() => {
         let navTarget = tabInfo?.tab?.navigation?.params?.target;
         (navTarget === "hardware" || navTarget === "agent_execution") && setActiveTab(navTarget);
         let navServerId = tabInfo?.tab?.navigation?.params?.serverId;
@@ -14686,7 +14779,7 @@ window.__ModuleLoader__.load({
           setLoading(!1);
         }
       };
-      (0, import_react6.useEffect)(() => {
+      (0, import_react7.useEffect)(() => {
         refresh();
         let timer = setInterval(() => {
           refresh();
@@ -14801,7 +14894,7 @@ window.__ModuleLoader__.load({
     }
 
     // src/platform/dsh/client/views/monitorHud.ts
-    var import_react7 = require("react");
+    var import_react8 = require("react");
     var STORAGE_KEY = "dsh.at-terminal.monitor.hud.pos";
     function clampPosition(x, y, width, height) {
       let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, boxW = Math.min(width, Math.max(0, winW - 16)), boxH = Math.min(height, Math.max(0, winH - 16)), maxX = Math.max(8, winW - boxW - 8), maxY = Math.max(8, winH - boxH - 8);
@@ -14834,12 +14927,12 @@ window.__ModuleLoader__.load({
         }
     }
     function MonitorHudWidget(props) {
-      let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react7.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react7.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react7.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react7.useState)(!1), isDraggingRef = (0, import_react7.useRef)(!1), dragStateRef = (0, import_react7.useRef)(null);
-      (0, import_react7.useEffect)(() => {
+      let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react8.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react8.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react8.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react8.useState)(!1), isDraggingRef = (0, import_react8.useRef)(!1), dragStateRef = (0, import_react8.useRef)(null);
+      (0, import_react8.useEffect)(() => {
         forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
-      }, [forceExpanded]), (0, import_react7.useEffect)(() => {
+      }, [forceExpanded]), (0, import_react8.useEffect)(() => {
         initialSubtab && setActiveTab(initialSubtab);
-      }, [initialSubtab]), (0, import_react7.useEffect)(() => {
+      }, [initialSubtab]), (0, import_react8.useEffect)(() => {
         let onResize = () => {
           let width = expanded ? 400 : 280, height = expanded ? 520 : 40;
           setPos((prev) => clampPosition(prev.x, prev.y, width, height));
@@ -16589,14 +16682,26 @@ window.__ModuleLoader__.load({
          and a short list does not shift every row sideways by 8px. */
       scrollbar-gutter: stable;
     }
+    /*
+     * The group header is a real <button> now (it was a div with aria-expanded and no role), so the
+     * rule that draws it also has to undo the native control: the platform's border, background and
+     * centred text would otherwise reappear under a label that is meant to read as a heading.
+     */
     .att-group-name {
       display: flex; align-items: center; gap: 6px;
+      width: 100%;
       height: 28px; padding: 0 8px;
+      appearance: none; -webkit-appearance: none;
+      background: transparent; border: none; text-align: left;
+      font: inherit;
       font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
       color: var(--vscode-descriptionForeground);
       border-radius: var(--dsw-radius-sm);
       cursor: pointer; user-select: none;
     }
+    /* The wrapper carries no chrome of its own \u2014 it exists to name the group for assistive tech, and
+       its children lay out exactly as they did when the header and rows were siblings. */
+    .att-group { display: block; min-width: 0; }
     .att-group-name:hover {
       background: var(--vscode-list-hoverBackground);
       color: var(--vscode-foreground);
@@ -18056,8 +18161,8 @@ window.__ModuleLoader__.load({
       );
     }
     function MonitorHudContainer(props) {
-      let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react8.useState)(null), [snapshot, setSnapshot] = (0, import_react8.useState)(null), [visible, setVisible] = (0, import_react8.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react8.useState)(null), [activeLabel, setActiveLabel] = (0, import_react8.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react8.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react8.useState)("overview");
-      return (0, import_react8.useEffect)(() => {
+      let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react9.useState)(null), [snapshot, setSnapshot] = (0, import_react9.useState)(null), [visible, setVisible] = (0, import_react9.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react9.useState)(null), [activeLabel, setActiveLabel] = (0, import_react9.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react9.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react9.useState)("overview");
+      return (0, import_react9.useEffect)(() => {
         if (onRegisterController)
           return onRegisterController({
             open: (target) => {
@@ -18072,14 +18177,14 @@ window.__ModuleLoader__.load({
           }), () => {
             onRegisterController(null);
           };
-      }, [onRegisterController]), (0, import_react8.useEffect)(() => {
+      }, [onRegisterController]), (0, import_react9.useEffect)(() => {
         let handleActiveTerminal = (state) => {
           setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? setVisible(!0) : setVisible(!1);
         }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
         return handleActiveTerminal(getActiveTerminalState()), () => {
           unsubscribe();
         };
-      }, []), (0, import_react8.useEffect)(() => {
+      }, []), (0, import_react9.useEffect)(() => {
         let unmounted = !1, fetchLatest = () => {
           Promise.all([
             getHardwareMetricsRpc(activeServerId || void 0).catch(() => null),

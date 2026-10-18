@@ -447,14 +447,26 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
      and a short list does not shift every row sideways by 8px. */
   scrollbar-gutter: stable;
 }
+/*
+ * The group header is a real <button> now (it was a div with aria-expanded and no role), so the
+ * rule that draws it also has to undo the native control: the platform's border, background and
+ * centred text would otherwise reappear under a label that is meant to read as a heading.
+ */
 .att-group-name {
   display: flex; align-items: center; gap: 6px;
+  width: 100%;
   height: 28px; padding: 0 8px;
+  appearance: none; -webkit-appearance: none;
+  background: transparent; border: none; text-align: left;
+  font: inherit;
   font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
   color: var(--vscode-descriptionForeground);
   border-radius: var(--dsw-radius-sm);
   cursor: pointer; user-select: none;
 }
+/* The wrapper carries no chrome of its own — it exists to name the group for assistive tech, and
+   its children lay out exactly as they did when the header and rows were siblings. */
+.att-group { display: block; min-width: 0; }
 .att-group-name:hover {
   background: var(--vscode-list-hoverBackground);
   color: var(--vscode-foreground);

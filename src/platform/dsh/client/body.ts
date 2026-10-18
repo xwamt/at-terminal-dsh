@@ -34,6 +34,7 @@ import {
   type Translate
 } from './models';
 import { useTabBadge } from './sessions';
+import { useMenuFocus } from './menuFocus';
 import { readAssetsState, saveAssetsState } from './tabState';
 import { serverRegular, terminalRegular } from './icons';
 import { renderAssetsView, type AssetSummary } from './views/assets';
@@ -651,20 +652,12 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
     node.scrollTop = scrollTopRef.current;
   }, [serversState.kind]);
 
-  // The context menu closes on any outside click or Escape.
-  React.useEffect(() => {
-    if (menu === null) return undefined;
-    const close = (): void => setMenu(null);
-    const onKeydown = (event: { key?: string }): void => {
-      if (event.key === 'Escape') close();
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKeydown);
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKeydown);
-    };
-  }, [menu]);
+  /*
+   * The context menu takes focus while it is open, and hands it back on the way out — see
+   * `useMenuFocus`, which the SFTP tree's menu uses as well. Sharing one hook is what keeps the
+   * two menus from drifting: they had the same three omissions when they were separate effects.
+   */
+  const menuFocus = useMenuFocus(menu !== null, () => setMenu(null));
 
   const exportBusy = exportState.kind === 'pending';
   const importBusy = importState.kind === 'pending';
@@ -1003,6 +996,12 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
           type: 'button',
           className: danger ? 'att-menu-item danger' : 'att-menu-item',
           role: 'menuitem',
+          /*
+           * Every item is `-1`: the menu owns one focus stop (set by the open effect) and arrows
+           * move inside it. Tab therefore leaves the menu rather than walking its five items,
+           * which is what a `role="menu"` promises.
+           */
+          tabIndex: -1,
           onClick,
           'data-at-terminal-action': `menu-${key}`
         },
@@ -1013,11 +1012,14 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
         'div',
         {
           key: 'menu',
+          ref: menuFocus.ref,
           className: 'att-menu',
           role: 'menu',
+          'aria-label': t('menu.more'),
           style: { left: `${menu.x}px`, top: `${menu.y}px` },
           'data-at-terminal-menu': text(menu.server.id),
-          onClick: (event: { stopPropagation(): void }) => event.stopPropagation()
+          onClick: (event: { stopPropagation(): void }) => event.stopPropagation(),
+          onKeyDown: menuFocus.onKeyDown
         },
         // 「连接」 opens a session tab too, and for the same reason the double-click does: this
         // body has no terminal to connect *in*. The label says so rather than promising a

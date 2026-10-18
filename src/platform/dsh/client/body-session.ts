@@ -74,6 +74,7 @@ import {
   type SessionPage,
   type TerminalSession
 } from './sessions';
+import { useMenuFocus } from './menuFocus';
 import { renderSftpView } from './views/sftp';
 import { renderSftpFileView } from './views/sftpFile';
 import { renderConfirmDialog, type ConfirmDialogProps } from './views/dialogs';
@@ -292,19 +293,11 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     pending.resolve(answer);
   }
 
-  React.useEffect(() => {
-    if (sftpMenu === null) return undefined;
-    const close = (): void => setSftpMenu(null);
-    const onKeydown = (event: { key?: string }): void => {
-      if (event.key === 'Escape') close();
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKeydown);
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKeydown);
-    };
-  }, [sftpMenu]);
+  /*
+   * The SFTP tree's context menu uses the same behaviour as the asset list's — focus in, Escape
+   * back out, close on scroll. It was a second hand-written effect with the same three omissions.
+   */
+  const sftpMenuFocus = useMenuFocus(sftpMenu !== null, () => setSftpMenu(null));
 
   // Scoped to *this* session's terminal. Without the id the host falls back to "the newest live
   // session", which is a coin toss once two tabs are connected and would show tab A's files under
@@ -1015,6 +1008,8 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
             type: 'button',
             className: danger ? 'att-menu-item danger' : 'att-menu-item',
             role: 'menuitem',
+            // One focus stop for the whole menu; arrows move inside it (`sftpMenuFocus`).
+            tabIndex: -1,
             onClick,
             'data-at-terminal-action': `sftp-menu-${itemKey}`
           },
@@ -1091,11 +1086,14 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
           'div',
           {
             key: 'sftp-menu',
+            ref: sftpMenuFocus.ref,
             className: 'att-menu',
             role: 'menu',
+            'aria-label': t('menu.more'),
             style: { left: `${sftpMenu.x}px`, top: `${sftpMenu.y}px` },
             'data-at-terminal-sftp-menu': 'true',
-            onClick: (event: { stopPropagation(): void }) => event.stopPropagation()
+            onClick: (event: { stopPropagation(): void }) => event.stopPropagation(),
+            onKeyDown: sftpMenuFocus.onKeyDown
           },
           ...menuItems
         )
