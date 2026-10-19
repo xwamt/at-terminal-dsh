@@ -8351,7 +8351,7 @@ __export(main_exports, {
   sessionDefinition: () => sessionDefinition
 });
 module.exports = __toCommonJS(main_exports);
-var import_react10 = require("react");
+var import_react12 = require("react");
 
 // src/sftp/FileSize.ts
 var UNITS = ["B", "KB", "MB", "GB", "TB"];
@@ -9097,7 +9097,7 @@ var NS = "atTerminal", zh = {
   "terminal.state.connecting": "\u8FDE\u63A5\u4E2D \u2026",
   "terminal.state.connected": "\u5DF2\u8FDE\u63A5",
   "terminal.state.disconnected": "\u5DF2\u65AD\u5F00",
-  "terminal.searchHint": "Ctrl/\u2318+F \u67E5\u627E",
+  "terminal.searchHint": "{mod}+F \u67E5\u627E",
   "terminal.find": "\u67E5\u627E",
   "terminal.findPrev": "\u4E0A\u4E00\u4E2A",
   "terminal.findNext": "\u4E0B\u4E00\u4E2A",
@@ -9251,6 +9251,8 @@ var NS = "atTerminal", zh = {
   "monitor.mem.swap": "\u4EA4\u6362\u5206\u533A\uFF1A{used} / {total}",
   "monitor.disk.title": "\u78C1\u76D8\u5206\u533A",
   "monitor.disk.empty": "\u672A\u68C0\u6D4B\u5230\u78C1\u76D8\u6302\u8F7D\u4FE1\u606F",
+  "monitor.disk.expand": "\u5C55\u5F00\u5B8C\u6574\u6302\u8F7D\u8DEF\u5F84",
+  "monitor.disk.collapse": "\u6536\u8D77\u6302\u8F7D\u8DEF\u5F84",
   "monitor.net.title": "\u5B9E\u65F6\u7F51\u7EDC",
   "monitor.net.rx": "\u63A5\u6536 (Rx)\uFF1A{speed}",
   "monitor.net.tx": "\u53D1\u9001 (Tx)\uFF1A{speed}",
@@ -9269,6 +9271,12 @@ var NS = "atTerminal", zh = {
   "monitor.agent.transfersEmpty": "\u65E0\u8FDB\u884C\u4E2D\u7684\u4F20\u8F93\u4EFB\u52A1",
   "monitor.agent.auditsTitle": "\u5BA1\u8BA1\u4E0E\u653E\u884C\u6D41\u6C34",
   "monitor.agent.auditsEmpty": "\u6682\u65E0\u5BA1\u8BA1\u6D41\u6C34\u8BB0\u5F55",
+  "monitor.agent.history": "\u5386\u53F2\u6267\u884C",
+  "monitor.agent.historyTitle": "\u5386\u53F2\u6267\u884C\uFF08\u672C\u6B21\u8FDE\u63A5\uFF09",
+  "monitor.agent.historyBack": "\u8FD4\u56DE\u6700\u8FD1",
+  "monitor.agent.historyCount": "\u672C\u6B21\u8FDE\u63A5\u5171 {count} \u6761",
+  "monitor.agent.expandCommand": "\u5C55\u5F00\u5B8C\u6574\u547D\u4EE4",
+  "monitor.agent.collapseCommand": "\u6536\u8D77\u547D\u4EE4",
   "monitor.status.running": "\u6267\u884C\u4E2D",
   "monitor.status.waiting": "\u7B49\u5F85\u786E\u8BA4",
   // The pill has ~60px for this word, so it gets a short form rather than being clipped by the
@@ -9469,7 +9477,7 @@ var NS = "atTerminal", zh = {
   "terminal.state.connecting": "Connecting \u2026",
   "terminal.state.connected": "Connected",
   "terminal.state.disconnected": "Disconnected",
-  "terminal.searchHint": "Ctrl/\u2318+F to search",
+  "terminal.searchHint": "{mod}+F to search",
   "terminal.find": "Find",
   "terminal.findPrev": "Previous match",
   "terminal.findNext": "Next match",
@@ -9612,6 +9620,8 @@ var NS = "atTerminal", zh = {
   "monitor.mem.swap": "Swap: {used} / {total}",
   "monitor.disk.title": "Disk Partitions",
   "monitor.disk.empty": "No disk mount information",
+  "monitor.disk.expand": "Expand mount path",
+  "monitor.disk.collapse": "Collapse mount path",
   "monitor.net.title": "Network",
   "monitor.net.rx": "Rx: {speed}",
   "monitor.net.tx": "Tx: {speed}",
@@ -9630,6 +9640,12 @@ var NS = "atTerminal", zh = {
   "monitor.agent.transfersEmpty": "No active transfers",
   "monitor.agent.auditsTitle": "Audit & Authorization Stream",
   "monitor.agent.auditsEmpty": "No audit records",
+  "monitor.agent.history": "History",
+  "monitor.agent.historyTitle": "History (this connection)",
+  "monitor.agent.historyBack": "Back to recent",
+  "monitor.agent.historyCount": "{count} records this connection",
+  "monitor.agent.expandCommand": "Expand command",
+  "monitor.agent.collapseCommand": "Collapse command",
   "monitor.status.running": "RUNNING",
   "monitor.status.waiting": "CONFIRMATION_WAITING",
   "monitor.status.runningShort": "RUN",
@@ -10297,6 +10313,10 @@ function clearAllTabState() {
 // src/platform/dsh/client/views/shared.ts
 var import_react3 = __toESM(require("react"), 1);
 var h = import_react3.default.createElement, pendingState = { kind: "pending" };
+function needsTextDisclosure(text2, limit = 24) {
+  return text2.length > limit || text2.includes(`
+`);
+}
 function failedState(error) {
   return {
     kind: "failed",
@@ -10794,6 +10814,11 @@ function renderRow(t, server, props, roving) {
           event.preventDefault?.(), props.onOpenInNewTab(server);
           return;
         }
+        if (key === "ContextMenu" || key === "F10" && event?.shiftKey === !0) {
+          event.preventDefault?.(), props.onSelect(server), props.onRowMenu({ preventDefault() {
+          }, ...menuAnchor(event) }, server);
+          return;
+        }
         if (key === " " || key === "Spacebar") {
           event.preventDefault?.(), props.onSelect(server);
           return;
@@ -10834,6 +10859,17 @@ function renderRow(t, server, props, roving) {
           className: "att-row-action",
           title: t("servers.connect"),
           "aria-label": `${t("servers.connect")} ${text(server.label)}`,
+          /*
+           * Not a Tab stop, deliberately.
+           *
+           * The row is a `role="option"` in a listbox whose model is "Tab enters the list once,
+           * arrows move inside". A focusable button per row breaks that twice over: two extra
+           * stops per server (eighty presses on a forty-server list) and a focus ring that leaves
+           * the row while the roving tabindex still claims the row is the current one. Keyboard
+           * users get the same two actions from the row itself — Enter connects, Shift+F10 /
+           * ContextMenu opens this menu — and a pointer still reveals these on hover.
+           */
+          tabIndex: -1,
           onClick: (event) => {
             event.stopPropagation(), props.onOpenInNewTab(server);
           },
@@ -10850,6 +10886,9 @@ function renderRow(t, server, props, roving) {
           title: t("servers.more"),
           "aria-label": `${t("servers.more")} ${text(server.label)}`,
           "aria-haspopup": "menu",
+          // Same reason as the connect button above: reachable by pointer and by Shift+F10, not
+          // by Tab.
+          tabIndex: -1,
           onClick: (event) => {
             event.stopPropagation(), props.onSelect(server), props.onRowMenu({ preventDefault() {
             }, ...menuAnchor(event) }, server);
@@ -13043,13 +13082,26 @@ function renderSftpFileView(props) {
 // src/platform/dsh/client/views/terminal.ts
 var import_react5 = __toESM(require("react"), 1);
 
+// webview/terminal/platform.ts
+function isMacPlatform(nav) {
+  let source = nav ?? (typeof navigator > "u" ? void 0 : navigator);
+  if (source === void 0)
+    return !1;
+  let platform = (source.userAgentData?.platform ?? source.platform ?? "").toLowerCase();
+  return platform !== "" ? /mac|iphone|ipad|ipod/.test(platform) : /mac os x|macintosh|iphone|ipad|ipod/.test((source.userAgent ?? "").toLowerCase());
+}
+function primaryModifierLabel(nav) {
+  return isMacPlatform(nav) ? "\u2318" : "Ctrl";
+}
+
 // webview/terminal/clipboard.ts
+var INTERRUPT_BYTE = "";
 function createTerminalKeyboardHandler(terminal, options) {
   return (event) => {
-    if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
+    if (event.type !== "keydown")
       return !0;
-    let key = event.key.toLowerCase();
-    return key === "c" ? terminal.hasSelection() ? (options.clipboard.writeText(terminal.getSelection()).then(() => terminal.clearSelection()).finally(() => terminal.focus()), !1) : (options.sendInput(""), terminal.focus(), !1) : key === "v" ? (event.preventDefault(), event.stopImmediatePropagation(), options.clipboard.readText().then((text2) => {
+    let isMac = options.isMac ?? isMacPlatform(), key = event.key.toLowerCase();
+    return isMac ? !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ? !0 : key === "c" ? (event.preventDefault(), terminal.hasSelection() && options.clipboard.writeText(terminal.getSelection()).then(() => terminal.clearSelection()).finally(() => terminal.focus()), !1) : !0 : !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey ? !0 : key === "c" ? terminal.hasSelection() ? (options.clipboard.writeText(terminal.getSelection()).then(() => terminal.clearSelection()).finally(() => terminal.focus()), !1) : (options.sendInput(INTERRUPT_BYTE), terminal.focus(), !1) : key === "v" ? (event.preventDefault(), event.stopImmediatePropagation(), options.clipboard.readText().then((text2) => {
       text2 && terminal.paste(text2);
     }).catch(() => {
     }).finally(() => terminal.focus()), !1) : !0;
@@ -13402,8 +13454,9 @@ function setupTerminalRenderer(terminal, options) {
 }
 
 // webview/terminal/search.ts
-function isTerminalSearchShortcut(event) {
-  return event.type === "keydown" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
+function isTerminalSearchShortcut(event, isMac = isMacPlatform()) {
+  let modifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  return event.type === "keydown" && modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
 }
 function createTerminalSearchController(addon, ui) {
   let controller = {
@@ -13694,7 +13747,7 @@ function TerminalView(props) {
         className: "terminal-shell",
         // The shortcut hint that used to be a permanent chip in the toolbar. A tooltip on the
         // surface it applies to is where a keyboard hint belongs: discoverable, zero-layout.
-        title: t("terminal.searchHint")
+        title: t("terminal.searchHint", { mod: primaryModifierLabel() })
       },
       h(
         "header",
@@ -14509,11 +14562,12 @@ function postBodyRendered(key, page) {
 }
 
 // src/platform/dsh/client/views/monitorPane.ts
-var import_react7 = require("react");
+var import_react9 = require("react");
 
 // src/platform/dsh/client/views/monitorHardware.ts
+var import_react7 = require("react");
 function HardwareMonitorView(props) {
-  let { t, metrics, loading, onRefresh } = props;
+  let { t, metrics, loading, onRefresh } = props, [expandedMount, setExpandedMount] = (0, import_react7.useState)(null);
   if (!metrics && loading)
     return h(
       "div",
@@ -14615,20 +14669,48 @@ function HardwareMonitorView(props) {
         "div",
         { style: { display: "flex", flexDirection: "column", gap: "8px" } },
         ...disk.mounts.map((mount) => {
-          let diskLevel = mount.usePercent > 90 ? "error" : mount.usePercent > 75 ? "warn" : "normal";
+          let diskLevel = mount.usePercent > 90 ? "error" : mount.usePercent > 75 ? "warn" : "normal", label = `${mount.mount} (${mount.fs})`, expanded = expandedMount === mount.mount, canExpand = needsTextDisclosure(label);
           return h(
             "div",
             { key: mount.mount, style: { display: "flex", flexDirection: "column", gap: "2px" } },
+            // The left side carries the path, which on a Docker host is long enough to push the
+            // usage figure off the card. `minWidth: 0` on both the row and the label is what
+            // lets the ellipsis engage instead of the flex item refusing to shrink.
             h(
               "div",
-              { style: { display: "flex", justifyContent: "space-between", fontSize: "11px" } },
-              h("span", { style: { fontWeight: 500 } }, `${mount.mount} (${mount.fs})`),
+              { style: { display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", minWidth: 0 } },
+              h(
+                "div",
+                { style: { display: "flex", alignItems: "center", gap: "4px", flex: "1 1 auto", minWidth: 0 } },
+                h(
+                  "span",
+                  {
+                    className: "att-clip-line",
+                    title: label,
+                    style: { minWidth: 0, fontWeight: 500 }
+                  },
+                  label
+                ),
+                canExpand && h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "att-clip-toggle",
+                    title: t(expanded ? "monitor.disk.collapse" : "monitor.disk.expand"),
+                    "aria-label": t(expanded ? "monitor.disk.collapse" : "monitor.disk.expand"),
+                    "aria-expanded": expanded,
+                    onClick: () => setExpandedMount(expanded ? null : mount.mount)
+                  },
+                  expanded ? chevronDownRegular({ size: 12 }) : chevronRightRegular({ size: 12 })
+                )
+              ),
               h(
                 "span",
-                { color: "var(--dsw-alias-label-secondary)" },
+                { style: { flex: "0 0 auto", whiteSpace: "nowrap", color: "var(--dsw-alias-label-secondary)" } },
                 `${mount.usePercent}% (${formatFileSize(mount.usedBytes)} / ${formatFileSize(mount.totalBytes)})`
               )
             ),
+            expanded && h("div", { className: "att-clip-full" }, label),
             h(
               "div",
               { className: "att-monitor-gauge" },
@@ -14683,6 +14765,9 @@ function HardwareMonitorView(props) {
   );
 }
 
+// src/platform/dsh/client/views/monitorAgent.ts
+var import_react8 = require("react");
+
 // src/platform/dsh/client/localeFormat.ts
 var hostLocale;
 function setFormatLocale(locale) {
@@ -14717,15 +14802,22 @@ function riskLabel(t, level) {
       return t("monitor.risk.unknown");
   }
 }
+var RECENT_AUDIT_ROWS = 4;
+function selectAuditRows(recent, history, showHistory) {
+  return history ? showHistory ? history : history.slice(0, RECENT_AUDIT_ROWS) : recent;
+}
+function needsCommandDisclosure(command) {
+  return needsTextDisclosure(command, 24);
+}
 function AgentMonitorView(props) {
-  let { t, snapshot, loading, onRefresh } = props;
+  let { t, snapshot, loading, onRefresh, history } = props, [showHistory, setShowHistory] = (0, import_react8.useState)(!1), [expandedAuditId, setExpandedAuditId] = (0, import_react8.useState)(null);
   if (!snapshot && loading)
     return h(
       "div",
       { className: "att-monitor-card", role: "region", "aria-label": t("monitor.tab.agent") },
       h("div", null, t("servers.pending"))
     );
-  let current = snapshot?.currentAction, recentAudits = snapshot?.recentAudits ?? [], activeTransfers = snapshot?.activeTransfers ?? [];
+  let current = snapshot?.currentAction, recentAudits = snapshot?.recentAudits ?? [], activeTransfers = snapshot?.activeTransfers ?? [], audits = selectAuditRows(recentAudits, history, showHistory), hasHistory = !!(history && history.length > RECENT_AUDIT_ROWS);
   return h(
     "div",
     { className: "att-monitor-grid", role: "region", "aria-label": t("monitor.tab.agent") },
@@ -14806,10 +14898,47 @@ function AgentMonitorView(props) {
     h(
       "div",
       { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
-      h("div", { className: "att-monitor-card-header" }, h("span", null, t("monitor.agent.auditsTitle"))),
-      recentAudits.length === 0 ? h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, t("monitor.agent.auditsEmpty")) : h(
+      h(
+        "div",
+        { className: "att-monitor-card-header" },
+        h(
+          "span",
+          null,
+          t(showHistory ? "monitor.agent.historyTitle" : "monitor.agent.auditsTitle")
+        ),
+        hasHistory && h(
+          "button",
+          {
+            type: "button",
+            className: "att-btn",
+            style: { padding: "2px 8px", fontSize: "11px" },
+            "aria-pressed": showHistory,
+            onClick: () => setShowHistory((prev) => !prev)
+          },
+          showHistory ? t("monitor.agent.historyBack") : `${t("monitor.agent.history")} (${history?.length ?? 0})`
+        )
+      ),
+      showHistory && h(
+        "div",
+        { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+        t("monitor.agent.historyCount", { count: history?.length ?? 0 })
+      ),
+      audits.length === 0 ? h("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, t("monitor.agent.auditsEmpty")) : h(
         "table",
-        { className: "att-monitor-table", "aria-label": t("monitor.agent.auditsTitle") },
+        {
+          className: "att-monitor-table att-audit-table",
+          "aria-label": t(showHistory ? "monitor.agent.historyTitle" : "monitor.agent.auditsTitle")
+        },
+        // Column widths live in the first row for `table-layout: fixed`; the command column
+        // takes whatever is left.
+        h(
+          "colgroup",
+          null,
+          h("col", { style: { width: "62px" } }),
+          h("col", { style: { width: "76px" } }),
+          h("col", { style: { width: "38px" } }),
+          h("col", null)
+        ),
         h(
           "thead",
           null,
@@ -14825,8 +14954,8 @@ function AgentMonitorView(props) {
         h(
           "tbody",
           null,
-          ...recentAudits.map((audit) => {
-            let decisionClass = audit.decision === "denied" ? "att-monitor-badge-denied" : audit.decision === "confirmed" ? "att-monitor-badge-waiting" : "att-monitor-badge-success";
+          ...audits.map((audit) => {
+            let decisionClass = audit.decision === "denied" ? "att-monitor-badge-denied" : audit.decision === "confirmed" ? "att-monitor-badge-waiting" : "att-monitor-badge-success", expanded = expandedAuditId === audit.id, canExpand = needsCommandDisclosure(audit.command);
             return h(
               "tr",
               { key: audit.id },
@@ -14837,11 +14966,42 @@ function AgentMonitorView(props) {
               ),
               h(
                 "td",
-                null,
+                { style: { whiteSpace: "nowrap" } },
                 h("span", { className: `att-monitor-badge ${decisionClass}` }, t(`monitor.decision.${audit.decision}`))
               ),
-              h("td", { style: { fontSize: "11px" } }, riskLabel(t, audit.riskLevel)),
-              h("td", { style: { fontFamily: "monospace", maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, audit.command)
+              h("td", { style: { fontSize: "11px", whiteSpace: "nowrap" } }, riskLabel(t, audit.riskLevel)),
+              h(
+                "td",
+                { style: { minWidth: 0 } },
+                // One clipped line plus a disclosure. Without the fixed layout above, the
+                // span's ellipsis never engaged and the table grew wider than the window.
+                h(
+                  "div",
+                  { style: { display: "flex", alignItems: "center", gap: "4px", minWidth: 0 } },
+                  h(
+                    "span",
+                    {
+                      className: "att-clip-line",
+                      title: audit.command,
+                      style: { flex: "1 1 auto", minWidth: 0 }
+                    },
+                    audit.command
+                  ),
+                  canExpand && h(
+                    "button",
+                    {
+                      type: "button",
+                      className: "att-clip-toggle",
+                      title: t(expanded ? "monitor.agent.collapseCommand" : "monitor.agent.expandCommand"),
+                      "aria-label": t(expanded ? "monitor.agent.collapseCommand" : "monitor.agent.expandCommand"),
+                      "aria-expanded": expanded,
+                      onClick: () => setExpandedAuditId(expanded ? null : audit.id)
+                    },
+                    expanded ? chevronDownRegular({ size: 12 }) : chevronRightRegular({ size: 12 })
+                  )
+                ),
+                expanded && h("div", { className: "att-clip-full" }, audit.command)
+              )
             );
           })
         )
@@ -14852,8 +15012,8 @@ function AgentMonitorView(props) {
 
 // src/platform/dsh/client/views/monitorPane.ts
 function AtTerminalMonitorBody(props) {
-  let { t, useTabInfo } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react7.useState)(initialTarget), [servers, setServers] = (0, import_react7.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react7.useState)(initialServerId), [metrics, setMetrics] = (0, import_react7.useState)(null), [snapshot, setSnapshot] = (0, import_react7.useState)(null), [loading, setLoading] = (0, import_react7.useState)(!0);
-  (0, import_react7.useEffect)(() => {
+  let { t, useTabInfo } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react9.useState)(initialTarget), [servers, setServers] = (0, import_react9.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react9.useState)(initialServerId), [metrics, setMetrics] = (0, import_react9.useState)(null), [snapshot, setSnapshot] = (0, import_react9.useState)(null), [loading, setLoading] = (0, import_react9.useState)(!0);
+  (0, import_react9.useEffect)(() => {
     let unmounted = !1;
     return callRpc("servers.list", {}).then((res) => {
       !unmounted && res?.servers && (setServers(res.servers), !selectedServerId && res.servers.length > 0 && setSelectedServerId(res.servers[0].id));
@@ -14861,7 +15021,7 @@ function AtTerminalMonitorBody(props) {
     }), () => {
       unmounted = !0;
     };
-  }, []), (0, import_react7.useEffect)(() => {
+  }, []), (0, import_react9.useEffect)(() => {
     let navTarget = tabInfo?.tab?.navigation?.params?.target;
     (navTarget === "hardware" || navTarget === "agent_execution") && setActiveTab(navTarget);
     let navServerId = tabInfo?.tab?.navigation?.params?.serverId;
@@ -14879,7 +15039,7 @@ function AtTerminalMonitorBody(props) {
       setLoading(!1);
     }
   };
-  (0, import_react7.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     refresh();
     let timer = setInterval(() => {
       refresh();
@@ -14890,7 +15050,10 @@ function AtTerminalMonitorBody(props) {
   }, [selectedServerId]);
   let onTabKeyDown = (e) => {
     let at = activeTab === "hardware" ? 0 : 1, next = e.key === "ArrowRight" ? (at + 1) % 2 : e.key === "ArrowLeft" ? (at + 2 - 1) % 2 : e.key === "Home" ? 0 : e.key === "End" ? 1 : null;
-    next !== null && (e.preventDefault(), setActiveTab(next === 0 ? "hardware" : "agent_execution"));
+    if (next === null) return;
+    e.preventDefault(), setActiveTab(next === 0 ? "hardware" : "agent_execution");
+    let el = document.getElementById(next === 0 ? "att-monitor-tab-hardware" : "att-monitor-tab-agent");
+    el !== null && el.focus();
   };
   return h(
     "div",
@@ -14994,7 +15157,7 @@ function AtTerminalMonitorTitle(props) {
 }
 
 // src/platform/dsh/client/views/toolCall.ts
-var import_react8 = require("react");
+var import_react10 = require("react");
 var TOOL_RUN_REMOTE_COMMAND = "at_terminal_run_remote_command";
 function asLoose(value) {
   return typeof value == "object" && value !== null ? value : null;
@@ -15113,7 +15276,7 @@ function exitLabel(t, output) {
 }
 function AtTerminalCommandRow(props) {
   let { t } = props, block = props.block ?? null, state = stateOf(block), text2 = resultText(block), output = parseRemoteCommandOutput(text2), args = argsOf(block), command = commandOf(args, output), server = displayServer(serverOf(args, output)) || t("tool.command.noServer"), live = state === "preparing" || state === "running", expandable = !live && (output !== null || text2 !== "" || command !== ""), useDisclosure = props.useDisclosure ?? (() => ({ expanded: !1, toggle: () => {
-  } })), { expanded, toggle } = useDisclosure(), [copied, setCopied] = (0, import_react8.useState)(!1), open = expandable && expanded, onKeyDown = (event) => {
+  } })), { expanded, toggle } = useDisclosure(), [copied, setCopied] = (0, import_react10.useState)(!1), open = expandable && expanded, onKeyDown = (event) => {
     event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar" || (event.preventDefault?.(), toggle());
   }, leading = open ? chevronUpRegular({ className: "att-tool-chevron", size: 14 }) : expandable ? chevronDownRegular({ className: "att-tool-chevron", size: 14 }) : terminalRegular({ className: "att-tool-icon", size: 14 }), summary = live ? t(state === "preparing" ? "tool.command.preparing" : "tool.command.running") : command === "" ? t("tool.command.noCommand") : `$ ${command}`, label = exitLabel(t, output), duration = formatDuration(output === null ? null : output.durationMs), stdout = output === null ? "" : output.stdout, stderr = output === null ? "" : output.stderr, onCopy = () => {
     let payload = [stdout, stderr].filter((part) => part !== "").join(`
@@ -15185,7 +15348,7 @@ function AtTerminalCommandRow(props) {
 }
 
 // src/platform/dsh/client/views/monitorHud.ts
-var import_react9 = require("react");
+var import_react11 = require("react");
 var STORAGE_KEY = "dsh.at-terminal.monitor.hud.pos";
 function clampPosition(x, y, width, height) {
   let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, boxW = Math.min(width, Math.max(0, winW - 16)), boxH = Math.min(height, Math.max(0, winH - 16)), maxX = Math.max(8, winW - boxW - 8), maxY = Math.max(8, winH - boxH - 8);
@@ -15218,12 +15381,12 @@ function savePosition(pos) {
     }
 }
 function MonitorHudWidget(props) {
-  let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react9.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react9.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react9.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react9.useState)(!1), isDraggingRef = (0, import_react9.useRef)(!1), dragStateRef = (0, import_react9.useRef)(null);
-  (0, import_react9.useEffect)(() => {
+  let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel, auditHistory } = props, [expanded, setExpanded] = (0, import_react11.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react11.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react11.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react11.useState)(!1), isDraggingRef = (0, import_react11.useRef)(!1), dragStateRef = (0, import_react11.useRef)(null);
+  (0, import_react11.useEffect)(() => {
     forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
-  }, [forceExpanded]), (0, import_react9.useEffect)(() => {
+  }, [forceExpanded]), (0, import_react11.useEffect)(() => {
     initialSubtab && setActiveTab(initialSubtab);
-  }, [initialSubtab]), (0, import_react9.useEffect)(() => {
+  }, [initialSubtab]), (0, import_react11.useEffect)(() => {
     let onResize = () => {
       let width = expanded ? 400 : 280, height = expanded ? 520 : 40;
       setPos((prev) => clampPosition(prev.x, prev.y, width, height));
@@ -15513,7 +15676,10 @@ function MonitorHudWidget(props) {
               onClick: () => setActiveTab(key),
               onKeyDown: (e) => {
                 let order = ["overview", "hardware", "agent"], at = order.indexOf(activeTab), next = e.key === "ArrowRight" ? order[(at + 1) % order.length] : e.key === "ArrowLeft" ? order[(at + order.length - 1) % order.length] : e.key === "Home" ? order[0] : e.key === "End" ? order[order.length - 1] : null;
-                next !== null && (e.preventDefault(), setActiveTab(next));
+                if (next === null) return;
+                e.preventDefault(), setActiveTab(next);
+                let el = document.getElementById(`att-hud-tab-${next}`);
+                el !== null && el.focus();
               }
             },
             label
@@ -15672,38 +15838,6 @@ function MonitorHudWidget(props) {
               { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", padding: "4px 0" } },
               t("monitor.agent.idle")
             )
-          ),
-          // Quick Action Navigation Buttons (ONLY tab switching and minimize, NO openSidebar!)
-          h(
-            "div",
-            { style: { display: "flex", gap: "8px", marginTop: "4px" } },
-            h(
-              "button",
-              {
-                className: "att-btn",
-                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
-                onClick: () => setActiveTab("hardware")
-              },
-              t("monitor.tab.hardware")
-            ),
-            h(
-              "button",
-              {
-                className: "att-btn",
-                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
-                onClick: () => setActiveTab("agent")
-              },
-              t("monitor.tab.agent")
-            ),
-            h(
-              "button",
-              {
-                className: "att-btn",
-                style: { flex: 1, padding: "4px 8px", fontSize: "11px" },
-                onClick: () => collapse()
-              },
-              t("monitor.hud.minimize")
-            )
           )
         ),
         activeTab === "hardware" && h(HardwareMonitorView, {
@@ -15718,7 +15852,8 @@ function MonitorHudWidget(props) {
           snapshot,
           loading: !1,
           onRefresh: () => {
-          }
+          },
+          history: auditHistory
         })
       ),
       // Footer status bar
@@ -17959,11 +18094,66 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   color: var(--dsw-alias-label-secondary);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   padding: 4px 6px;
+  white-space: nowrap;
 }
 
 .att-monitor-table td {
   padding: 4px 6px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/*
+ * The audit table.
+ *
+ * table-layout: fixed is the load-bearing part: with the default auto layout the browser sizes
+ * columns from their content, so one long command widened the table past the floating window and
+ * the user had to drag the body sideways to read it. Fixed layout honours the colgroup widths,
+ * which is what lets the command cell clip and ellipsize instead of pushing the window open.
+ */
+.att-audit-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.att-clip-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.att-clip-full {
+  margin-top: 4px;
+  padding: 6px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-base);
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.att-clip-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.att-clip-toggle:hover {
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
 }
 
 /*
@@ -17986,6 +18176,8 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.4;
+  /* One line, always: a narrow column used to break \u7B56\u7565\u653E\u884C into four stacked characters. */
+  white-space: nowrap;
 }
 
 .att-monitor-badge-running {
@@ -18617,8 +18809,8 @@ function MonitorHeaderButton(props) {
   );
 }
 function MonitorHudContainer(props) {
-  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react10.useState)(null), [snapshot, setSnapshot] = (0, import_react10.useState)(null), [visible, setVisible] = (0, import_react10.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react10.useState)(null), [activeLabel, setActiveLabel] = (0, import_react10.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react10.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react10.useState)("overview");
-  return (0, import_react10.useEffect)(() => {
+  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react12.useState)(null), [snapshot, setSnapshot] = (0, import_react12.useState)(null), [visible, setVisible] = (0, import_react12.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react12.useState)(null), [activeLabel, setActiveLabel] = (0, import_react12.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react12.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react12.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react12.useState)([]), connectedRef = (0, import_react12.useRef)(!1), connectionStartedAtRef = (0, import_react12.useRef)(0), seenAuditIdsRef = (0, import_react12.useRef)(/* @__PURE__ */ new Set());
+  return (0, import_react12.useEffect)(() => {
     if (onRegisterController)
       return onRegisterController({
         open: (target) => {
@@ -18633,20 +18825,36 @@ function MonitorHudContainer(props) {
       }), () => {
         onRegisterController(null);
       };
-  }, [onRegisterController]), (0, import_react10.useEffect)(() => {
+  }, [onRegisterController]), (0, import_react12.useEffect)(() => {
     let handleActiveTerminal = (state) => {
-      setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? setVisible(!0) : setVisible(!1);
+      setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? (connectedRef.current || (connectedRef.current = !0, connectionStartedAtRef.current = Date.now(), seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setInitialSubtab("overview")), setVisible(!0)) : (connectedRef.current = !1, connectionStartedAtRef.current = 0, seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setVisible(!1));
     }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
     return handleActiveTerminal(getActiveTerminalState()), () => {
       unsubscribe();
     };
-  }, []), (0, import_react10.useEffect)(() => {
+  }, []), (0, import_react12.useEffect)(() => {
     let unmounted = !1, fetchLatest = () => {
       Promise.all([
         getHardwareMetricsRpc(activeServerId || void 0).catch(() => null),
-        getAgentExecutionStatusRpc(5).catch(() => null)
+        // Ask for everything the bridge retains: the history view must be able to show more
+        // than the four rows the default view renders, and the merge below de-duplicates.
+        getAgentExecutionStatusRpc(50).catch(() => null)
       ]).then(([m, s]) => {
-        unmounted || (m && setMetrics(m), s && setSnapshot(s));
+        if (!unmounted && (m && setMetrics(m), s)) {
+          setSnapshot(s);
+          let startedAt = connectionStartedAtRef.current;
+          if (startedAt > 0) {
+            let seen = seenAuditIdsRef.current, fresh = (s.recentAudits || []).filter(
+              (audit) => !seen.has(audit.id) && audit.timestamp >= startedAt
+            );
+            if (fresh.length > 0) {
+              for (let audit of fresh) seen.add(audit.id);
+              setAuditHistory(
+                (prev) => [...fresh, ...prev].sort((a, b) => b.timestamp - a.timestamp).slice(0, 200)
+              );
+            }
+          }
+        }
       });
     };
     fetchLatest();
@@ -18662,6 +18870,7 @@ function MonitorHudContainer(props) {
     initialSubtab,
     activeServerId,
     activeLabel,
+    auditHistory,
     onCloseHud: () => setVisible(!1)
   }) : null;
 }

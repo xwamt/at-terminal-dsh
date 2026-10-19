@@ -1,3 +1,5 @@
+import { isMacPlatform } from './platform';
+
 export interface SearchAddonLike {
   findNext(term: string): boolean;
   findPrevious(term: string): boolean;
@@ -20,11 +22,17 @@ export interface TerminalSearchController {
 }
 
 export function isTerminalSearchShortcut(
-  event: Pick<KeyboardEvent, 'type' | 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>
+  event: Pick<KeyboardEvent, 'type' | 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
+  isMac: boolean = isMacPlatform()
 ): boolean {
+  // The platform's application modifier, not "either one": on macOS Ctrl+F belongs to the shell
+  // (readline forward-char), and on Windows the Windows key is not an application modifier.
+  const modifier = isMac
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
   return (
     event.type === 'keydown' &&
-    (event.ctrlKey || event.metaKey) &&
+    modifier &&
     !event.altKey &&
     !event.shiftKey &&
     event.key.toLowerCase() === 'f'

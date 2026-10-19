@@ -14,6 +14,7 @@
 import React, { type ReactElement } from 'react';
 
 import { resolveTerminalStatusClass, type TerminalStatusState } from '../../../../../webview/terminal/clipboard';
+import { primaryModifierLabel } from '../../../../../webview/terminal/platform';
 import type { TerminalSessionState } from '../frames';
 import { count, text, type ServerView, type Translate } from '../models';
 import { gaugeRegular } from '../icons';
@@ -247,7 +248,7 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
         className: 'terminal-shell',
         // The shortcut hint that used to be a permanent chip in the toolbar. A tooltip on the
         // surface it applies to is where a keyboard hint belongs: discoverable, zero-layout.
-        title: t('terminal.searchHint')
+        title: t('terminal.searchHint', { mod: primaryModifierLabel() })
       },
       h(
         'header',

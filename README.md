@@ -4,11 +4,13 @@
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
 [![DSH Verified](https://img.shields.io/badge/DSH-0.1.7--rc.2_Verified-brightgreen.svg)](#installation--setup--安装与配置)
-[![Test Coverage](https://img.shields.io/badge/tests-75%2F75%20passed%20(923%20tests)-blue.svg)](#build--verification--构建与验证)
+[![Test Coverage](https://img.shields.io/badge/tests-82%2F82%20passed%20(1091%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
 
 [English](#english) | [中文说明](#中文说明)
+
+> **Release 0.2.0 (2026-10-19)** — floating monitor HUD with per-connection audit history, platform-native copy/paste shortcuts, and stricter direct tools. Full notes: [docs/releases/0.2.0.md](docs/releases/0.2.0.md).
 
 ---
 
@@ -28,10 +30,11 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 
 ### Key Features
 1. **Native Direct Agent Tools (No MCP Proxy Overhead)**:
-   - Registers 12 operations tools directly into DSH's host context (`ctx.tools`).
+   - Registers 15 direct tools into DSH's host context (`ctx.tools`): SSH servers, remote commands, terminal context, 8 SFTP operations, hardware metrics, agent execution status and the monitor HUD. Every tool validates its arguments and answers with an actionable message instead of a raw JavaScript error.
    - Zero-latency tool invocation without external stdio/HTTP MCP proxy processes.
    - Fully responds to `exec.signal` for real-time cancellation when an agent task is aborted.
    - Integrates seamlessly with DSH's `ctx.approval` workflow and provides formatted `output.render` rich outputs.
+   - Hardware metrics report CPU, load, memory, per-mount disk usage, network throughput and top processes; the list is bounded (top 5 rows plus a count) so one Docker host cannot flood the transcript.
 2. **Robust Asset Management & Encrypted Export**:
    - Supports Password, Private Key (PEM/OpenSSH with Passphrase), and SSH Agent forwarding.
    - Credentials isolation in secure local storage.
@@ -51,6 +54,13 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 6. **WebGL Accelerated Terminal Frontend**:
    - High-performance xterm 5.5 rendering with WebGL acceleration.
    - Semantic highlighting, zebra stripes, and automated color contrast adjustments.
+7. **Floating Monitor HUD**:
+   - Connects as a capsule (CPU / memory chips) instead of a window that covers the terminal, then expands into Overview, Hardware and Agent execution tabs.
+   - Per-connection audit history: the Agent tab shows the four most recent rows, while **History** reveals everything this connection recorded and resets on disconnect.
+   - Long commands and container mount paths clip to one line with an expand control, so the panel never scrolls sideways.
+8. **Platform-Native Shortcuts**:
+   - Copy, paste and find follow the operating system: `⌘C` / `⌘V` / `⌘F` on macOS, `Ctrl+C` / `Ctrl+V` / `Ctrl+F` on Windows and Linux.
+   - On macOS `Ctrl+C` stays a shell interrupt instead of becoming "copy"; the DSH shortcut registry binds `primary`, so new-tab and page switches map the same way.
 
 ### Installation & Setup
 
@@ -119,7 +129,7 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 
 #### 1. DSH Agent 原生直连工具链（无需 MCP 跨进程中转）
 传统的 AI IDE 往往依赖独立的 stdio/HTTP MCP Server 进程进行中转，存在进程通信开销大、状态同步复杂、生命周期脱节的问题。
-- **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 12 个运维工具，DSH Agent 可零延迟直接调用。
+- **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 15 个直连工具，覆盖 SSH 服务器、远程命令、终端上下文、8 个 SFTP 操作、硬件指标、Agent 执行状态与监控悬浮窗，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
 - **全生命周期协同**：
   - **动态取消响应**：完全感知 `exec.signal`，当用户在 DSH 界面点击停止生成或取消任务时，远端 SSH 命令与传输流立即被精确中断。
   - **原生审批通道**：无缝对接 DSH 的 `ctx.approval` 交互机制。
@@ -159,6 +169,16 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 - **增强视觉体验**：集成终端语义高亮（Semantic Highlight）、斑马纹交替行底色（Zebra Stripes）、多配色方案对比度自动校正。
 - **多标签会话管理**：原生多会话 Tab 自由切换与断线重连保障。
 
+#### 7. 监控悬浮窗（胶囊 / 总览 / 历史）
+- **连接即胶囊**：连接服务器后悬浮窗以胶囊形态出现（CPU / 内存小条），不再默认展开挡住终端；点击展开为「总览 / 硬件指标 / Agent 执行」三页。
+- **按连接隔离的审计历史**：Agent 执行页默认展示最近 4 条审计，「历史执行」可查看本次连接以来的全部记录，断线或重连后自动重置。
+- **长内容折叠**：超长命令与容器挂载路径单行省略并提供展开按钮，面板不再出现横向滚动。
+
+#### 8. 跟随操作系统的快捷键
+- **复制 / 粘贴 / 查找按平台映射**：macOS 为 `⌘C` / `⌘V` / `⌘F`，Windows 与 Linux 为 `Ctrl+C` / `Ctrl+V` / `Ctrl+F`。
+- **不抢占终端语义**：macOS 上 `Ctrl+C` 仍是 SIGINT；`⌘V` 走浏览器原生 paste 事件，无需额外的剪贴板读权限。
+- **统一的主修饰键**：新建标签与页面切换通过 DSH 快捷键注册表的 `primary` 语义绑定，macOS 自动为 Command、其他平台为 Control。
+
 ---
 
 ### 构建产物与 DSH 插件安装指引
@@ -179,7 +199,7 @@ npm run build
 # 2. 执行 DSH 官方规范契约校验 (9 项自动化合规规则全部检查)
 npm run verify:dsh
 
-# 3. 运行全量自动化测试套件 (75 个测试文件，923 个用例)
+# 3. 运行全量自动化测试套件 (82 个测试文件，1091 个用例)
 npm run test
 
 # 4. 执行 TypeScript 静态类型检查 (零报错)

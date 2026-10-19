@@ -2,7 +2,7 @@
   "name": "@at-series/dsh-at-terminal",
   "displayName": "AT Terminal (DSH)",
   "description": "AT Terminal plugin for DeepSeek Harness (DSH): SSH/SFTP assets and remote SSH terminals.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./dsh/index.js",

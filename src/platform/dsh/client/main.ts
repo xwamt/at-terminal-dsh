@@ -27,7 +27,7 @@
  *   enable/disable cycles cannot stack copies.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   announceToHost,
   ID,
@@ -61,7 +61,7 @@ import { ensureStyles } from './styles';
 import { clearAllTabState, clearTabState } from './tabState';
 import { setFormatLocale } from './localeFormat';
 import { gaugeRegular, guideTerminalArtwork } from './icons';
-import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
+import type { AgentAuditSummary, AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
 import { h } from './views/shared';
 
@@ -518,6 +518,18 @@ function MonitorHudContainer(props: {
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [forceExpanded, setForceExpanded] = useState<boolean | undefined>(undefined);
   const [initialSubtab, setInitialSubtab] = useState<'overview' | 'hardware' | 'agent'>('overview');
+  /**
+   * Audits seen since the current connection started, newest first.
+   *
+   * The RPC answers with the server's most recent slice, so the HUD keeps what it has already
+   * seen and merges each poll into it — that is what lets the agent tab offer "this connection's
+   * history" instead of only the last few rows. Cleared on disconnect, so reconnecting starts a
+   * new list rather than inheriting the previous connection's rows.
+   */
+  const [auditHistory, setAuditHistory] = useState<AgentAuditSummary[]>([]);
+  const connectedRef = useRef(false);
+  const connectionStartedAtRef = useRef(0);
+  const seenAuditIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (onRegisterController) {
@@ -549,8 +561,29 @@ function MonitorHudContainer(props: {
       setActiveServerId(state.activeServerId);
       setActiveLabel(state.activeLabel);
       if (state.hasAnyConnected) {
+        if (!connectedRef.current) {
+          /*
+           * A brand-new connection opens as the capsule, not the expanded window.
+           *
+           * `forceExpanded` outlives a disconnect — the container is mounted for the page's whole
+           * lifetime — so without resetting it here the HUD came back expanded after any earlier
+           * `open()`, which is exactly the "connected and it popped open" report. The tab and the
+           * history reset with it: a new connection starts clean.
+           */
+          connectedRef.current = true;
+          connectionStartedAtRef.current = Date.now();
+          seenAuditIdsRef.current = new Set();
+          setAuditHistory([]);
+          setForceExpanded(false);
+          setInitialSubtab('overview');
+        }
         setVisible(true);
       } else {
+        connectedRef.current = false;
+        connectionStartedAtRef.current = 0;
+        seenAuditIdsRef.current = new Set();
+        setAuditHistory([]);
+        setForceExpanded(false);
         setVisible(false);
       }
     };
@@ -567,11 +600,27 @@ function MonitorHudContainer(props: {
     const fetchLatest = () => {
       Promise.all([
         getHardwareMetricsRpc(activeServerId || undefined).catch(() => null),
-        getAgentExecutionStatusRpc(5).catch(() => null)
+        // Ask for everything the bridge retains: the history view must be able to show more
+        // than the four rows the default view renders, and the merge below de-duplicates.
+        getAgentExecutionStatusRpc(50).catch(() => null)
       ]).then(([m, s]) => {
-        if (!unmounted) {
-          if (m) setMetrics(m);
-          if (s) setSnapshot(s);
+        if (unmounted) return;
+        if (m) setMetrics(m);
+        if (s) {
+          setSnapshot(s);
+          const startedAt = connectionStartedAtRef.current;
+          if (startedAt > 0) {
+            const seen = seenAuditIdsRef.current;
+            const fresh = (s.recentAudits || []).filter(
+              (audit) => !seen.has(audit.id) && audit.timestamp >= startedAt
+            );
+            if (fresh.length > 0) {
+              for (const audit of fresh) seen.add(audit.id);
+              setAuditHistory((prev) =>
+                [...fresh, ...prev].sort((a, b) => b.timestamp - a.timestamp).slice(0, 200)
+              );
+            }
+          }
         }
       });
     };
@@ -593,6 +642,7 @@ function MonitorHudContainer(props: {
     initialSubtab,
     activeServerId,
     activeLabel,
+    auditHistory,
     onCloseHud: () => setVisible(false)
   });
 }

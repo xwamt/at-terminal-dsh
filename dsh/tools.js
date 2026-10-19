@@ -36,7 +36,18 @@ export const AT_TERMINAL_BUNDLE_NAME = '@at-series/dsh-at-terminal'
  * What this build can actually do. Kept honest per milestone: a capability is
  * listed only once its code path exists and has been verified.
  */
-export const CAPABILITIES = Object.freeze(['plugin-skeleton', 'direct-agent-tools', 'monitor-floating-window'])
+export const CAPABILITIES = Object.freeze([
+  'plugin-skeleton',
+  'direct-agent-tools',
+  'monitor-floating-window',
+  // Declared because the code paths exist and are covered by the tool tests: the probe is the
+  // one place a caller looks to decide what it may attempt, so omitting a working feature made
+  // SFTP and remote commands look unavailable even though every tool below was registered.
+  'remote-command-execution',
+  'sftp-file-operations',
+  'hardware-metrics',
+  'agent-execution-status'
+])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
 const SETTINGS_JSON_TYPES = Object.freeze({
@@ -72,6 +83,78 @@ const SFTP_TARGET_PROPERTIES = Object.freeze({
   terminalId: { type: 'string', description: 'Connected AT Terminal terminal id.' },
   serverId: { type: 'string', description: 'Configured AT Terminal SSH server id.' }
 })
+
+/**
+ * Validate the argument object before it reaches a service.
+ *
+ * The Harness does not enforce a tool's `parameters` schema itself, so a call with a missing
+ * `path` used to travel all the way into the domain layer and surface as
+ * "Cannot read properties of undefined (reading 'trim')" — an error that names neither the
+ * tool nor the argument. These guards turn that into a message the model can act on.
+ */
+function argsOf(toolName, args) {
+  if (args === undefined || args === null) return {}
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error(`${toolName}: arguments must be an object.`)
+  }
+  return args
+}
+
+function requireNonEmptyString(toolName, input, key) {
+  const value = input[key]
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${toolName}: "${key}" is required and must be a non-empty string.`)
+  }
+  return value
+}
+
+function requireEnum(toolName, input, key, allowed) {
+  const value = input[key]
+  if (value === undefined || value === null) {
+    throw new Error(`${toolName}: "${key}" is required and must be one of: ${allowed.join(', ')}.`)
+  }
+  if (typeof value !== 'string' || !allowed.includes(value)) {
+    throw new Error(`${toolName}: "${key}" must be one of: ${allowed.join(', ')}.`)
+  }
+  return value
+}
+
+/** Format a Unix epoch in *seconds* (SFTP `mtime`) as an ISO timestamp. */
+function formatEpochSeconds(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return 'unknown'
+  return new Date(seconds * 1000).toISOString()
+}
+
+/** Compact byte formatting for rendered metrics. */
+function formatBytes(bytes) {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '0B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${unit === 0 || value >= 100 ? value.toFixed(0) : value.toFixed(1)}${units[unit]}`
+}
+
+/**
+ * Keep only mounts a human cares about.
+ *
+ * `df -P` also reports every container overlay and tmpfs, so a Docker host answers with
+ * dozens of identical "43% of 889GB" lines. Those are not disks of their own — they share
+ * the host filesystem — and they buried the two real ones.
+ */
+function isRelevantMount(m) {
+  if (!m || typeof m.mount !== 'string') return false
+  if (['overlay', 'tmpfs', 'devtmpfs', 'squashfs', 'shm', 'ramfs'].includes(m.fs)) return false
+  if (/^\/(var\/lib\/docker|run\/containerd|var\/lib\/kubelet|snap)\//.test(m.mount)) return false
+  if (m.mount.startsWith('/sys/') || m.mount.startsWith('/proc/')) return false
+  return true
+}
+
+/** How many rows each hardware-metrics section may render; the rest is summarized. */
+const HARDWARE_RENDER_LIMIT = 5
 
 const TERMINAL_SUMMARY_SCHEMA = Object.freeze({
   type: 'object',
@@ -338,6 +421,8 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Remote command was aborted.')
+      const input = argsOf('at_terminal_run_remote_command', args)
+      requireNonEmptyString('at_terminal_run_remote_command', input, 'command')
       const callCtx = {
         agent: exec?.agent ?? 'default',
         callId: exec?.callId ?? exec?.id,
@@ -352,7 +437,7 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
       return run(callCtx, async () => {
         const service = resolveAgentService()
         const result = await service.runRemoteCommand({
-          ...args,
+          ...input,
           signal: exec?.signal
         })
         return {
@@ -429,11 +514,12 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_list_directory', args)
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_c, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpListDirectory(args)
+        const res = await service.sftpListDirectory(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -484,22 +570,23 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
         }
       },
       render(_args, val) {
-        const mtime = Number.isFinite(val.modifiedAt) ? new Date(val.modifiedAt).toISOString() : 'unknown'
         return [
           {
             type: 'text',
-            text: `Stat ${val.path}: type=${val.type}, size=${val.size}B, modifiedAt=${mtime}`
+            text: `Stat ${val.path}: type=${val.type}, size=${val.size}B, modifiedAt=${formatEpochSeconds(val.modifiedAt)}`
           }
         ]
       }
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_stat_path', args)
+      requireNonEmptyString('at_terminal_sftp_stat_path', input, 'path')
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_c, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpStatPath(args)
+        const res = await service.sftpStatPath(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -556,11 +643,13 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext } = {
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_read_file', args)
+      requireNonEmptyString('at_terminal_sftp_read_file', input, 'path')
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_c, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpReadFile(args)
+        const res = await service.sftpReadFile(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -615,6 +704,11 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_write_file', args)
+      requireNonEmptyString('at_terminal_sftp_write_file', input, 'path')
+      if (typeof input.content !== 'string') {
+        throw new Error('at_terminal_sftp_write_file: "content" is required and must be a string.')
+      }
       const callCtx = {
         agent: exec?.agent ?? 'default',
         callId: exec?.callId ?? exec?.id,
@@ -628,7 +722,7 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpWriteFile(args)
+        const res = await service.sftpWriteFile(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -672,6 +766,11 @@ export function createSftpCreateFileTool({ resolveAgentService, runInContext, se
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_create_file', args)
+      requireNonEmptyString('at_terminal_sftp_create_file', input, 'path')
+      if (input.content !== undefined && typeof input.content !== 'string') {
+        throw new Error('at_terminal_sftp_create_file: "content" must be a string when provided.')
+      }
       const callCtx = {
         agent: exec?.agent ?? 'default',
         callId: exec?.callId ?? exec?.id,
@@ -685,7 +784,7 @@ export function createSftpCreateFileTool({ resolveAgentService, runInContext, se
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpCreateFile(args)
+        const res = await service.sftpCreateFile(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -726,6 +825,8 @@ export function createSftpCreateDirectoryTool({ resolveAgentService, runInContex
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_create_directory', args)
+      requireNonEmptyString('at_terminal_sftp_create_directory', input, 'path')
       const callCtx = {
         agent: exec?.agent ?? 'default',
         callId: exec?.callId ?? exec?.id,
@@ -739,7 +840,7 @@ export function createSftpCreateDirectoryTool({ resolveAgentService, runInContex
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpCreateDirectory(args)
+        const res = await service.sftpCreateDirectory(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -782,6 +883,9 @@ export function createSftpRenameTool({ resolveAgentService, runInContext, setCur
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_rename', args)
+      requireNonEmptyString('at_terminal_sftp_rename', input, 'path')
+      requireNonEmptyString('at_terminal_sftp_rename', input, 'newPath')
       const callCtx = {
         agent: exec?.agent ?? 'default',
         callId: exec?.callId ?? exec?.id,
@@ -795,7 +899,7 @@ export function createSftpRenameTool({ resolveAgentService, runInContext, setCur
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpRename(args)
+        const res = await service.sftpRename(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -838,6 +942,8 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_delete', args)
+      requireNonEmptyString('at_terminal_sftp_delete', input, 'path')
       const callCtx = {
         agent: exec?.agent ?? 'default',
         callId: exec?.callId ?? exec?.id,
@@ -851,7 +957,7 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpDelete(args)
+        const res = await service.sftpDelete(input)
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -910,14 +1016,19 @@ export function createOpenMonitorTool({ resolveAgentService, broadcastMonitor, r
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_open_monitor', args)
+      requireEnum('at_terminal_open_monitor', input, 'target', ['hardware', 'agent_execution'])
+      if (input.mode !== undefined) {
+        requireEnum('at_terminal_open_monitor', input, 'mode', ['float', 'hud'])
+      }
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_ctx, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
         const res = await service.openMonitor({
-          target: args.target,
-          serverId: args.serverId,
-          mode: args.mode
+          target: input.target,
+          serverId: input.serverId,
+          mode: input.mode
         })
         if (typeof broadcastMonitor === 'function') {
           broadcastMonitor('monitor-control', {
@@ -967,8 +1078,24 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
           memoryTotalBytes: { type: 'integer' },
           memoryUsedBytes: { type: 'integer' },
           memoryFreeBytes: { type: 'integer' },
+          diskMounts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                fs: { type: 'string' },
+                mount: { type: 'string' },
+                totalBytes: { type: 'integer' },
+                usedBytes: { type: 'integer' },
+                usePercent: { type: 'number' }
+              }
+            }
+          },
           netRxBytesPerSec: { type: 'integer' },
           netTxBytesPerSec: { type: 'integer' },
+          mountTotal: { type: 'integer' },
+          processTotal: { type: 'integer' },
           topProcesses: {
             type: 'array',
             items: {
@@ -986,21 +1113,34 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
         }
       },
       render(_args, val) {
-        return [
-          {
-            type: 'text',
-            text: `Hardware Metrics (${val.serverId}): CPU ${val.cpuUsagePercent}%, Mem ${(val.memoryUsedBytes / 1024 / 1024).toFixed(0)}MB / ${(val.memoryTotalBytes / 1024 / 1024).toFixed(0)}MB`
-          }
+        const load = Array.isArray(val.loadAvg) ? val.loadAvg.map((n) => Number(n).toFixed(2)).join(' / ') : 'n/a'
+        const mounts = Array.isArray(val.diskMounts) ? val.diskMounts : []
+        const processes = Array.isArray(val.topProcesses) ? val.topProcesses : []
+        const moreMounts = Number(val.mountTotal) - mounts.length
+        const moreProcesses = Number(val.processTotal) - processes.length
+        const lines = [
+          `Hardware Metrics (${val.serverId}): CPU ${val.cpuUsagePercent}%, Mem ${formatBytes(val.memoryUsedBytes)} / ${formatBytes(val.memoryTotalBytes)} (${formatBytes(val.memoryFreeBytes)} free)`,
+          `Load ${load} · Net rx ${formatBytes(val.netRxBytesPerSec)}/s, tx ${formatBytes(val.netTxBytesPerSec)}/s`,
+          mounts.length > 0
+            ? `Disk: ${mounts.map((m) => `${m.mount} ${m.usePercent}% of ${formatBytes(m.totalBytes)}`).join(', ')}${moreMounts > 0 ? ` (+${moreMounts} more)` : ''}`
+            : 'Disk: n/a',
+          processes.length > 0
+            ? `Top: ${processes.map((p) => `${p.pid} ${p.command} (cpu ${p.cpu}%, mem ${p.mem}%)`).join('; ')}${moreProcesses > 0 ? ` (+${moreProcesses} more)` : ''}`
+            : 'Top: n/a'
         ]
+        return [{ type: 'text', text: lines.join('\n') }]
       }
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_get_hardware_metrics', args)
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_ctx, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.getHardwareMetrics(args.serverId)
+        const res = await service.getHardwareMetrics(input.serverId)
+        const mounts = (res.disk?.mounts || []).filter(isRelevantMount)
+        const processes = res.processes || []
         return {
           serverId: res.serverId,
           timestamp: res.timestamp,
@@ -1009,9 +1149,18 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
           memoryTotalBytes: res.memory.totalBytes,
           memoryUsedBytes: res.memory.usedBytes,
           memoryFreeBytes: res.memory.freeBytes,
+          mountTotal: mounts.length,
+          diskMounts: mounts.slice(0, HARDWARE_RENDER_LIMIT).map((m) => ({
+            fs: m.fs,
+            mount: m.mount,
+            totalBytes: typeof m.totalBytes === 'number' ? m.totalBytes : 0,
+            usedBytes: typeof m.usedBytes === 'number' ? m.usedBytes : 0,
+            usePercent: typeof m.usePercent === 'number' ? m.usePercent : 0
+          })),
           netRxBytesPerSec: res.network.rxBytesPerSec,
           netTxBytesPerSec: res.network.txBytesPerSec,
-          topProcesses: (res.processes || []).map((p) => ({
+          processTotal: processes.length,
+          topProcesses: processes.slice(0, HARDWARE_RENDER_LIMIT).map((p) => ({
             pid: p.pid,
             user: p.user,
             cpu: p.cpuPercent,
@@ -1075,11 +1224,12 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
     },
     async execute(args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_get_agent_execution_status', args)
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_ctx, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.getAgentExecutionStatus(args.limit ?? 5)
+        const res = await service.getAgentExecutionStatus(input.limit ?? 5)
         return {
           timestamp: res.timestamp,
           hasActiveAction: Boolean(res.currentAction),

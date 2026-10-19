@@ -172,6 +172,42 @@ describe('both context menus share one behaviour (UI2-09)', () => {
   });
 });
 
+describe('the row is one stop, not three (D16, keyboard walk)', () => {
+  const HUD = read('src/platform/dsh/client/views/monitorHud.ts');
+  const PANE = read('src/platform/dsh/client/views/monitorPane.ts');
+
+  it('keeps the two hover buttons out of the Tab order', () => {
+    // Measured on the real list before the fix: Tab went 搜索 → 新增 → 导入 → 导出 → 刷新 →
+    // 监控 → 组头 → 行 → 连接 → 更多操作 → 连接 → 更多操作 … i.e. two stops per server, so a
+    // forty-server list cost eighty presses to get past. `role="option"` plus roving tabindex is
+    // a one-stop model; a focusable button inside the option breaks it.
+    expect(ASSETS.split('tabIndex: -1').length - 1).toBeGreaterThanOrEqual(2);
+    // The row itself must keep its roving stop, or the list becomes unreachable instead.
+    expect(ASSETS).toContain('tabIndex: roving ? 0 : -1');
+  });
+
+  it('gives the row the keyboard route to the same menu', () => {
+    // Shift+F10 is the chord every other platform's list uses, and macOS keyboards have no
+    // ContextMenu key at all — so without this the only keyboard path was Tab-ing onto `⋯`.
+    expect(ASSETS).toContain("key === 'F10' && event?.shiftKey === true");
+    expect(ASSETS).toContain("key === 'ContextMenu'");
+    // The same anchor helper the `⋯` click uses, so the menu opens under the row rather than at
+    // the origin.
+    expect(ASSETS).toContain('...menuAnchor(event)');
+  });
+
+  it('moves focus with the selection in both tab strips', () => {
+    // Walkthrough evidence: ArrowRight on the HUD strip switched the panel (aria-selected moved)
+    // while document.activeElement stayed on the old tab — which had just been given tabindex -1.
+    // Selection and the focus ring then disagree, and the next Tab leaves the strip from a tab
+    // that does not look selected.
+    expect(HUD).toContain('document.getElementById(`att-hud-tab-${next}`)');
+    expect(HUD).toContain('el.focus()');
+    expect(PANE).toContain("document.getElementById(next === 0 ? 'att-monitor-tab-hardware' : 'att-monitor-tab-agent')");
+    expect(PANE).toContain('el.focus()');
+  });
+});
+
 describe('selection is distinguishable from hover (D9 follow-up)', () => {
   const SHEET = read('src/platform/dsh/client/styles.ts');
 

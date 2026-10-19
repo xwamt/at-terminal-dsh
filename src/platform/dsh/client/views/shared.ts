@@ -24,6 +24,17 @@ export type AsyncState<T> =
 
 export const pendingState: AsyncState<never> = { kind: 'pending' };
 
+/**
+ * Whether a single-line label needs a disclosure control.
+ *
+ * The monitor views render long values (a command, a container mount path) on one clipped line;
+ * this is the shared rule for when to offer the chevron that reveals the full text. A newline can
+ * never be shown on one line, however short the value is.
+ */
+export function needsTextDisclosure(text: string, limit = 24): boolean {
+  return text.length > limit || text.includes('\n');
+}
+
 export function failedState(error: { code?: unknown; message?: unknown }): AsyncState<never> {
   return {
     kind: 'failed',

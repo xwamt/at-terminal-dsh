@@ -231,13 +231,28 @@ function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, rov
       onDoubleClick: () => props.onOpenInNewTab(server),
       onKeyDown: (event: {
         key?: string;
-        currentTarget?: unknown;
+        currentTarget?: { getBoundingClientRect?: () => { left: number; bottom: number } };
         preventDefault?: () => void;
+        shiftKey?: boolean;
       }) => {
         const key = String(event?.key ?? '');
         if (key === 'Enter') {
           event.preventDefault?.();
           props.onOpenInNewTab(server);
+          return;
+        }
+        /*
+         * The keyboard route to the row menu.
+         *
+         * `ContextMenu` is the dedicated key; `Shift+F10` is the same chord every other list on
+         * every other platform uses, and macOS keyboards have no menu key at all — so without this
+         * the only keyboard path to the menu was Tab-tabbing onto the `⋯` button, which is exactly
+         * the per-row Tab stop the roving model exists to avoid.
+         */
+        if (key === 'ContextMenu' || (key === 'F10' && event?.shiftKey === true)) {
+          event.preventDefault?.();
+          props.onSelect(server);
+          props.onRowMenu({ preventDefault() {}, ...menuAnchor(event) }, server);
           return;
         }
         if (key === ' ' || key === 'Spacebar') {
@@ -288,6 +303,17 @@ function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, rov
           className: 'att-row-action',
           title: t('servers.connect'),
           'aria-label': `${t('servers.connect')} ${text(server.label)}`,
+          /*
+           * Not a Tab stop, deliberately.
+           *
+           * The row is a `role="option"` in a listbox whose model is "Tab enters the list once,
+           * arrows move inside". A focusable button per row breaks that twice over: two extra
+           * stops per server (eighty presses on a forty-server list) and a focus ring that leaves
+           * the row while the roving tabindex still claims the row is the current one. Keyboard
+           * users get the same two actions from the row itself — Enter connects, Shift+F10 /
+           * ContextMenu opens this menu — and a pointer still reveals these on hover.
+           */
+          tabIndex: -1,
           onClick: (event: { stopPropagation(): void }) => {
             // Without this the click also selects the row, which would move the selection out from
             // under the tab that is about to open.
@@ -307,6 +333,9 @@ function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, rov
           title: t('servers.more'),
           'aria-label': `${t('servers.more')} ${text(server.label)}`,
           'aria-haspopup': 'menu',
+          // Same reason as the connect button above: reachable by pointer and by Shift+F10, not
+          // by Tab.
+          tabIndex: -1,
           onClick: (event: {
             stopPropagation(): void;
             clientX?: number;

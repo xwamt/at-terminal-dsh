@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { isMacPlatform } from '../../webview/terminal/platform';
 import {
   createTerminalKeyboardHandler,
   installTerminalClipboardPasteHandler,
@@ -7,7 +8,16 @@ import {
   type TerminalClipboard
 } from '../../webview/terminal/clipboard';
 
-function keyEvent(key: string): KeyboardEvent {
+function keyEvent(
+  key: string,
+  modifiers: Partial<{
+    type: string;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    altKey: boolean;
+    shiftKey: boolean;
+  }> = {}
+): KeyboardEvent {
   return {
     type: 'keydown',
     key,
@@ -15,6 +25,7 @@ function keyEvent(key: string): KeyboardEvent {
     altKey: false,
     metaKey: false,
     shiftKey: false,
+    ...modifiers,
     preventDefault: vi.fn(),
     stopImmediatePropagation: vi.fn()
   } as unknown as KeyboardEvent;
@@ -67,7 +78,7 @@ describe('terminal clipboard shortcuts', () => {
         focus: vi.fn(),
         paste: vi.fn()
       },
-      { clipboard, sendInput }
+      { clipboard, sendInput, isMac: false }
     );
 
     expect(handler(keyEvent('c'))).toBe(false);
@@ -89,7 +100,8 @@ describe('terminal clipboard shortcuts', () => {
       },
       {
         clipboard: { readText: vi.fn(), writeText: vi.fn() },
-        sendInput
+        sendInput,
+        isMac: false
       }
     );
 
@@ -115,7 +127,8 @@ describe('terminal clipboard shortcuts', () => {
           readText,
           writeText: vi.fn()
         },
-        sendInput
+        sendInput,
+        isMac: false
       }
     );
 
@@ -149,7 +162,8 @@ describe('terminal clipboard shortcuts', () => {
           }),
           writeText: vi.fn()
         },
-        sendInput
+        sendInput,
+        isMac: false
       }
     );
 
@@ -226,5 +240,108 @@ describe('terminal status classes', () => {
     expect(resolveTerminalStatusClass('Disconnected after 30 minute(s) of inactivity.')).toBe('connecting');
     expect(resolveTerminalStatusClass('已断开连接')).toBe('connecting');
     expect(resolveTerminalStatusClass(undefined)).toBe('connecting');
+  });
+});
+
+describe('platform-aware copy/paste', () => {
+  function macTerminal(hasSelection: boolean) {
+    return {
+      hasSelection: () => hasSelection,
+      getSelection: () => 'selected text',
+      clearSelection: vi.fn(),
+      focus: vi.fn(),
+      paste: vi.fn()
+    };
+  }
+
+  it('copies on Cmd+C and leaves Ctrl+C as the interrupt on macOS', async () => {
+    const clipboard = { readText: vi.fn(), writeText: vi.fn(async () => undefined) };
+    const sendInput = vi.fn();
+    const handler = createTerminalKeyboardHandler(macTerminal(true), {
+      clipboard,
+      sendInput,
+      isMac: true
+    });
+
+    const copy = keyEvent('c', { ctrlKey: false, metaKey: true });
+    expect(handler(copy)).toBe(false);
+    await Promise.resolve();
+    expect(copy.preventDefault).toHaveBeenCalledOnce();
+    expect(clipboard.writeText).toHaveBeenCalledWith('selected text');
+
+    // Control belongs to the shell on macOS: xterm's own mapping turns it into ETX.
+    const interrupt = keyEvent('c');
+    expect(handler(interrupt)).toBe(true);
+    expect(sendInput).not.toHaveBeenCalled();
+    expect(clipboard.writeText).toHaveBeenCalledTimes(1);
+  });
+
+  it('consumes Cmd+C with nothing selected without interrupting the shell', () => {
+    const clipboard = { readText: vi.fn(), writeText: vi.fn() };
+    const sendInput = vi.fn();
+    const handler = createTerminalKeyboardHandler(macTerminal(false), {
+      clipboard,
+      sendInput,
+      isMac: true
+    });
+
+    const event = keyEvent('c', { ctrlKey: false, metaKey: true });
+    expect(handler(event)).toBe(false);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(sendInput).not.toHaveBeenCalled();
+  });
+
+  it('leaves Cmd+V to the native paste event on macOS', () => {
+    const clipboard = { readText: vi.fn(), writeText: vi.fn() };
+    const terminal = macTerminal(false);
+    const handler = createTerminalKeyboardHandler(terminal, {
+      clipboard,
+      sendInput: vi.fn(),
+      isMac: true
+    });
+
+    const event = keyEvent('v', { ctrlKey: false, metaKey: true });
+    // Returning true lets the browser dispatch `paste` on the xterm textarea, which
+    // `installTerminalClipboardPasteHandler` consumes — no clipboard-read permission needed.
+    expect(handler(event)).toBe(true);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(clipboard.readText).not.toHaveBeenCalled();
+    expect(terminal.paste).not.toHaveBeenCalled();
+  });
+
+  it('ignores the platform modifier it does not own', () => {
+    const clipboard = { readText: vi.fn(), writeText: vi.fn() };
+    const sendInput = vi.fn();
+    const control = createTerminalKeyboardHandler(macTerminal(true), {
+      clipboard,
+      sendInput,
+      isMac: false
+    });
+    // Cmd+C is not the copy gesture on Windows/Linux.
+    expect(control(keyEvent('c', { ctrlKey: false, metaKey: true }))).toBe(true);
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+
+    const mac = createTerminalKeyboardHandler(macTerminal(true), {
+      clipboard,
+      sendInput,
+      isMac: true
+    });
+    // and Ctrl+V is not the paste gesture on macOS.
+    expect(mac(keyEvent('v'))).toBe(true);
+    expect(clipboard.readText).not.toHaveBeenCalled();
+  });
+});
+
+describe('platform detection', () => {
+  it('recognises macOS from the platform field, user agent and userAgentData', () => {
+    expect(isMacPlatform({ platform: 'MacIntel' })).toBe(true);
+    expect(isMacPlatform({ platform: 'Win32' })).toBe(false);
+    expect(isMacPlatform({ platform: 'Linux x86_64' })).toBe(false);
+    expect(isMacPlatform({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' })).toBe(true);
+    expect(isMacPlatform({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })).toBe(false);
+    expect(isMacPlatform({ userAgentData: { platform: 'macOS' } })).toBe(true);
+    expect(isMacPlatform({ userAgentData: { platform: 'Windows' } })).toBe(false);
+    expect(isMacPlatform({})).toBe(false);
   });
 });

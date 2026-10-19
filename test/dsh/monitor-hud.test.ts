@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { clampPosition } from '../../src/platform/dsh/client/views/monitorHud';
+import { needsCommandDisclosure, selectAuditRows } from '../../src/platform/dsh/client/views/monitorAgent';
 import { en, zh } from '../../src/platform/dsh/client/i18n';
 
 /**
@@ -29,6 +30,7 @@ const HUD = read('src/platform/dsh/client/views/monitorHud.ts');
 const PANE = read('src/platform/dsh/client/views/monitorPane.ts');
 const AGENT = read('src/platform/dsh/client/views/monitorAgent.ts');
 const HARDWARE = read('src/platform/dsh/client/views/monitorHardware.ts');
+const MAIN = read('src/platform/dsh/client/main.ts');
 const SHEET = read('src/platform/dsh/client/styles.ts');
 
 /** Body of the **last** rule for a selector — `.att-root` is declared more than once. */
@@ -206,5 +208,104 @@ describe('HUD styles (UI2-08)', () => {
     // cut that looks like a different server, not a truncation.
     expect(ruleFor('.att-tab-title')).toContain('max-width: 100%');
     expect(ruleFor('.att-tab-title-text')).toContain('text-overflow: ellipsis');
+  });
+});
+
+/* ------------------------- 5. the floating window's rules ------------------------- */
+
+describe('floating HUD behaviour', () => {
+  it('opens as the capsule when a connection appears', () => {
+    // `forceExpanded` outlives a disconnect, so the container has to reset it on the transition
+    // into "connected"; otherwise the window reopens expanded after any earlier open().
+    expect(MAIN).toMatch(/if \(!connectedRef\.current\) \{[\s\S]*?setForceExpanded\(false\)/);
+    // And the widget's own initial state is collapsed unless someone explicitly forces it open.
+    expect(HUD).toContain('useState(Boolean(forceExpanded))');
+  });
+
+  it('does not repeat the tab strip as a second row of buttons under the overview', () => {
+    expect(HUD).not.toContain('Quick Action Navigation Buttons');
+    const overview = HUD.slice(HUD.indexOf("activeTab === 'overview'"), HUD.indexOf("activeTab === 'hardware' &&"));
+    expect(overview.length).toBeGreaterThan(0);
+    expect(overview).not.toContain('att-btn');
+    expect(overview).not.toContain("t('monitor.hud.minimize')");
+  });
+
+  it('defaults to four audit rows and expands to the whole connection history', () => {
+    const audits = Array.from({ length: 7 }, (_, i) => ({
+      id: `audit-${i}`,
+      timestamp: 1000 + i,
+      command: `command-${i}`,
+      decision: 'allowed' as const
+    }));
+
+    const recent = selectAuditRows(audits, audits, false);
+    expect(recent).toHaveLength(4);
+    expect(recent[0].id).toBe('audit-0');
+
+    expect(selectAuditRows(audits, audits, true)).toHaveLength(7);
+    // The sidebar pane passes no history and must keep rendering the snapshot as-is.
+    expect(selectAuditRows(audits, undefined, false)).toHaveLength(7);
+  });
+
+  it('accumulates one connection of audits and resets on disconnect', () => {
+    // The poll asks for more than the four rendered rows, or history could never grow past them.
+    expect(MAIN).toContain('getAgentExecutionStatusRpc(50)');
+    expect(MAIN).toMatch(/!seen\.has\(audit\.id\) && audit\.timestamp >= startedAt/);
+    expect(MAIN).toMatch(/connectionStartedAtRef\.current = 0/);
+    expect(HUD).toContain('history: auditHistory');
+    expect(AGENT).toContain("t('monitor.agent.history')");
+    expect(AGENT).toContain("t('monitor.agent.historyBack')");
+  });
+
+  it('clips a long command to one line instead of widening the window', () => {
+    // `table-layout: fixed` is what makes the clipped cell possible: under the default auto
+    // layout the browser sizes the column from its longest command and the table overflows.
+    expect(ruleFor('.att-audit-table')).toContain('table-layout: fixed');
+    expect(ruleFor('.att-clip-line')).toContain('text-overflow: ellipsis');
+    expect(ruleFor('.att-clip-line')).toContain('overflow: hidden');
+    expect(ruleFor('.att-clip-line')).toContain('white-space: nowrap');
+
+    expect(AGENT).toContain('className: \'att-monitor-table att-audit-table\'');
+    expect(AGENT).toContain("className: 'att-clip-line'");
+    expect(AGENT).toContain("'colgroup'");
+    // No leftover hard-coded width that the old cell used to rely on.
+    expect(AGENT).not.toContain("maxWidth: '300px'");
+  });
+
+  it('offers a disclosure only for commands that cannot fit on one line', () => {
+    expect(needsCommandDisclosure('uptime')).toBe(false);
+    expect(needsCommandDisclosure('a'.repeat(24))).toBe(false);
+    expect(needsCommandDisclosure('a'.repeat(25))).toBe(true);
+    expect(needsCommandDisclosure("echo '=== 10s delta ==='; a=$(awk '/MemAvailable/{print $2}'")).toBe(true);
+    // A newline can never be shown on a single line, however short the command is.
+    expect(needsCommandDisclosure('line1\nline2')).toBe(true);
+
+    expect(AGENT).toContain('needsCommandDisclosure(audit.command)');
+    expect(AGENT).toContain("className: 'att-clip-full'");
+    expect(AGENT).toContain("t('monitor.agent.expandCommand')");
+    expect(AGENT).toContain("t('monitor.agent.collapseCommand')");
+    expect(AGENT).toContain("'aria-expanded': expanded");
+  });
+
+  it('keeps the decision badge and risk column on one line', () => {
+    // A narrow fixed column used to break 策略放行 into four stacked characters.
+    expect(ruleFor('.att-monitor-badge')).toContain('white-space: nowrap');
+    expect(AGENT).toContain("style: { whiteSpace: 'nowrap' }");
+  });
+
+  it('clips long disk mount paths instead of pushing the usage figure off the card', () => {
+    // A Docker host answers with /var/lib/docker/overlay2/<64 hex>/merged; the row used to grow
+    // past the card because neither flex child was allowed to shrink.
+    expect(ruleFor('.att-clip-line')).toContain('text-overflow: ellipsis');
+    expect(HARDWARE).toContain("className: 'att-clip-line'");
+    expect(HARDWARE).toContain("className: 'att-clip-toggle'");
+    expect(HARDWARE).toContain("className: 'att-clip-full'");
+    expect(HARDWARE).toContain('needsTextDisclosure(label)');
+    expect(HARDWARE).toContain("t('monitor.disk.expand')");
+    expect(HARDWARE).toContain("t('monitor.disk.collapse')");
+    expect(HARDWARE).toContain('minWidth: 0');
+    // The usage figure keeps its width; the label is what shrinks.
+    expect(HARDWARE).toContain("flex: '0 0 auto'");
+    expect(HARDWARE).not.toContain("justifyContent: 'space-between'");
   });
 });

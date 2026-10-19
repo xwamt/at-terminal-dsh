@@ -1,3 +1,5 @@
+import { isMacPlatform } from './platform';
+
 export interface TerminalClipboard {
   readText(): Promise<string>;
   writeText(value: string): Promise<void>;
@@ -19,6 +21,13 @@ interface PasteTerminal {
 interface KeyboardHandlerOptions {
   clipboard: TerminalClipboard;
   sendInput(data: string): void;
+  /**
+   * Force the Command-vs-Control family instead of detecting it.
+   *
+   * Only the tests set this: the handler has to behave the same in the VS Code webview and the
+   * DSH browser page, and both read the platform off `navigator`.
+   */
+  isMac?: boolean;
 }
 
 interface FocusRecoveryOptions {
@@ -34,11 +43,48 @@ export function createTerminalKeyboardHandler(
   options: KeyboardHandlerOptions
 ): (event: KeyboardEvent) => boolean {
   return (event: KeyboardEvent): boolean => {
-    if (event.type !== 'keydown' || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+    if (event.type !== 'keydown') {
       return true;
     }
 
+    const isMac = options.isMac ?? isMacPlatform();
     const key = event.key.toLowerCase();
+
+    if (isMac) {
+      /*
+       * Command is the platform's copy/paste modifier; Control belongs to the shell.
+       *
+       * The old handler required Control on every platform, which on macOS turned Ctrl+C into
+       * "copy" and left Cmd+C doing nothing — the Windows habits the panel was ported with. A
+       * mac user now gets Ctrl+C = SIGINT (xterm's own mapping) and Cmd+C = copy.
+       */
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+        return true;
+      }
+      if (key === 'c') {
+        // xterm's selection is not a native text selection, so the browser's own copy cannot see
+        // it; consume the gesture even when nothing is selected so it cannot fall through.
+        event.preventDefault();
+        if (terminal.hasSelection()) {
+          void options.clipboard
+            .writeText(terminal.getSelection())
+            .then(() => terminal.clearSelection())
+            .finally(() => terminal.focus());
+        }
+        return false;
+      }
+      /*
+       * Cmd+V is deliberately left to the browser: it fires a real `paste` event on the xterm
+       * textarea, which `installTerminalClipboardPasteHandler` consumes with the clipboard
+       * payload. Reading the clipboard from keydown would need an extra permission for no gain.
+       */
+      return true;
+    }
+
+    if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+      return true;
+    }
+
     if (key === 'c') {
       if (terminal.hasSelection()) {
         void options.clipboard

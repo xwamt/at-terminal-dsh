@@ -113,6 +113,9 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
     if (next === null) return;
     e.preventDefault();
     setActiveTab(next === 0 ? 'hardware' : 'agent_execution');
+    // Focus follows selection, or the roving tabindex and the focus ring point at different tabs.
+    const el = document.getElementById(next === 0 ? 'att-monitor-tab-hardware' : 'att-monitor-tab-agent');
+    if (el !== null) el.focus();
   };
 
   return h(

@@ -1433,11 +1433,66 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   color: var(--dsw-alias-label-secondary);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   padding: 4px 6px;
+  white-space: nowrap;
 }
 
 .att-monitor-table td {
   padding: 4px 6px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/*
+ * The audit table.
+ *
+ * table-layout: fixed is the load-bearing part: with the default auto layout the browser sizes
+ * columns from their content, so one long command widened the table past the floating window and
+ * the user had to drag the body sideways to read it. Fixed layout honours the colgroup widths,
+ * which is what lets the command cell clip and ellipsize instead of pushing the window open.
+ */
+.att-audit-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.att-clip-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.att-clip-full {
+  margin-top: 4px;
+  padding: 6px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-base);
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.att-clip-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.att-clip-toggle:hover {
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
 }
 
 /*
@@ -1460,6 +1515,8 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.4;
+  /* One line, always: a narrow column used to break 策略放行 into four stacked characters. */
+  white-space: nowrap;
 }
 
 .att-monitor-badge-running {

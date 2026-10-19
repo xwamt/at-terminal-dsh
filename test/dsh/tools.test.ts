@@ -321,6 +321,192 @@ describe('dsh/tools.js createTools', () => {
     const agentRendered = agentTool.output.render({}, agentRes);
     expect(agentRendered[0].text).toContain('Running [df -h]');
   });
+
+  it('reports the capabilities the build actually ships', () => {
+    const ping = createTools({ version: '0.1.0' }).find((t: any) => t.name === 'at_terminal_ping')!;
+    const res = ping.output.render({}, { version: '0.1.0', ready: true, capabilities: ['sftp-file-operations'], settings: {} });
+    expect(res[0].text).toContain('sftp-file-operations');
+  });
+
+  it('renders SFTP mtime seconds as an ISO instant, not 1970', async () => {
+    const mockService = {
+      sftpStatPath: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        path: '/srv/app.jar',
+        type: 'file',
+        size: 59,
+        modifiedAt: 1792400342, // 2026-10-19T08:59:02Z — seconds, the unit SFTP reports
+        permissions: 0o644
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const statTool = tools.find((t: any) => t.name === 'at_terminal_sftp_stat_path')!;
+    const statRes = await statTool.execute({ path: '/srv/app.jar' });
+    expect(statRes.modifiedAt).toBe(1792400342);
+    expect(statTool.output.render({}, statRes)[0].text).toContain('modifiedAt=2026-10-19T08:59:02.000Z');
+
+    // A missing mtime stays "unknown" rather than becoming the epoch.
+    const zero = statTool.output.render({}, { ...statRes, modifiedAt: 0 })[0].text;
+    expect(zero).toContain('modifiedAt=unknown');
+  });
+
+  it('rejects missing arguments with a message that names the tool and the field', async () => {
+    const mockService = {
+      runRemoteCommand: vi.fn(),
+      sftpCreateFile: vi.fn(),
+      sftpWriteFile: vi.fn(),
+      sftpRename: vi.fn(),
+      openMonitor: vi.fn()
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const byName = (name: string) => tools.find((t: any) => t.name === name)!;
+
+    await expect(byName('at_terminal_run_remote_command').execute(undefined)).rejects.toThrow(
+      /at_terminal_run_remote_command: "command" is required/
+    );
+    await expect(byName('at_terminal_sftp_create_file').execute({})).rejects.toThrow(
+      /at_terminal_sftp_create_file: "path" is required/
+    );
+    await expect(byName('at_terminal_sftp_create_file').execute({ path: '   ' })).rejects.toThrow(
+      /"path" is required/
+    );
+    await expect(byName('at_terminal_sftp_write_file').execute({ path: '/x' })).rejects.toThrow(
+      /"content" is required/
+    );
+    await expect(byName('at_terminal_sftp_rename').execute({ path: '/a' })).rejects.toThrow(
+      /"newPath" is required/
+    );
+    await expect(byName('at_terminal_open_monitor').execute({})).rejects.toThrow(
+      /"target" is required and must be one of/
+    );
+    await expect(byName('at_terminal_open_monitor').execute({ target: 'cpu' })).rejects.toThrow(
+      /"target" must be one of/
+    );
+
+    // Validation happens before any service call, so nothing was attempted remotely.
+    expect(mockService.runRemoteCommand).not.toHaveBeenCalled();
+    expect(mockService.sftpCreateFile).not.toHaveBeenCalled();
+    expect(mockService.sftpWriteFile).not.toHaveBeenCalled();
+    expect(mockService.sftpRename).not.toHaveBeenCalled();
+    expect(mockService.openMonitor).not.toHaveBeenCalled();
+  });
+
+  it('surfaces disk, load, network and top processes in the hardware metrics render', async () => {
+    const mockService = {
+      getHardwareMetrics: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        timestamp: 1000,
+        cpu: { usagePercent: 25, cores: [25], loadAvg: [0.5, 0.6, 0.7] },
+        memory: { totalBytes: 8 * 1024 ** 3, usedBytes: 4 * 1024 ** 3, freeBytes: 4 * 1024 ** 3 },
+        disk: {
+          mounts: [
+            { fs: '/dev/vda1', mount: '/', totalBytes: 100 * 1024 ** 3, usedBytes: 40 * 1024 ** 3, usePercent: 40 },
+            { fs: '/dev/vdb1', mount: '/data', totalBytes: 200 * 1024 ** 3, usedBytes: 164 * 1024 ** 3, usePercent: 82 }
+          ]
+        },
+        network: { rxBytesPerSec: 1024, txBytesPerSec: 512 },
+        processes: [
+          { pid: 123, user: 'root', cpuPercent: 5.5, memPercent: 2.1, command: 'nginx' },
+          { pid: 456, user: 'app', cpuPercent: 1.2, memPercent: 0.4, command: 'java' }
+        ]
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const tool = tools.find((t: any) => t.name === 'at_terminal_get_hardware_metrics')!;
+    const res = await tool.execute({ serverId: 's1' });
+
+    expect(res.cpuUsagePercent).toBe(25);
+    expect(res.loadAvg).toEqual([0.5, 0.6, 0.7]);
+    expect(res.diskMounts).toHaveLength(2);
+    expect(res.diskMounts[1]).toEqual({
+      fs: '/dev/vdb1',
+      mount: '/data',
+      totalBytes: 200 * 1024 ** 3,
+      usedBytes: 164 * 1024 ** 3,
+      usePercent: 82
+    });
+
+    const text = tool.output.render({}, res)[0].text;
+    expect(text).toContain('Hardware Metrics (s1): CPU 25%');
+    expect(text).toContain('Load 0.50 / 0.60 / 0.70');
+    expect(text).toContain('Net rx 1.0KB/s, tx 512B/s');
+    expect(text).toContain('Disk: / 40% of 100GB, /data 82% of 200GB');
+    expect(text).toContain('123 nginx (cpu 5.5%, mem 2.1%)');
+  });
+
+  it('degrades the hardware render when the collector returns no disk or processes', async () => {
+    const mockService = {
+      getHardwareMetrics: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        timestamp: 1,
+        cpu: { usagePercent: 0, cores: [], loadAvg: [0, 0, 0] },
+        memory: { totalBytes: 0, usedBytes: 0, freeBytes: 0 },
+        disk: undefined,
+        network: { rxBytesPerSec: 0, txBytesPerSec: 0 },
+        processes: []
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const tool = tools.find((t: any) => t.name === 'at_terminal_get_hardware_metrics')!;
+    const res = await tool.execute({});
+    expect(res.diskMounts).toEqual([]);
+    const text = tool.output.render({}, res)[0].text;
+    expect(text).toContain('Disk: n/a');
+    expect(text).toContain('Top: n/a');
+  });
+
+  it('drops container overlay mounts and caps the rows a metrics render emits', async () => {
+    const mounts = [
+      { fs: '/dev/mapper/centos-root', mount: '/', totalBytes: 889 * 1024 ** 3, usedBytes: 382 * 1024 ** 3, usePercent: 43 },
+      { fs: '/dev/sda', mount: '/data', totalBytes: 3.6 * 1024 ** 4, usedBytes: 1.1 * 1024 ** 4, usePercent: 34 },
+      // Every container reports the host filesystem as an overlay: noise, not a disk.
+      ...Array.from({ length: 12 }, (_, i) => ({
+        fs: 'overlay',
+        mount: `/var/lib/docker/overlay2/hash${i}/merged`,
+        totalBytes: 889 * 1024 ** 3,
+        usedBytes: 382 * 1024 ** 3,
+        usePercent: 43
+      })),
+      { fs: '/dev/sdb2', mount: '/boot', totalBytes: 1014 * 1024 ** 2, usedBytes: 132 * 1024 ** 2, usePercent: 13 },
+      { fs: '/dev/sdb1', mount: '/boot/efi', totalBytes: 200 * 1024 ** 2, usedBytes: 12 * 1024 ** 2, usePercent: 6 },
+      { fs: 'tmpfs', mount: '/run', totalBytes: 64 * 1024 ** 3, usedBytes: 4 * 1024 ** 3, usePercent: 7 },
+      { fs: '/dev/sdc1', mount: '/backup', totalBytes: 500 * 1024 ** 3, usedBytes: 50 * 1024 ** 3, usePercent: 10 }
+    ];
+    const processes = Array.from({ length: 40 }, (_, i) => ({
+      pid: 1000 + i,
+      user: 'root',
+      cpuPercent: 10 - i * 0.1,
+      memPercent: 1,
+      command: `proc${i}`
+    }));
+    const mockService = {
+      getHardwareMetrics: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        timestamp: 1,
+        cpu: { usagePercent: 10, cores: [10], loadAvg: [1, 1, 1] },
+        memory: { totalBytes: 1024 ** 3, usedBytes: 512 * 1024 ** 2, freeBytes: 512 * 1024 ** 2 },
+        disk: { mounts },
+        network: { rxBytesPerSec: 0, txBytesPerSec: 0 },
+        processes
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const tool = tools.find((t: any) => t.name === 'at_terminal_get_hardware_metrics')!;
+    const res = await tool.execute({ serverId: 's1' });
+
+    // Overlay + tmpfs are filtered; four real mounts remain, but only five rows may render.
+    expect(res.mountTotal).toBe(5);
+    expect(res.diskMounts).toHaveLength(5);
+    expect(res.diskMounts.some((m: any) => m.mount.startsWith('/var/lib/docker/'))).toBe(false);
+    expect(res.diskMounts.some((m: any) => m.fs === 'tmpfs')).toBe(false);
+
+    expect(res.processTotal).toBe(40);
+    expect(res.topProcesses).toHaveLength(5);
+
+    const text = tool.output.render({}, res)[0].text;
+    expect(text).toContain('(+35 more)');
+    expect(text).not.toContain('overlay2');
+  });
 });
 
 

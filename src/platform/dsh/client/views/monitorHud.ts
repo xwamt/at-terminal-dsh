@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AgentExecutionSnapshot, HardwareMetrics, Translate } from '../models';
+import type { AgentAuditSummary, AgentExecutionSnapshot, HardwareMetrics, Translate } from '../models';
 import { formatThroughput } from '../models';
 import { formatFileSize } from '../../../../sftp/FileSize';
 import { chevronDownRegular, closeRegular, gaugeRegular, gripRegular, serverRegular } from '../icons';
@@ -76,10 +76,12 @@ export interface MonitorHudWidgetProps {
   initialSubtab?: 'overview' | 'hardware' | 'agent';
   activeServerId?: string | null;
   activeLabel?: string | null;
+  /** Audits accumulated for the current connection; the agent tab's history view reads this. */
+  auditHistory?: AgentAuditSummary[];
 }
 
 export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
-  const { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props;
+  const { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel, auditHistory } = props;
   const [expanded, setExpanded] = useState(Boolean(forceExpanded));
   const [activeTab, setActiveTab] = useState<'overview' | 'hardware' | 'agent'>(initialSubtab ?? 'overview');
   const [pos, setPos] = useState<{ x: number; y: number }>(() => loadSavedPosition());
@@ -493,6 +495,17 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                   if (next === null) return;
                   e.preventDefault();
                   setActiveTab(next);
+                  /*
+                   * Selection and focus have to move together.
+                   *
+                   * The tabindex is roving — the strip is meant to be a single Tab stop — so the
+                   * newly selected tab becomes tabIndex 0 while the one the user's focus is
+                   * physically on becomes -1. Without this line the two disagree: the panel
+                   * switches, the focus ring stays behind on a button that is no longer a stop, and
+                   * the next Tab press leaves the strip entirely from a tab that looks unselected.
+                   */
+                  const el = document.getElementById(`att-hud-tab-${next}`);
+                  if (el !== null) el.focus();
                 }
               },
               label
@@ -659,39 +672,6 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                       { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', padding: '4px 0' } },
                       t('monitor.agent.idle')
                     )
-              ),
-
-              // Quick Action Navigation Buttons (ONLY tab switching and minimize, NO openSidebar!)
-              h(
-                'div',
-                { style: { display: 'flex', gap: '8px', marginTop: '4px' } },
-                h(
-                  'button',
-                  {
-                    className: 'att-btn',
-                    style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
-                    onClick: () => setActiveTab('hardware')
-                  },
-                  t('monitor.tab.hardware')
-                ),
-                h(
-                  'button',
-                  {
-                    className: 'att-btn',
-                    style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
-                    onClick: () => setActiveTab('agent')
-                  },
-                  t('monitor.tab.agent')
-                ),
-                h(
-                  'button',
-                  {
-                    className: 'att-btn',
-                    style: { flex: 1, padding: '4px 8px', fontSize: '11px' },
-                    onClick: () => collapse()
-                  },
-                  t('monitor.hud.minimize')
-                )
               )
             ),
 
@@ -708,7 +688,8 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
               t,
               snapshot,
               loading: false,
-              onRefresh: () => {}
+              onRefresh: () => {},
+              history: auditHistory
             })
         ),
 

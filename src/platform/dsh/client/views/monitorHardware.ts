@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import type { HardwareMetrics, Translate } from '../models';
 import { formatFileSize } from '../../../../sftp/FileSize';
 import { formatThroughput } from '../models';
-import { h, type El } from './shared';
+import { chevronDownRegular, chevronRightRegular } from '../icons';
+import { h, needsTextDisclosure, type El } from './shared';
 
 export interface HardwareMonitorViewProps {
   t: Translate;
@@ -12,6 +14,8 @@ export interface HardwareMonitorViewProps {
 
 export function HardwareMonitorView(props: HardwareMonitorViewProps): El {
   const { t, metrics, loading, onRefresh } = props;
+  // Which mount's full path is expanded; one at a time, same rule as the audit table.
+  const [expandedMount, setExpandedMount] = useState<string | null>(null);
 
   if (!metrics && loading) {
     return h(
@@ -130,19 +134,51 @@ export function HardwareMonitorView(props: HardwareMonitorViewProps): El {
             { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
             ...disk.mounts.map((mount) => {
               const diskLevel = mount.usePercent > 90 ? 'error' : mount.usePercent > 75 ? 'warn' : 'normal';
+              const label = `${mount.mount} (${mount.fs})`;
+              const expanded = expandedMount === mount.mount;
+              const canExpand = needsTextDisclosure(label);
               return h(
                 'div',
                 { key: mount.mount, style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                // The left side carries the path, which on a Docker host is long enough to push the
+                // usage figure off the card. `minWidth: 0` on both the row and the label is what
+                // lets the ellipsis engage instead of the flex item refusing to shrink.
                 h(
                   'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', fontSize: '11px' } },
-                  h('span', { style: { fontWeight: 500 } }, `${mount.mount} (${mount.fs})`),
+                  { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', minWidth: 0 } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '1 1 auto', minWidth: 0 } },
+                    h(
+                      'span',
+                      {
+                        className: 'att-clip-line',
+                        title: label,
+                        style: { minWidth: 0, fontWeight: 500 }
+                      },
+                      label
+                    ),
+                    canExpand &&
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'att-clip-toggle',
+                          title: expanded ? t('monitor.disk.collapse') : t('monitor.disk.expand'),
+                          'aria-label': expanded ? t('monitor.disk.collapse') : t('monitor.disk.expand'),
+                          'aria-expanded': expanded,
+                          onClick: () => setExpandedMount(expanded ? null : mount.mount)
+                        },
+                        expanded ? chevronDownRegular({ size: 12 }) : chevronRightRegular({ size: 12 })
+                      )
+                  ),
                   h(
                     'span',
-                    { color: 'var(--dsw-alias-label-secondary)' },
+                    { style: { flex: '0 0 auto', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-secondary)' } },
                     `${mount.usePercent}% (${formatFileSize(mount.usedBytes)} / ${formatFileSize(mount.totalBytes)})`
                   )
                 ),
+                expanded && h('div', { className: 'att-clip-full' }, label),
                 h(
                   'div',
                   { className: 'att-monitor-gauge' },

@@ -18,21 +18,30 @@ function fakeAddon() {
 }
 
 describe('terminal search shortcut', () => {
-  it('matches Ctrl+F and Cmd+F keydown only', () => {
+  it('uses the platform modifier: Ctrl+F on Windows/Linux, Cmd+F on macOS', () => {
+    const ev = (over: Partial<Record<'key' | 'type', string>> & {
+      ctrlKey: boolean;
+      metaKey: boolean;
+      altKey: boolean;
+      shiftKey: boolean;
+    }) => ({ type: 'keydown', key: 'f', ...over });
+
+    expect(isTerminalSearchShortcut(ev({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), false)).toBe(true);
+    expect(isTerminalSearchShortcut(ev({ ctrlKey: false, metaKey: true, altKey: false, shiftKey: false }), true)).toBe(true);
+
+    // The other platform's modifier must not open the find bar: macOS keeps Ctrl+F for the shell,
+    // Windows keeps the Windows key out of the page.
+    expect(isTerminalSearchShortcut(ev({ ctrlKey: false, metaKey: true, altKey: false, shiftKey: false }), false)).toBe(false);
+    expect(isTerminalSearchShortcut(ev({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), true)).toBe(false);
+
     expect(
-      isTerminalSearchShortcut({ type: 'keydown', key: 'f', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })
-    ).toBe(true);
-    expect(
-      isTerminalSearchShortcut({ type: 'keydown', key: 'F', ctrlKey: false, metaKey: true, altKey: false, shiftKey: false })
-    ).toBe(true);
-    expect(
-      isTerminalSearchShortcut({ type: 'keyup', key: 'f', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })
+      isTerminalSearchShortcut(ev({ type: 'keyup', key: 'f', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), false)
     ).toBe(false);
     expect(
-      isTerminalSearchShortcut({ type: 'keydown', key: 'f', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false })
+      isTerminalSearchShortcut(ev({ ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }), false)
     ).toBe(false);
     expect(
-      isTerminalSearchShortcut({ type: 'keydown', key: 'f', ctrlKey: true, metaKey: false, altKey: false, shiftKey: true })
+      isTerminalSearchShortcut(ev({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }), false)
     ).toBe(false);
   });
 });
