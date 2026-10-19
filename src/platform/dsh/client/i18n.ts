@@ -290,6 +290,9 @@ export const zh: Record<string, string> = {
   'sftp.discardConfirm': '{name} 有未保存的修改，继续会丢失这些修改。',
   'sftp.fileBack': '返回列表',
   'sftp.filePending': '正在读取文件 …',
+  // 查看器切到编辑态的按钮。这个名字此前被 `sftpFile.ts` 调用却从未定义，于是界面上
+  // 直接印出 key 本身 —— 见 D8。`copy-i18n.test.ts` 现在会扫所有 `t('…')` 字面量。
+  'sftp.fileEdit': '编辑',
   'sftp.fileSave': '保存',
   'sftp.fileSaving': '正在保存 …',
   'sftp.fileRevert': '撤销修改',
@@ -385,7 +388,34 @@ export const zh: Record<string, string> = {
   'monitor.audit.decision': '决策',
   'monitor.audit.risk': '风险',
   'monitor.audit.command': '命令',
-  'shortcut.monitor': '切换监控悬浮窗'
+  'shortcut.monitor': '切换监控悬浮窗',
+
+  /* ---- UI2-12: the remote-command card in the conversation ---- */
+  // The row opens on `$ command`, so the copy around it is all one word wide: a 服务器 that
+  // spells out 「远程命令」 twice per line would leave the command itself nothing to live in.
+  'tool.command.noServer': '未指定服务器',
+  'tool.command.noCommand': '(未取到命令行)',
+  'tool.command.preparing': '准备执行远程命令…',
+  'tool.command.running': '正在执行远程命令…',
+  // Visually hidden: the row's tone and chevron carry this for a sighted reader and say nothing
+  // to a screen reader, so the state is a real word rather than a decoration.
+  'tool.command.statusPreparing': '远程命令准备中',
+  'tool.command.statusRunning': '远程命令执行中',
+  'tool.command.statusOk': '远程命令执行完成',
+  'tool.command.statusError': '远程命令执行失败',
+  'tool.command.statusStopped': '远程命令已中断',
+  'tool.command.exit': 'exit {code}',
+  'tool.command.signal': 'signal {signal}',
+  'tool.command.stdout': 'stdout',
+  'tool.command.stderr': 'stderr',
+  // Shown only when a result arrives in a shape the card does not know: the payload is still
+  // worth more than a blank body, and the label says plainly that it is unparsed.
+  'tool.command.raw': '原始输出',
+  'tool.command.noOutput': '(无输出)',
+  'tool.command.timedOut': '命令已超时，以下为被中断前捕获的输出',
+  'tool.command.truncated': '输出已截断，仅显示前一部分',
+  'tool.command.copy': '复制输出',
+  'tool.command.copied': '已复制'
 };
 
 export const en: Record<string, string> = {
@@ -628,6 +658,7 @@ export const en: Record<string, string> = {
   'sftp.uploadDone': 'Uploaded {count} file(s).',
   'sftp.fileBack': 'Back to files',
   'sftp.filePending': 'Reading the file …',
+  'sftp.fileEdit': 'Edit',
   'sftp.fileSave': 'Save',
   'sftp.fileSaving': 'Saving …',
   'sftp.fileRevert': 'Revert',
@@ -719,5 +750,24 @@ export const en: Record<string, string> = {
   'monitor.audit.decision': 'Decision',
   'monitor.audit.risk': 'Risk',
   'monitor.audit.command': 'Command',
-  'shortcut.monitor': 'Toggle Monitor Window'
+  'shortcut.monitor': 'Toggle Monitor Window',
+  'tool.command.noServer': 'no server',
+  'tool.command.noCommand': '(no command line)',
+  'tool.command.preparing': 'Preparing remote command…',
+  'tool.command.running': 'Running remote command…',
+  'tool.command.statusPreparing': 'Remote command preparing',
+  'tool.command.statusRunning': 'Remote command running',
+  'tool.command.statusOk': 'Remote command finished',
+  'tool.command.statusError': 'Remote command failed',
+  'tool.command.statusStopped': 'Remote command interrupted',
+  'tool.command.exit': 'exit {code}',
+  'tool.command.signal': 'signal {signal}',
+  'tool.command.stdout': 'stdout',
+  'tool.command.stderr': 'stderr',
+  'tool.command.raw': 'raw output',
+  'tool.command.noOutput': '(no output)',
+  'tool.command.timedOut': 'Command timed out — output below is what was captured before it was killed',
+  'tool.command.truncated': 'Output was truncated — only the first part is shown',
+  'tool.command.copy': 'Copy output',
+  'tool.command.copied': 'Copied'
 };

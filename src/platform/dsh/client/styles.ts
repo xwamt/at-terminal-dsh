@@ -1743,6 +1743,139 @@ button.att-hud-pill-chip:hover {
   50% { opacity: 0.35; transform: scale(1.15); }
   100% { opacity: 1; transform: scale(1); }
 }
+
+/* ---- UI2-12: the remote-command card ----
+   Deliberately NOT scoped under .att-root. This row is rendered by the conversation through the
+   keyed slot, not by our panel, so a scoped rule would never match and the card would land with
+   no geometry at all. The geometry below is the Host's own tool-row geometry (24px row, 16px
+   leading slot, 2px separator dot) so the card sits in a transcript of official rows without
+   reading as a foreign object.
+*/
+.att-tool-card {
+  box-sizing: border-box;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.att-tool-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  color: var(--dsw-alias-label-tertiary);
+  transition: color .1s;
+}
+.att-tool-row[data-expandable='true'] { cursor: pointer; }
+.att-tool-row[data-expandable='true']:hover { color: var(--dsw-alias-label-secondary); }
+.att-tool-row[data-expandable='true']:focus-visible {
+  outline: 1px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+  border-radius: var(--dsw-radius-sm, 4px);
+}
+.att-tool-leading {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+.att-tool-leading svg { width: 14px; height: 14px; }
+.att-tool-icon, .att-tool-chevron { color: inherit; }
+.att-tool-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* The server is the row's anchor, not its subject: it gets a ceiling so a long label cannot
+   push the command — the only part worth reading — off the right edge. */
+.att-tool-server {
+  flex: none;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-tool-sep {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 1px;
+  background: var(--dsw-alias-label-caption);
+}
+.att-tool-summary {
+  flex: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+}
+.att-tool-badge {
+  flex: none;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: .5px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-base);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+.att-tool-badge[data-error='true'] { color: var(--dsw-alias-state-error-primary); }
+.att-tool-duration {
+  flex: none;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+}
+.att-tool-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 4px 0 4px 22px;
+}
+.att-tool-flags { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+.att-tool-flag { font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-warn-label); }
+.att-tool-section {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 14px;
+  margin-bottom: 4px;
+  padding: 8px 12px;
+  border: .5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-lg, 8px);
+  background: var(--dsw-alias-markdown-code-block);
+}
+.att-tool-label { font-size: 11px; color: var(--dsw-alias-label-caption); }
+.att-tool-out {
+  margin: 0;
+  min-width: 0;
+  max-height: 224px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+.att-tool-out[data-error='true'] { color: var(--dsw-alias-state-error-primary); }
+.att-tool-actions { display: flex; margin-top: 2px; }
+.att-tool-copy { font-size: 11px; line-height: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .att-tool-row { transition: none; }
+}
 `;
 
 /**

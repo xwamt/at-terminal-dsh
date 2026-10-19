@@ -46,6 +46,7 @@ import { NS, en, zh } from './i18n';
 import { AtTerminalBody, AtTerminalTitle, wrapWithLocale } from './body';
 import { AtTerminalSessionBody } from './body-session';
 import { AtTerminalMonitorBody, AtTerminalMonitorTitle } from './views/monitorPane';
+import { AtTerminalCommandRow, TOOL_RUN_REMOTE_COMMAND } from './views/toolCall';
 import { MonitorHudWidget } from './views/monitorHud';
 import {
   disposeAllSessions,
@@ -940,5 +941,25 @@ export function apply(ctx: ClientContext): void {
         )
       ),
     'at-terminal: monitor header button'
+  );
+
+  /**
+   * The conversation card for one remote command (UI2-12).
+   *
+   * The slot is keyed by the **wire** tool name, so this registration replaces the Host's generic
+   * row for that one tool and nothing else. It is last in `apply` on purpose: it is the one seat
+   * here that renders outside our panel, and if it ever has to be withdrawn — the block contract
+   * moves, the row reads wrong — deleting this block is the whole rollback, with no other seat
+   * depending on it.
+   */
+  ctx.effect(
+    () =>
+      ctx.slots.inject('tool.call.toolview', () =>
+        ctx.slots.register(
+          { name: 'tool.call.toolview', key: TOOL_RUN_REMOTE_COMMAND, locale: NS },
+          wrapWithLocale(AtTerminalCommandRow, t)
+        )
+      ),
+    'at-terminal: remote command tool card'
   );
 }

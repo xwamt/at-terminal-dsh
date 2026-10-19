@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -35,6 +35,43 @@ describe('zh/en key sets (UI2-10)', () => {
   it('has no empty value in either locale', () => {
     for (const [key, value] of Object.entries(zh)) expect(value.trim(), `zh:${key}`).not.toBe('');
     for (const [key, value] of Object.entries(en)) expect(value.trim(), `en:${key}`).not.toBe('');
+  });
+
+  /**
+   * Every key the code asks for is a key the dictionary has.
+   *
+   * Symmetry between the two locales is not enough: both can be missing the same key, and then
+   * the panel prints the key itself. That is exactly what happened — `views/sftpFile.ts` called
+   * `t('sftp.fileEdit')` while the dictionary only ever defined `sftp.fileEditBlocked` and
+   * `sftp.fileEditorLabel`, so the viewer's edit button read 「sftp.fileEdit」 on a real session
+   * (found 2026-10-19, D8). The two-locale symmetry test was green throughout.
+   */
+  it('defines every key the client actually asks for', () => {
+    const dir = join(process.cwd(), 'src/platform/dsh/client');
+    const sources: string[] = [];
+    const walk = (at: string): void => {
+      for (const entry of readdirSync(at, { withFileTypes: true })) {
+        const full = join(at, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (full.endsWith('.ts')) sources.push(full);
+      }
+    };
+    walk(dir);
+
+    const missing: string[] = [];
+    let seen = 0;
+    for (const file of sources) {
+      for (const match of readFileSync(file, 'utf8').matchAll(/\bt\(\s*'([A-Za-z][\w.]*)'/g)) {
+        const key = match[1] as string;
+        seen += 1;
+        if (!(key in zh)) missing.push(`${key} (${file.slice(dir.length + 1)})`);
+      }
+    }
+
+    // A regex that stopped matching would make this vacuous — the dictionary is ~350 keys and
+    // the client asks for well over 200 of them.
+    expect(seen).toBeGreaterThan(200);
+    expect(missing).toEqual([]);
   });
 });
 

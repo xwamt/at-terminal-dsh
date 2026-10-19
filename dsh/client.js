@@ -8351,7 +8351,7 @@ window.__ModuleLoader__.load({
       sessionDefinition: () => sessionDefinition
     });
     module.exports = __toCommonJS(main_exports);
-    var import_react9 = require("react");
+    var import_react10 = require("react");
 
     // src/sftp/FileSize.ts
     var UNITS = ["B", "KB", "MB", "GB", "TB"];
@@ -9190,6 +9190,9 @@ window.__ModuleLoader__.load({
       "sftp.discardConfirm": "{name} \u6709\u672A\u4FDD\u5B58\u7684\u4FEE\u6539\uFF0C\u7EE7\u7EED\u4F1A\u4E22\u5931\u8FD9\u4E9B\u4FEE\u6539\u3002",
       "sftp.fileBack": "\u8FD4\u56DE\u5217\u8868",
       "sftp.filePending": "\u6B63\u5728\u8BFB\u53D6\u6587\u4EF6 \u2026",
+      // 查看器切到编辑态的按钮。这个名字此前被 `sftpFile.ts` 调用却从未定义，于是界面上
+      // 直接印出 key 本身 —— 见 D8。`copy-i18n.test.ts` 现在会扫所有 `t('…')` 字面量。
+      "sftp.fileEdit": "\u7F16\u8F91",
       "sftp.fileSave": "\u4FDD\u5B58",
       "sftp.fileSaving": "\u6B63\u5728\u4FDD\u5B58 \u2026",
       "sftp.fileRevert": "\u64A4\u9500\u4FEE\u6539",
@@ -9285,7 +9288,33 @@ window.__ModuleLoader__.load({
       "monitor.audit.decision": "\u51B3\u7B56",
       "monitor.audit.risk": "\u98CE\u9669",
       "monitor.audit.command": "\u547D\u4EE4",
-      "shortcut.monitor": "\u5207\u6362\u76D1\u63A7\u60AC\u6D6E\u7A97"
+      "shortcut.monitor": "\u5207\u6362\u76D1\u63A7\u60AC\u6D6E\u7A97",
+      /* ---- UI2-12: the remote-command card in the conversation ---- */
+      // The row opens on `$ command`, so the copy around it is all one word wide: a 服务器 that
+      // spells out 「远程命令」 twice per line would leave the command itself nothing to live in.
+      "tool.command.noServer": "\u672A\u6307\u5B9A\u670D\u52A1\u5668",
+      "tool.command.noCommand": "(\u672A\u53D6\u5230\u547D\u4EE4\u884C)",
+      "tool.command.preparing": "\u51C6\u5907\u6267\u884C\u8FDC\u7A0B\u547D\u4EE4\u2026",
+      "tool.command.running": "\u6B63\u5728\u6267\u884C\u8FDC\u7A0B\u547D\u4EE4\u2026",
+      // Visually hidden: the row's tone and chevron carry this for a sighted reader and say nothing
+      // to a screen reader, so the state is a real word rather than a decoration.
+      "tool.command.statusPreparing": "\u8FDC\u7A0B\u547D\u4EE4\u51C6\u5907\u4E2D",
+      "tool.command.statusRunning": "\u8FDC\u7A0B\u547D\u4EE4\u6267\u884C\u4E2D",
+      "tool.command.statusOk": "\u8FDC\u7A0B\u547D\u4EE4\u6267\u884C\u5B8C\u6210",
+      "tool.command.statusError": "\u8FDC\u7A0B\u547D\u4EE4\u6267\u884C\u5931\u8D25",
+      "tool.command.statusStopped": "\u8FDC\u7A0B\u547D\u4EE4\u5DF2\u4E2D\u65AD",
+      "tool.command.exit": "exit {code}",
+      "tool.command.signal": "signal {signal}",
+      "tool.command.stdout": "stdout",
+      "tool.command.stderr": "stderr",
+      // Shown only when a result arrives in a shape the card does not know: the payload is still
+      // worth more than a blank body, and the label says plainly that it is unparsed.
+      "tool.command.raw": "\u539F\u59CB\u8F93\u51FA",
+      "tool.command.noOutput": "(\u65E0\u8F93\u51FA)",
+      "tool.command.timedOut": "\u547D\u4EE4\u5DF2\u8D85\u65F6\uFF0C\u4EE5\u4E0B\u4E3A\u88AB\u4E2D\u65AD\u524D\u6355\u83B7\u7684\u8F93\u51FA",
+      "tool.command.truncated": "\u8F93\u51FA\u5DF2\u622A\u65AD\uFF0C\u4EC5\u663E\u793A\u524D\u4E00\u90E8\u5206",
+      "tool.command.copy": "\u590D\u5236\u8F93\u51FA",
+      "tool.command.copied": "\u5DF2\u590D\u5236"
     }, en = {
       "type.label": "AT Terminal",
       "session.label": "AT Terminal",
@@ -9526,6 +9555,7 @@ window.__ModuleLoader__.load({
       "sftp.uploadDone": "Uploaded {count} file(s).",
       "sftp.fileBack": "Back to files",
       "sftp.filePending": "Reading the file \u2026",
+      "sftp.fileEdit": "Edit",
       "sftp.fileSave": "Save",
       "sftp.fileSaving": "Saving \u2026",
       "sftp.fileRevert": "Revert",
@@ -9617,7 +9647,26 @@ window.__ModuleLoader__.load({
       "monitor.audit.decision": "Decision",
       "monitor.audit.risk": "Risk",
       "monitor.audit.command": "Command",
-      "shortcut.monitor": "Toggle Monitor Window"
+      "shortcut.monitor": "Toggle Monitor Window",
+      "tool.command.noServer": "no server",
+      "tool.command.noCommand": "(no command line)",
+      "tool.command.preparing": "Preparing remote command\u2026",
+      "tool.command.running": "Running remote command\u2026",
+      "tool.command.statusPreparing": "Remote command preparing",
+      "tool.command.statusRunning": "Remote command running",
+      "tool.command.statusOk": "Remote command finished",
+      "tool.command.statusError": "Remote command failed",
+      "tool.command.statusStopped": "Remote command interrupted",
+      "tool.command.exit": "exit {code}",
+      "tool.command.signal": "signal {signal}",
+      "tool.command.stdout": "stdout",
+      "tool.command.stderr": "stderr",
+      "tool.command.raw": "raw output",
+      "tool.command.noOutput": "(no output)",
+      "tool.command.timedOut": "Command timed out \u2014 output below is what was captured before it was killed",
+      "tool.command.truncated": "Output was truncated \u2014 only the first part is shown",
+      "tool.command.copy": "Copy output",
+      "tool.command.copied": "Copied"
     };
 
     // src/platform/dsh/client/body.ts
@@ -14944,8 +14993,195 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // src/platform/dsh/client/views/monitorHud.ts
+    // src/platform/dsh/client/views/toolCall.ts
     var import_react8 = require("react");
+    var TOOL_RUN_REMOTE_COMMAND = "at_terminal_run_remote_command";
+    function asLoose(value) {
+      return typeof value == "object" && value !== null ? value : null;
+    }
+    function readString(source, key) {
+      let value = source?.[key];
+      return typeof value == "string" ? value : "";
+    }
+    function resultText(block) {
+      let content = asLoose(block)?.content;
+      if (!Array.isArray(content)) return "";
+      let parts = [];
+      for (let entry of content) {
+        let item = asLoose(entry);
+        item?.type === "text" && typeof item.text == "string" && parts.push(item.text);
+      }
+      return parts.join(`
+    `);
+    }
+    function parseStructuredResult(text2) {
+      let trimmed = text2.trim();
+      if (!trimmed.startsWith("{")) return null;
+      let value;
+      try {
+        value = JSON.parse(trimmed);
+      } catch {
+        return null;
+      }
+      let source = asLoose(value);
+      return source === null || !(typeof source.command == "string" || typeof source.stdout == "string" || typeof source.exitCode == "number" || typeof source.durationMs == "number") ? null : {
+        serverId: readString(source, "serverId") || readString(source, "serverLabel"),
+        command: readString(source, "command"),
+        exitCode: typeof source.exitCode == "number" ? source.exitCode : null,
+        signal: typeof source.signal == "string" ? source.signal : null,
+        durationMs: typeof source.durationMs == "number" ? source.durationMs : null,
+        timedOut: source.timedOut === !0,
+        truncated: source.truncated === !0,
+        stdout: readString(source, "stdout"),
+        stderr: readString(source, "stderr")
+      };
+    }
+    var HEADER = /^\[([^\]]*)\]\s+(?:exit\s+(-?\d+)|signal\s+(\S+))\s+\((\d+)ms\)([^:]*)/, FENCE_LINE = /^\s*```[^\n]*$/;
+    function splitOutput(body) {
+      let lines = body.split(`
+    `);
+      lines.length > 0 && FENCE_LINE.test(lines[0]) && lines.shift(), lines.length > 0 && FENCE_LINE.test(lines[lines.length - 1]) && lines.pop();
+      let at = lines.indexOf("[stderr]");
+      return at === -1 ? { stdout: lines.join(`
+    `), stderr: "" } : { stdout: lines.slice(0, at).join(`
+    `), stderr: lines.slice(at + 1).join(`
+    `) };
+    }
+    function parseRemoteCommandOutput(text2) {
+      if (typeof text2 != "string" || text2 === "") return null;
+      let structured = parseStructuredResult(text2);
+      if (structured !== null) return structured;
+      let nl = text2.indexOf(`
+    `), head = (nl === -1 ? text2 : text2.slice(0, nl)).trim(), body = nl === -1 ? "" : text2.slice(nl + 1), matched = HEADER.exec(head);
+      if (matched === null) return null;
+      let flags = matched[5] ?? "";
+      return {
+        serverId: matched[1] ?? "",
+        command: "",
+        exitCode: matched[2] === void 0 ? null : Number(matched[2]),
+        signal: matched[3] === void 0 ? null : matched[3],
+        durationMs: matched[4] === void 0 ? null : Number(matched[4]),
+        timedOut: /\btimed_out\b/.test(flags),
+        truncated: /\btruncated\b/.test(flags),
+        ...splitOutput(body)
+      };
+    }
+    function rawArgs(block) {
+      let source = asLoose(block);
+      if (source === null) return null;
+      let raw = "kind" in source ? source.call?.argsRaw : source.argsRaw;
+      return typeof raw == "string" ? raw : null;
+    }
+    function argsOf(block) {
+      let raw = rawArgs(block);
+      if (raw === null) return null;
+      let value;
+      try {
+        value = JSON.parse(raw);
+      } catch {
+        return null;
+      }
+      let source = asLoose(value);
+      return source === null || Array.isArray(value) ? null : source;
+    }
+    function commandOf(args, output) {
+      let fromArgs = args === null ? "" : readString(args, "command");
+      return fromArgs !== "" ? fromArgs : output === null ? "" : output.command;
+    }
+    function serverOf(args, output) {
+      return output !== null && output.serverId !== "" ? output.serverId : args === null ? "" : readString(args, "serverId");
+    }
+    function stateOf(block) {
+      let source = asLoose(block);
+      return source === null ? "preparing" : "kind" in source ? source.error?.code === "interrupted" ? "stopped" : source.isError === !0 ? "error" : "ok" : source.phase === "preparing" ? "preparing" : "running";
+    }
+    function formatDuration(ms) {
+      if (ms === null || !Number.isFinite(ms)) return "";
+      if (ms < 1e3) return `${Math.round(ms)}ms`;
+      let seconds = ms / 1e3;
+      return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+    }
+    function statusText2(t, state) {
+      return t(state === "preparing" ? "tool.command.statusPreparing" : state === "running" ? "tool.command.statusRunning" : state === "error" ? "tool.command.statusError" : state === "stopped" ? "tool.command.statusStopped" : "tool.command.statusOk");
+    }
+    function exitLabel(t, output) {
+      return output === null ? "" : output.exitCode !== null ? t("tool.command.exit", { code: String(output.exitCode) }) : output.signal !== null ? t("tool.command.signal", { signal: output.signal }) : "";
+    }
+    function AtTerminalCommandRow(props) {
+      let { t } = props, block = props.block ?? null, state = stateOf(block), text2 = resultText(block), output = parseRemoteCommandOutput(text2), args = argsOf(block), command = commandOf(args, output), server = serverOf(args, output) || t("tool.command.noServer"), live = state === "preparing" || state === "running", expandable = !live && (output !== null || text2 !== "" || command !== ""), useDisclosure = props.useDisclosure ?? (() => ({ expanded: !1, toggle: () => {
+      } })), { expanded, toggle } = useDisclosure(), [copied, setCopied] = (0, import_react8.useState)(!1), open = expandable && expanded, onKeyDown = (event) => {
+        event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar" || (event.preventDefault?.(), toggle());
+      }, leading = open ? chevronUpRegular({ className: "att-tool-chevron", size: 14 }) : expandable ? chevronDownRegular({ className: "att-tool-chevron", size: 14 }) : terminalRegular({ className: "att-tool-icon", size: 14 }), summary = live ? t(state === "preparing" ? "tool.command.preparing" : "tool.command.running") : command === "" ? t("tool.command.noCommand") : `$ ${command}`, label = exitLabel(t, output), duration = formatDuration(output === null ? null : output.durationMs), stdout = output === null ? "" : output.stdout, stderr = output === null ? "" : output.stderr, onCopy = () => {
+        let payload = [stdout, stderr].filter((part) => part !== "").join(`
+    `), clipboard = globalThis.navigator?.clipboard;
+        typeof clipboard?.writeText == "function" && (clipboard.writeText(payload), setCopied(!0), typeof window < "u" && window.setTimeout(() => setCopied(!1), 1200));
+      }, flags = [];
+      output !== null && output.timedOut && flags.push(h("div", { key: "timedOut", className: "att-tool-flag" }, t("tool.command.timedOut"))), output !== null && output.truncated && flags.push(h("div", { key: "truncated", className: "att-tool-flag" }, t("tool.command.truncated")));
+      let stream = (key, name, body, isError) => h(
+        "div",
+        { key, className: "att-tool-section" },
+        h("span", { className: "att-tool-label" }, t(name)),
+        h(
+          "pre",
+          { className: "att-tool-out", "data-error": isError ? "true" : "false" },
+          body === "" ? t("tool.command.noOutput") : body
+        )
+      );
+      return h(
+        "div",
+        { className: "att-tool-card", "data-at-terminal-tool": TOOL_RUN_REMOTE_COMMAND, "data-state": state },
+        h(
+          "div",
+          {
+            className: "att-tool-row",
+            "data-expandable": expandable ? "true" : "false",
+            role: expandable ? "button" : void 0,
+            tabIndex: expandable ? 0 : void 0,
+            "aria-expanded": expandable ? open : void 0,
+            onClick: expandable ? toggle : void 0,
+            onKeyDown: expandable ? onKeyDown : void 0
+          },
+          h("span", { className: "att-tool-leading" }, leading),
+          // The colour and the chevron are the only other carriers of this, and both are decorative
+          // to a screen reader — so the state is a real, hidden word rather than a title attribute.
+          h("span", { className: "att-tool-sr" }, statusText2(t, state)),
+          h("span", { className: "att-tool-server" }, server),
+          h("span", { className: "att-tool-sep", "aria-hidden": "true" }),
+          h("span", { className: "att-tool-summary" }, summary),
+          label === "" ? null : h("span", { className: "att-tool-badge", "data-error": state === "error" || state === "stopped" ? "true" : "false" }, label),
+          duration === "" ? null : h("span", { className: "att-tool-duration" }, duration)
+        ),
+        open ? h(
+          "div",
+          { className: "att-tool-body" },
+          flags.length === 0 ? null : h("div", { className: "att-tool-flags" }, ...flags),
+          // A result that parsed is shown as its two streams. One that did not is shown as the
+          // text the Host holds — the fallback is never a blank body, because a card that opens
+          // onto nothing is more alarming than the flattened JSON it replaced.
+          output === null ? stream("raw", "tool.command.raw", text2, state === "error") : [
+            stream("stdout", "tool.command.stdout", stdout, !1),
+            ...stderr === "" ? [] : [stream("stderr", "tool.command.stderr", stderr, !0)]
+          ],
+          h(
+            "div",
+            { className: "att-tool-actions" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "att-btn att-tool-copy",
+                onClick: onCopy,
+                "data-at-terminal-action": "tool-copy"
+              },
+              t(copied ? "tool.command.copied" : "tool.command.copy")
+            )
+          )
+        ) : null
+      );
+    }
+
+    // src/platform/dsh/client/views/monitorHud.ts
+    var import_react9 = require("react");
     var STORAGE_KEY = "dsh.at-terminal.monitor.hud.pos";
     function clampPosition(x, y, width, height) {
       let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, boxW = Math.min(width, Math.max(0, winW - 16)), boxH = Math.min(height, Math.max(0, winH - 16)), maxX = Math.max(8, winW - boxW - 8), maxY = Math.max(8, winH - boxH - 8);
@@ -14978,12 +15214,12 @@ window.__ModuleLoader__.load({
         }
     }
     function MonitorHudWidget(props) {
-      let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react8.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react8.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react8.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react8.useState)(!1), isDraggingRef = (0, import_react8.useRef)(!1), dragStateRef = (0, import_react8.useRef)(null);
-      (0, import_react8.useEffect)(() => {
+      let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel } = props, [expanded, setExpanded] = (0, import_react9.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react9.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react9.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react9.useState)(!1), isDraggingRef = (0, import_react9.useRef)(!1), dragStateRef = (0, import_react9.useRef)(null);
+      (0, import_react9.useEffect)(() => {
         forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
-      }, [forceExpanded]), (0, import_react8.useEffect)(() => {
+      }, [forceExpanded]), (0, import_react9.useEffect)(() => {
         initialSubtab && setActiveTab(initialSubtab);
-      }, [initialSubtab]), (0, import_react8.useEffect)(() => {
+      }, [initialSubtab]), (0, import_react9.useEffect)(() => {
         let onResize = () => {
           let width = expanded ? 400 : 280, height = expanded ? 520 : 40;
           setPos((prev) => clampPosition(prev.x, prev.y, width, height));
@@ -18029,6 +18265,139 @@ window.__ModuleLoader__.load({
       50% { opacity: 0.35; transform: scale(1.15); }
       100% { opacity: 1; transform: scale(1); }
     }
+
+    /* ---- UI2-12: the remote-command card ----
+       Deliberately NOT scoped under .att-root. This row is rendered by the conversation through the
+       keyed slot, not by our panel, so a scoped rule would never match and the card would land with
+       no geometry at all. The geometry below is the Host's own tool-row geometry (24px row, 16px
+       leading slot, 2px separator dot) so the card sits in a transcript of official rows without
+       reading as a foreign object.
+    */
+    .att-tool-card {
+      box-sizing: border-box;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .att-tool-row {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      height: calc(24px + var(--dsh-content-font-delta, 0px));
+      font-size: var(--dsh-content-font-size-secondary, 13px);
+      color: var(--dsw-alias-label-tertiary);
+      transition: color .1s;
+    }
+    .att-tool-row[data-expandable='true'] { cursor: pointer; }
+    .att-tool-row[data-expandable='true']:hover { color: var(--dsw-alias-label-secondary); }
+    .att-tool-row[data-expandable='true']:focus-visible {
+      outline: 1px solid var(--dsw-alias-border-l4);
+      outline-offset: 2px;
+      border-radius: var(--dsw-radius-sm, 4px);
+    }
+    .att-tool-leading {
+      flex: none;
+      width: 16px;
+      height: 16px;
+      margin-right: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: inherit;
+    }
+    .att-tool-leading svg { width: 14px; height: 14px; }
+    .att-tool-icon, .att-tool-chevron { color: inherit; }
+    .att-tool-sr {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    /* The server is the row's anchor, not its subject: it gets a ceiling so a long label cannot
+       push the command \u2014 the only part worth reading \u2014 off the right edge. */
+    .att-tool-server {
+      flex: none;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .att-tool-sep {
+      flex: none;
+      width: 2px;
+      height: 2px;
+      margin: 0 8px;
+      border-radius: 1px;
+      background: var(--dsw-alias-label-caption);
+    }
+    .att-tool-summary {
+      flex: auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--ds-font-family-code, ui-monospace, monospace);
+    }
+    .att-tool-badge {
+      flex: none;
+      margin-left: 8px;
+      padding: 0 6px;
+      border: .5px solid var(--dsw-alias-border-l1);
+      border-radius: 999px;
+      background: var(--dsw-alias-bg-base);
+      font-size: 11px;
+      line-height: 16px;
+      color: var(--dsw-alias-label-secondary);
+    }
+    .att-tool-badge[data-error='true'] { color: var(--dsw-alias-state-error-primary); }
+    .att-tool-duration {
+      flex: none;
+      margin-left: 6px;
+      font-size: 11px;
+      color: var(--dsw-alias-label-caption);
+    }
+    .att-tool-body {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      margin: 4px 0 4px 22px;
+    }
+    .att-tool-flags { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+    .att-tool-flag { font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-warn-label); }
+    .att-tool-section {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      align-items: baseline;
+      column-gap: 14px;
+      margin-bottom: 4px;
+      padding: 8px 12px;
+      border: .5px solid var(--dsw-alias-border-l1);
+      border-radius: var(--dsw-radius-lg, 8px);
+      background: var(--dsw-alias-markdown-code-block);
+    }
+    .att-tool-label { font-size: 11px; color: var(--dsw-alias-label-caption); }
+    .att-tool-out {
+      margin: 0;
+      min-width: 0;
+      max-height: 224px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--ds-font-family-code, ui-monospace, monospace);
+      font-size: 12px;
+      line-height: 18px;
+      color: var(--dsw-alias-label-secondary);
+    }
+    .att-tool-out[data-error='true'] { color: var(--dsw-alias-state-error-primary); }
+    .att-tool-actions { display: flex; margin-top: 2px; }
+    .att-tool-copy { font-size: 11px; line-height: 16px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .att-tool-row { transition: none; }
+    }
     `, DEFAULT_SOURCES = {
       xterm: xterm_default,
       terminal: terminal_default,
@@ -18228,8 +18597,8 @@ window.__ModuleLoader__.load({
       );
     }
     function MonitorHudContainer(props) {
-      let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react9.useState)(null), [snapshot, setSnapshot] = (0, import_react9.useState)(null), [visible, setVisible] = (0, import_react9.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react9.useState)(null), [activeLabel, setActiveLabel] = (0, import_react9.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react9.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react9.useState)("overview");
-      return (0, import_react9.useEffect)(() => {
+      let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react10.useState)(null), [snapshot, setSnapshot] = (0, import_react10.useState)(null), [visible, setVisible] = (0, import_react10.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react10.useState)(null), [activeLabel, setActiveLabel] = (0, import_react10.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react10.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react10.useState)("overview");
+      return (0, import_react10.useEffect)(() => {
         if (onRegisterController)
           return onRegisterController({
             open: (target) => {
@@ -18244,14 +18613,14 @@ window.__ModuleLoader__.load({
           }), () => {
             onRegisterController(null);
           };
-      }, [onRegisterController]), (0, import_react9.useEffect)(() => {
+      }, [onRegisterController]), (0, import_react10.useEffect)(() => {
         let handleActiveTerminal = (state) => {
           setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? setVisible(!0) : setVisible(!1);
         }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
         return handleActiveTerminal(getActiveTerminalState()), () => {
           unsubscribe();
         };
-      }, []), (0, import_react9.useEffect)(() => {
+      }, []), (0, import_react10.useEffect)(() => {
         let unmounted = !1, fetchLatest = () => {
           Promise.all([
             getHardwareMetricsRpc(activeServerId || void 0).catch(() => null),
@@ -18430,6 +18799,15 @@ window.__ModuleLoader__.load({
           )
         ),
         "at-terminal: monitor header button"
+      ), ctx.effect(
+        () => ctx.slots.inject(
+          "tool.call.toolview",
+          () => ctx.slots.register(
+            { name: "tool.call.toolview", key: TOOL_RUN_REMOTE_COMMAND, locale: NS },
+            wrapWithLocale(AtTerminalCommandRow, t)
+          )
+        ),
+        "at-terminal: remote command tool card"
       );
     }
 

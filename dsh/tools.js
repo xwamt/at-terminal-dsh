@@ -323,10 +323,15 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
       },
       render(_args, val) {
         const exitText = val.exitCode !== null ? `exit ${val.exitCode}` : `signal ${val.signal ?? 'unknown'}`
+        // `timed_out` and `truncated` are part of the header's grammar, not decoration: the
+        // conversation card (client/views/toolCall.ts) parses this one line, and a killed or cut
+        // command is otherwise indistinguishable from a clean one — the schema carries both flags
+        // but a text-only result would not. They read as words to the model as well.
+        const flags = `${val.timedOut ? ' timed_out' : ''}${val.truncated ? ' truncated' : ''}`
         return [
           {
             type: 'text',
-            text: `[${val.serverId}] ${exitText} (${val.durationMs}ms):\n\`\`\`\n${val.stdout}${val.stderr ? '\n[stderr]\n' + val.stderr : ''}\n\`\`\``
+            text: `[${val.serverId}] ${exitText} (${val.durationMs}ms)${flags}:\n\`\`\`\n${val.stdout}${val.stderr ? '\n[stderr]\n' + val.stderr : ''}\n\`\`\``
           }
         ]
       }

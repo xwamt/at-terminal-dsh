@@ -1376,7 +1376,11 @@ describe('client bundle — apply wiring', () => {
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab.title',
       'shell.overlay',
-      'conversation.session.header.utilities'
+      'conversation.session.header.utilities',
+      // UI2-12: the one seat that renders outside our panel — the remote-command row in the
+      // conversation. It is listed last because it is injected last, which is what makes it the
+      // whole rollback for that card: drop the block and everything else here is unaffected.
+      'tool.call.toolview'
     ]);
     const bodies = harness.slotRegisters
       .filter((entry) => entry.options.name === 'sidebar.right.pane.tab')
