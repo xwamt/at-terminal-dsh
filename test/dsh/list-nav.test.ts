@@ -171,3 +171,36 @@ describe('both context menus share one behaviour (UI2-09)', () => {
     expect(BODY_SESSION).not.toContain("document.addEventListener('keydown', onKeydown)");
   });
 });
+
+describe('selection is distinguishable from hover (D9 follow-up)', () => {
+  const SHEET = read('src/platform/dsh/client/styles.ts');
+
+  /** The declarations of one rule, by an exact selector at the start of a line. */
+  function ruleBody(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const matches = [...SHEET.matchAll(new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, 'gm'))];
+    return matches.length === 0 ? '' : (matches[matches.length - 1][1] as string);
+  }
+
+  it('marks the selected row with something hover cannot produce', () => {
+    // The two fills come from the same family and read alike at a glance, which is how a
+    // hovered row got mistaken for the selected one during a walkthrough — and produced a bug
+    // report about keyboard selection that the state never had. The bar is the claim.
+    const selected = ruleBody('.att-row[aria-selected="true"]');
+    expect(selected).toContain('inset 2px 0 0');
+    expect(selected).toContain('--vscode-focusBorder');
+  });
+
+  it('keeps the hover rule free of the marker', () => {
+    // If hover ever grew the same bar, the distinction would be gone again.
+    expect(ruleBody('.att-row:hover')).not.toContain('box-shadow');
+  });
+
+  it('still paints selection after hover', () => {
+    // Equal specificity: the selected rule has to come later in the sheet or hovering the
+    // selected row would repaint it with the hover colour.
+    expect(SHEET.indexOf('.att-row[aria-selected="true"] {')).toBeGreaterThan(
+      SHEET.indexOf('.att-row:hover {')
+    );
+  });
+});

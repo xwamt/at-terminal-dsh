@@ -17029,7 +17029,20 @@ ${ROOT_SELECTOR} *, ${ROOT_SELECTOR} *::before, ${ROOT_SELECTOR} *::after { box-
   position: relative;
 }
 .att-row:hover { background: var(--vscode-list-hoverBackground); }
-.att-row[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
+/*
+ * Selection carries a marker, not just a fill.
+ *
+ * The selected fill and the hover fill are two greys from the same family (interactive-bg-active
+ * vs interactive-bg-hover), close enough that a selected row under a resting pointer and a
+ * hovered row look the same. That ambiguity cost a walkthrough round: a row with the pointer on
+ * it was read as "still selected" while the real selection had moved, and it became a bug report
+ * about keyboard navigation that the state never had. A 2px inset bar is a claim hover cannot
+ * make, so "which row is selected" no longer depends on comparing two shades.
+ */
+.att-row[aria-selected="true"] {
+  background: var(--vscode-list-activeSelectionBackground);
+  box-shadow: inset 2px 0 0 var(--vscode-focusBorder);
+}
 /* flex: 0 0 auto is the part that matters: without it the label is a shrinkable flex item,
    and at 385px the address plus two badges squeezed it to about fifty pixels \u2014 the row read
    \u300C99....\u300D. A ceiling on its width still applies, so a long label cannot eat the address. */
