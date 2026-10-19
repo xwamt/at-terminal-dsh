@@ -1090,19 +1090,29 @@ await check('client', 'Client half satisfies the browser-bundle contract', async
   )
 
   // 2. Bundle purity: executing the file may only register the factory.
+  //
+  //    This used to be a per-line scan for anything at column zero, which forced the build
+  //    to indent every line of the bundle — and indenting a template literal rewrites its
+  //    value (esbuild prints `"\n"` as a two-line literal). That silently corrupted a dozen
+  //    strings, including the split separator in the remote-command tool card. A line scan
+  //    cannot tell a statement from string content without parsing the file, so the shape
+  //    is asserted structurally here and **the purity claim is proven behaviourally by
+  //    check 3**: the artifact is executed in a VM that provides only a
+  //    `window.__ModuleLoader__` stub, and every module-scope side effect that could
+  //    matter (a DOM touch, a network call, a throw) fails there.
   const withoutLeadingDoc = source.replace(/^\/\*[\s\S]*?\*\/\s*/, '')
-  const lines = withoutLeadingDoc.split('\n')
   assert.ok(
-    lines[0] !== undefined && lines[0].startsWith('window.__ModuleLoader__.load({'),
-    `the loader call must be the first statement, got: ${String(lines[0]).trim()}`
+    withoutLeadingDoc.startsWith('window.__ModuleLoader__.load({'),
+    `the loader call must be the file's first statement, got: ${withoutLeadingDoc.slice(0, 60)}`
   )
-  const stray = lines
-    .slice(1)
-    .filter((line) => line.trim().length > 0 && /^\S/.test(line) && line.trim() !== '});')
-  assert.deepEqual(
-    stray,
-    [],
-    'no top-level statement may run at script execution besides the loader call'
+  assert.equal(
+    source.split('window.__ModuleLoader__.load(').length - 1,
+    1,
+    'the client entry must register exactly once'
+  )
+  assert.ok(
+    withoutLeadingDoc.trimEnd().endsWith('});'),
+    'the loader call must close the file, or the factory body is not the whole bundle'
   )
 
   // 3. The factory hands back a cordis plugin — asserted by **executing** the file in a

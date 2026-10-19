@@ -6,6 +6,7 @@ import {
   TOOL_RUN_REMOTE_COMMAND,
   argsOf,
   commandOf,
+  displayServer,
   formatDuration,
   parseRemoteCommandOutput,
   resultText,
@@ -312,7 +313,7 @@ describe('the tool card geometry (UI2-12)', () => {
 
   it('caps the output so a runaway command cannot take over the transcript', () => {
     expect(ruleFor('.att-tool-out')).toContain('max-height: 224px');
-    expect(ruleFor('.att-tool-server')).toContain('max-width: 160px');
+    expect(ruleFor('.att-tool-server')).toContain('max-width: 88px');
   });
 
   it('drops the transition under reduced motion', () => {
@@ -347,5 +348,48 @@ describe('tool card copy (UI2-12)', () => {
       expect(zh[key], `zh ${key}`).toBeTruthy();
       expect(en[key], `en ${key}`).toBeTruthy();
     }
+  });
+});
+
+describe('the server column (D11)', () => {
+  it('shortens an asset id to something a row can afford', () => {
+    // An SSH asset's id is a UUID. Printed whole it took most of a narrow row and left the
+    // command as "$…", which is the one field a reader needs.
+    expect(displayServer('4d1fbefc-aeef-42e9-9008-62c04915affe')).toBe('4d1fbefc…');
+  });
+
+  it('leaves a name alone, because a name is already the short form', () => {
+    expect(displayServer('99.90')).toBe('99.90');
+    expect(displayServer('家用nas')).toBe('家用nas');
+    expect(displayServer('root@192.168.99.90:22')).toBe('root@192.168.99.90:22');
+  });
+
+  it('does not invent a label for an absent server', () => {
+    // Empty is the caller's cue to substitute the localised "no server" copy; returning a
+    // placeholder here would print two different nothings.
+    expect(displayServer('')).toBe('');
+  });
+
+  it('prints the short form, not the raw id', () => {
+    expect(CARD).toContain('displayServer(serverOf(args, output))');
+  });
+});
+
+describe('the shipped bundle keeps its string bytes', () => {
+  const BUNDLE = read('dsh/client.js');
+
+  it('carries no whitespace-only multi-line template literal', () => {
+    // esbuild prints a string containing a newline as a two-line template literal. The build
+    // wrapper used to indent every line for a textual purity check, which pushed four spaces
+    // *into* each of those literals — every '\n' in the client half became "\n    ". The tool
+    // card's split('\n') then never matched and its stdout was always empty. This is the
+    // artifact-level assertion for that class of bug: a literal holding only whitespace and
+    // spanning lines is never written by hand and is never correct.
+    expect(BUNDLE.match(/`\n[ \t]+`/g)).toBeNull();
+  });
+
+  it('splits output on a bare newline', () => {
+    expect(BUNDLE).toContain('body.split(`\n`)');
+    expect(BUNDLE).not.toContain('body.split(`\n ');
   });
 });

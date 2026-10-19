@@ -1798,7 +1798,10 @@ button.att-hud-pill-chip:hover {
    push the command — the only part worth reading — off the right edge. */
 .att-tool-server {
   flex: none;
-  max-width: 160px;
+  /* Narrow on purpose: the server is an identifier, the command is the content. A wide
+     server column clipped the command to $... on a real transcript, which is the one
+     field worth reading. */
+  max-width: 88px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

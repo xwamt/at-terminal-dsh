@@ -163,14 +163,19 @@ const clientDocblock = [
 /**
  * Wrap the CJS build in the ModuleLoader registration. The wrapper provides the
  * `module`/`exports` the bundle assigns to and returns them, exactly the shape the
- * handwritten first version had; every bundled line is indented so the loader call
- * stays the file's only top-level statement (verify.mjs check 7 walks top-level lines).
+ * handwritten first version had.
+ *
+ * **The bundle body is not re-indented, on purpose.** An earlier version prefixed every
+ * line with four spaces so that verify.mjs could prove, one line at a time, that nothing
+ * outside the factory ran at load. The proof was textual, and the price was silent
+ * corruption: `esbuild` prints a string containing a newline as a template literal holding
+ * a real newline, so indentation landed *inside* every `'\n'` in the client half — ours
+ * (a tool card split output on `"\n    "` and always rendered an empty stdout) and xterm's
+ * own. The verifier now proves the same property by executing the file in a VM with
+ * nothing but a `window.__ModuleLoader__` stub (see check 3), which is behavioural rather
+ * than typographic, and the bundle keeps its bytes verbatim.
  */
 function wrapClient(built) {
-  const indented = built
-    .split('\n')
-    .map((line) => (line.length === 0 ? line : `    ${line}`))
-    .join('\n');
   return [
     clientDocblock,
     'window.__ModuleLoader__.load({',
@@ -178,7 +183,7 @@ function wrapClient(built) {
     '  factory: (require) => {',
     '    var module = { exports: {} };',
     '    var exports = module.exports;',
-    indented,
+    built,
     '    return module.exports;',
     '  }',
     '});',

@@ -229,6 +229,24 @@ export function serverOf(args: Loose | null, output: RemoteCommandOutput | null)
   return args === null ? '' : readString(args, 'serverId');
 }
 
+/**
+ * The server as a row can afford to print it.
+ *
+ * The result names its target by **id**, and for an SSH asset that id is a UUID: 36
+ * characters, which on a real transcript ate the row and left the command as `$…` — the
+ * one field a user actually reads. An id carries no information a reader can use, so it is
+ * shortened to its first eight characters, which is enough to tell two servers apart in a
+ * conversation and short enough to leave the command its space. A caller that passes a
+ * name (the tool accepts one) is printed as given, because a name is already the short
+ * form.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function displayServer(id: string): string {
+  if (id === '') return '';
+  return UUID.test(id) ? `${id.slice(0, 8)}…` : id;
+}
+
 /** The Host's own state derivation, which decides the row's tone and whether it can open. */
 export function stateOf(block: unknown): CallState {
   const source = asLoose(block);
@@ -298,7 +316,7 @@ export function AtTerminalCommandRow(props: ToolCallOwnerProps): El {
   const output = parseRemoteCommandOutput(text);
   const args = argsOf(block);
   const command = commandOf(args, output);
-  const server = serverOf(args, output) || t('tool.command.noServer');
+  const server = displayServer(serverOf(args, output)) || t('tool.command.noServer');
 
   const live = state === 'preparing' || state === 'running';
   const expandable = !live && (output !== null || text !== '' || command !== '');
