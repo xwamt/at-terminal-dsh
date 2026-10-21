@@ -25,6 +25,7 @@ variants.
 | `index.js` | **Host half** — exports `Config`, `inject` and `apply(ctx, config)`; composes tools, the platform assembly and the channel. The assembly installs itself into the shared platform registry (`src/platform/current.ts`) the domain layer reads through — the dsh counterpart of `setPlatform` in `src/extension.ts`, and the call whose absence made every terminal connect fail with `platform not installed` until a real session found it |
 | `channel.js` | Host↔Client channel over `ctx.webServer`: unary RPC, SSE events, the byte-stream gauge and the terminal WebSocket (DSH-21/25). Mutating routes run a Host/Origin/`Sec-Fetch-Site`/content-type fence copied from the Harness's own `dsh-client-connection`; refusals are counted in `state.get().rejected` and logged with the request's own `host`/`origin` (never its body) |
 | `tools.js` | Tool definitions as plain data, already normalized for `ctx.tools.register()`. No `@deepseek-ai/*` import, so it loads without a dsh checkout |
+| `policy.js` | The classification table, the `ctx.tools.guard` and the `tools/pre-execute` stage. Every tool needs a row (an unclassified one is **denied**), sensitive-path deletes are refused outright, and command authorization is delegated to `authorizeCommand()` so the gate and the dialog cannot disagree. Imports nothing: the predicate and the authorizer are injected |
 | `settings.js` | Settings schema, constraints and defaults. Also free of `@deepseek-ai/*` imports; the schema factory takes the schemastery instance as an argument |
 | `host.bundle.js` | **Built** (committed): the TypeScript domain services (`src/platform/dsh/entry.ts`) compiled for the Host half |
 | `client.js` | **Built** (committed): the browser half — `src/platform/dsh/client/**` bundled with xterm and the reused webview assets into one ModuleLoader factory |
@@ -44,7 +45,7 @@ variants.
 node dsh/scripts/verify.mjs
 ```
 
-**Nine** independent checks; a non-zero exit fails the gate:
+**Ten** independent checks; a non-zero exit fails the gate:
 
 1. **syntax** — every shipped JavaScript file parses.
 2. **manifest** — the documented bundle contract (name/version/`exports`/patch
@@ -89,6 +90,11 @@ node dsh/scripts/verify.mjs
    references (and `color-mix(...)` that resolves through one), and the whole
    stylesheet is scanned for `rgb()`/`hsl()` forms a `#rrggbb` scan cannot see. A
    literal does not follow the light/dark switch, so it is a silent theme bug.
+10. **policy** — every tool `createTools()` registers has a row in
+   `dsh/policy.js`, and every row names a registered tool. The runtime guard
+   **denies** an unclassified tool, so a missing row is an outage while a stale row
+   is a table that lies; both directions are asserted, and the row that keeps
+   `sftp_delete` off sensitive paths is pinned by flag.
 
 Check 4 is static and always runs. Checks 5 and 6 extract the real
 `@deepseek-ai/dsh-tools` and `@deepseek-ai/schemastery` dependency closures out of

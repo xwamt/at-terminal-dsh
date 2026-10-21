@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 
 import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
+import { createGuard, createPreExecute } from './policy.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
@@ -42,6 +43,7 @@ import { createTools } from './tools.js'
 // a committed artifact because a `link:`-installed package runs no build step.
 import {
   TerminalContextRegistry,
+  buildCommandApprovalCopy,
   createDshAgentToolService,
   createDshAssetApi,
   createDshAuditLog,
@@ -49,7 +51,8 @@ import {
   createDshServerApi,
   createDshSftpApi,
   createDshTerminalApi,
-  importedPrivateKeyDirectory
+  importedPrivateKeyDirectory,
+  isSensitiveRemotePath
 } from './host.bundle.js'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
@@ -146,6 +149,46 @@ export function apply(ctx, config = {}) {
         : String(agentError?.message ?? agentError)
     throw Object.assign(new Error(detail), { code: 'services-unavailable' })
   }
+
+  /**
+   * Authorization at the registry layer, not inside each tool.
+   *
+   * A tool that forgets to check — or a caller that reaches the service another way — now
+   * still meets a classification (`dsh/policy.js`), a monotonic guard, and a `pre-execute`
+   * stage that asks through the Host's own approval channel. Registered outside the platform
+   * assembly on purpose: `ping` and the guard's "no row" denial must work in a profile whose
+   * storage or web carrier failed to open.
+   *
+   * The authorizer is `resolveAgentService().authorizeCommand()`, i.e. the same code the tool
+   * body runs, so the gate and the prompt cannot disagree about what needs approval.
+   */
+  ctx.effect(() => {
+    const releaseGuard = ctx.tools.guard(createGuard({ isSensitiveRemotePath }))
+    const off = ctx.on(
+      'tools/pre-execute',
+      createPreExecute({
+        authorize: async (input) => {
+          const { server, authorization } = await resolveAgentService().authorizeCommand(input)
+          return {
+            serverLabel: server.label,
+            host: server.host,
+            autoApprove: authorization.autoApprove,
+            destructive: authorization.destructive,
+            riskSummaries: authorization.riskSummaries
+          }
+        },
+        formatApprovalCopy: buildCommandApprovalCopy
+      })
+    )
+    return () => {
+      try {
+        off?.()
+      } catch {}
+      try {
+        releaseGuard?.()
+      } catch {}
+    }
+  }, 'at-terminal: tool policy')
 
   /**
    * The audit trail, mounted before anything else and outside the platform assembly.

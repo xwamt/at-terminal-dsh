@@ -68,12 +68,16 @@ export {
 } from './audit';
 export {
   DshAgentConfirmation,
+  buildCommandApprovalCopy,
   formatSftpWriteConfirmMessage,
   type DshApprovalOutcome,
   type DshApprovalRequest,
   type DshApprovalService,
   type DshCallContext
 } from './confirmation';
+// Injected into `dsh/policy.js` rather than reimplemented there: the guard must refuse the
+// same paths the authorizer resolves, and two copies of this rule would be two answers.
+export { isSensitiveRemotePath } from '../../agent/remoteWritePolicy';
 export { TerminalContextRegistry } from '../../terminal/TerminalContext';
 export { HardwareMetricsCollector } from '../../agent/HardwareMetricsCollector';
 export { AgentExecutionBridge } from '../../agent/AgentExecutionBridge';

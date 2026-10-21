@@ -199,7 +199,7 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 # 1. 编译构建宿主与客户端 Bundle
 npm run build
 
-# 2. 执行 DSH 官方规范契约校验 (9 项自动化合规规则全部检查)
+# 2. 执行 DSH 官方规范契约校验 (10 项自动化合规规则全部检查)
 npm run verify:dsh
 
 # 3. 执行仓库内核隔离校验 (4 项：src/core 自封闭 / 零 vscode / 零 @deepseek-ai 导入 / 组合根调 setPlatform)

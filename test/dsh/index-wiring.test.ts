@@ -101,6 +101,7 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
   const routes = new Map<string, Route>();
   const upgrades = new Map<string, Route>();
   const tools: Array<{ name?: string; execute?: (...args: any[]) => Promise<any> }> = [];
+  const guards: Array<(exec: any) => string | undefined> = [];
   const logger = new RecordingDshLogger();
   const disposers: Array<() => void> = [];
   const injections: string[][] = [];
@@ -181,11 +182,21 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
           const index = tools.indexOf(definition);
           if (index !== -1) tools.splice(index, 1);
         };
+      },
+      // `ctx.tools.guard()` returns the exact disposer that unregisters it, and the host
+      // half relies on that: a leaked guard would outlive the plugin and deny its tools
+      // after a reload.
+      guard(reason: (exec: any) => string | undefined) {
+        guards.push(reason);
+        return () => {
+          const index = guards.indexOf(reason);
+          if (index !== -1) guards.splice(index, 1);
+        };
       }
     }
   });
 
-  return { ctx, routes, upgrades, tools, logger, disposers, injections, listeners };
+  return { ctx, routes, upgrades, tools, guards, logger, disposers, injections, listeners };
 }
 
 /** Drive the `/rpc` route the way the browser half does. */
@@ -525,6 +536,34 @@ describe('dsh Host half — wiring', () => {
     // Disposing releases both routes and registered tools
     for (const dispose of harness.disposers) dispose();
     expect(harness.tools).toHaveLength(0);
+    // …and the guard, which would otherwise keep denying calls after a reload.
+    expect(harness.guards).toHaveLength(0);
+  });
+
+  it('mounts the guard and the pre-execute stage before the platform exists', () => {
+    // Both are registered outside the `ctx.inject` block, because the denial they carry has
+    // to work in a profile whose storage or web carrier never opened. This test reads the
+    // registration itself: one guard, one `tools/pre-execute` listener, and the guard decides
+    // an unclassified AT Terminal tool rather than letting it through.
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+
+    expect(harness.guards).toHaveLength(1);
+    expect(harness.listeners.get('tools/pre-execute')?.size).toBe(1);
+
+    const guard = harness.guards[0];
+    expect(guard({ name: 'at_terminal_ping', arguments: {} })).toBeUndefined();
+    expect(guard({ name: 'not_ours', arguments: {} })).toBeUndefined();
+    expect(guard({ name: 'at_terminal_sftp_delete', arguments: { path: '/srv/logs/a.log' } })).toBeUndefined();
+    // Two refusals: an unclassified tool of ours, and a sensitive delete.
+    expect(guard({ name: 'at_terminal_unclassified', arguments: {} })).toContain('no row in dsh/policy.js');
+    expect(guard({ name: 'at_terminal_sftp_delete', arguments: { path: '/etc/cron.d/backup' } })).toContain(
+      'sensitive system path'
+    );
+
+    for (const dispose of harness.disposers) dispose();
+    expect(harness.guards).toHaveLength(0);
+    expect(harness.listeners.get('tools/pre-execute')?.size ?? 0).toBe(0);
   });
 
   it('lands one audit line per at_terminal_* call, and reports `file` as the status source', async () => {

@@ -5,6 +5,7 @@ import type { AgentAuditRecorder } from './AgentAuditLog';
 import type { AgentConfirmationPort } from './AgentConfirmationPort';
 import type { RemoteCommandExecutor, RemoteCommandResult } from './RemoteCommandExecutor';
 import { authorizeRemoteCommand, resolveAgentCommandTrust } from './agentCommandTrust';
+import type { RemoteCommandAuthorization } from './remoteCommandAuthorization';
 import type { RemoteCommandPolicyEvaluator } from './loadRemoteCommandPolicy';
 import type { SftpAgentService } from './SftpAgentService';
 import type { HardwareMetricsCollector } from './HardwareMetricsCollector';
@@ -61,6 +62,22 @@ export interface RunRemoteCommandInput {
   timeoutMs?: number;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+  /**
+   * What the registry's `tools/pre-execute` stage already concluded for this execution.
+   *
+   * `asked` means the Host put the question to the user and this call only reached the body
+   * because the answer was `allowed-once`; asking again here would be two dialogs for one
+   * command. Absent means no stage ran (a direct service call, or the stage was rolled
+   * back), and this method falls back to the 0.2.0 behaviour of deciding and asking itself.
+   */
+  preAuthorized?: 'auto-approved' | 'asked';
+}
+
+/** What an authorization asks about, before anything runs. */
+export interface RemoteCommandAuthorizationInput {
+  serverId?: string;
+  command: string;
+  cwd?: string;
 }
 
 export class AgentToolService {
@@ -99,6 +116,28 @@ export class AgentToolService {
     return this.dependencies.terminalContext.getSnapshot();
   }
 
+  /**
+   * Resolve the server and decide whether this command needs a human, without running it.
+   *
+   * Exposed so `dsh/policy.js` can ask the registry-layer question at `tools/pre-execute`
+   * by calling **this** method rather than re-deriving trust and policy on its own: two
+   * implementations of "does this need approval" is precisely how a prompt and a gate
+   * start disagreeing. `runRemoteCommand` calls it too, so the tool body and the gate share
+   * one answer.
+   */
+  async authorizeCommand(
+    input: RemoteCommandAuthorizationInput
+  ): Promise<{ server: ServerConfig; authorization: RemoteCommandAuthorization }> {
+    const server = await this.resolveServer(input.serverId);
+    const authorization = await authorizeRemoteCommand({
+      server,
+      command: input.command,
+      cwd: input.cwd,
+      evaluator: this.dependencies.policyEvaluator
+    });
+    return { server, authorization };
+  }
+
   async runRemoteCommand(input: RunRemoteCommandInput): Promise<RemoteCommandResult> {
     const command = input.command?.trim();
     if (!command) {
@@ -114,32 +153,41 @@ export class AgentToolService {
       status: 'running'
     });
     try {
-      const server = await this.resolveServer(input.serverId);
-      const authorization = await authorizeRemoteCommand({
-        server,
+      const { server, authorization } = await this.authorizeCommand({
+        serverId: input.serverId,
         command,
-        cwd: input.cwd,
-        evaluator: this.dependencies.policyEvaluator
+        cwd: input.cwd
       });
+      // `pre-execute` either proved the server trusts this command (`auto-approved`) or put
+      // the question to the user (`asked`). In both cases the answer is already in, and the
+      // check below only decides whether *this* layer has to open a dialog — the
+      // authorization itself is never skipped.
+      const settled =
+        input.preAuthorized === 'asked' ||
+        (input.preAuthorized === 'auto-approved' && authorization.autoApprove);
       if (!authorization.autoApprove) {
-        this.dependencies.executionBridge?.recordActionStatus(actionId, 'confirmation_waiting');
-        if (!this.dependencies.confirmation) {
-          throw new Error('Command requires human confirmation, but no confirmation channel is available.');
+        if (settled) {
+          reasonCode = 'user_approved';
+        } else {
+          this.dependencies.executionBridge?.recordActionStatus(actionId, 'confirmation_waiting');
+          if (!this.dependencies.confirmation) {
+            throw new Error('Command requires human confirmation, but no confirmation channel is available.');
+          }
+          const approved = await this.dependencies.confirmation.confirmCommand({
+            serverLabel: server.label,
+            host: server.host,
+            command,
+            destructive: authorization.destructive,
+            riskSummaries: authorization.riskSummaries,
+            signal: input.signal
+          });
+          if (!approved) {
+            reasonCode = 'user_cancelled';
+            throw new Error('Remote command was cancelled.');
+          }
+          reasonCode = 'user_approved';
+          this.dependencies.executionBridge?.recordActionStatus(actionId, 'running');
         }
-        const approved = await this.dependencies.confirmation.confirmCommand({
-          serverLabel: server.label,
-          host: server.host,
-          command,
-          destructive: authorization.destructive,
-          riskSummaries: authorization.riskSummaries,
-          signal: input.signal
-        });
-        if (!approved) {
-          reasonCode = 'user_cancelled';
-          throw new Error('Remote command was cancelled.');
-        }
-        reasonCode = 'user_approved';
-        this.dependencies.executionBridge?.recordActionStatus(actionId, 'running');
       }
       const result = await this.dependencies.executor.execute(server, {
         command,

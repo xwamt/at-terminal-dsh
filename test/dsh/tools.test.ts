@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 // @ts-expect-error plain-JS host module
 import { createTools } from '../../dsh/tools.js';
+// @ts-expect-error plain-JS host module
+import { recordDecision } from '../../dsh/policy.js';
 
 describe('dsh/tools.js createTools', () => {
   it('registers ping plus 11 AT Terminal operational tools', () => {
@@ -75,6 +77,36 @@ describe('dsh/tools.js createTools', () => {
     }
   });
 
+  it('hands the pre-execute conclusion to the service, so one command gets one dialog', async () => {
+    // The registry mints one `exec` object per call and passes the same object to
+    // `tools/pre-execute` and to `execute(args, exec)`; `policy.js` keys its WeakMap on it.
+    // This test stands in for that: record a decision on the exec, then check the tool
+    // forwards it rather than dropping it.
+    const mockService = { runRemoteCommand: vi.fn().mockResolvedValue({ serverId: 's1', stdout: '', stderr: '' }) };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const runTool = tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+    const exec: Record<string, unknown> = { signal: undefined };
+    recordDecision(exec, 'asked');
+
+    await runTool.execute({ serverId: 's1', command: 'uptime' }, exec);
+
+    expect(mockService.runRemoteCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'uptime', preAuthorized: 'asked' })
+    );
+  });
+
+  it('does not invent a pre-authorization for an exec nobody decided', async () => {
+    const mockService = { runRemoteCommand: vi.fn().mockResolvedValue({ serverId: 's1', stdout: '', stderr: '' }) };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const runTool = tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+
+    await runTool.execute({ serverId: 's1', command: 'uptime' }, { signal: undefined });
+
+    expect(mockService.runRemoteCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ preAuthorized: undefined })
+    );
+  });
+
   it('delegates run_remote_command execution with abort signal', async () => {
     const mockService = {
       runRemoteCommand: vi.fn().mockResolvedValue({
@@ -109,7 +141,10 @@ describe('dsh/tools.js createTools', () => {
       serverId: 's1',
       command: 'ls -la',
       cwd: '/home',
-      signal: abortController.signal
+      signal: abortController.signal,
+      // No `tools/pre-execute` ran for this direct call, so there is nothing to hand over —
+      // and the service falls back to deciding and asking itself.
+      preAuthorized: undefined
     });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe('total 0');

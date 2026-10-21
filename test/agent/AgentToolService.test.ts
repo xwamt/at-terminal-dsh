@@ -809,6 +809,81 @@ describe('AgentToolService', () => {
     expect(execute).toHaveBeenCalled();
   });
 
+  it('does not open a second dialog for a command the registry stage already asked about', async () => {
+    // One prompt per command is the whole point of handing the decision over: the registry's
+    // `tools/pre-execute` put the question, the user answered `allowed-once`, and the body
+    // only runs because of that. Asking again would be the regression this hand-off prevents.
+    const untrusted = { ...server(), backgroundConnectionAllowed: true };
+    const execute = vi.fn(async () => ({
+      serverId: 'server-1',
+      serverLabel: 'Production',
+      host: 'server-1.example.com',
+      command: 'systemctl restart nginx',
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      durationMs: 1,
+      timedOut: false,
+      truncated: false
+    }));
+    const service = createService({
+      configManager: { getServer: async () => untrusted, listServers: async () => [untrusted] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute } as unknown as RemoteCommandExecutor
+    });
+
+    await service.runRemoteCommand({
+      serverId: 'server-1',
+      command: 'systemctl restart nginx',
+      preAuthorized: 'asked'
+    });
+
+    expect(mockConfirmation.confirmCommand).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalled();
+  });
+
+  it('still asks when the registry said the command was auto-approved but it no longer is', async () => {
+    // Trust can be lowered between `pre-execute` and dispatch. The hand-off is a prompt
+    // decision, never an authorization decision, so the body's own check still decides.
+    const untrusted = { ...server(), backgroundConnectionAllowed: true };
+    const execute = vi.fn();
+    const service = createService({
+      configManager: { getServer: async () => untrusted, listServers: async () => [untrusted] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute } as unknown as RemoteCommandExecutor
+    });
+
+    await service.runRemoteCommand({ serverId: 'server-1', command: 'uptime', preAuthorized: 'auto-approved' });
+
+    expect(mockConfirmation.confirmCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not ask for a fully trusted command that the registry cleared', async () => {
+    const trusted = { ...server(), backgroundConnectionAllowed: true, agentCommandTrust: 'full' as const };
+    const service = createService({
+      configManager: { getServer: async () => trusted, listServers: async () => [trusted] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: {
+        execute: vi.fn(async () => ({
+          serverId: 'server-1',
+          serverLabel: 'Production',
+          host: 'server-1.example.com',
+          command: 'uptime',
+          exitCode: 0,
+          stdout: 'ok',
+          stderr: '',
+          durationMs: 1,
+          timedOut: false,
+          truncated: false
+        }))
+      } as unknown as RemoteCommandExecutor
+    });
+
+    await service.runRemoteCommand({ serverId: 'server-1', command: 'uptime', preAuthorized: 'auto-approved' });
+
+    expect(mockConfirmation.confirmCommand).not.toHaveBeenCalled();
+  });
+
   it('answers open_monitor with no-client when nobody is listening, and does not broadcast', async () => {
     // The old answer was `opened: true` unconditionally, so a model could tell the user "the
     // monitor is open" while the broadcast went into an empty set. The presence seam is the

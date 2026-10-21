@@ -25,6 +25,7 @@
  */
 
 import { SETTINGS_FIELDS, readSettings } from './settings.js'
+import { readPreExecuteDecision } from './policy.js'
 
 /** Plugin identity as it appears in the bundle patch row. */
 export const AT_TERMINAL_PLUGIN_ID = 'at-terminal'
@@ -438,7 +439,12 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
         const service = resolveAgentService()
         const result = await service.runRemoteCommand({
           ...input,
-          signal: exec?.signal
+          signal: exec?.signal,
+          // The registry's `tools/pre-execute` stage already put this question to the user
+          // (or proved the server trusts the command). Handing that conclusion over is what
+          // keeps one prompt per command: the service keeps its own authorization check, but
+          // it no longer opens a second dialog.
+          preAuthorized: readPreExecuteDecision(exec)
         })
         return {
           serverId: result.serverId,

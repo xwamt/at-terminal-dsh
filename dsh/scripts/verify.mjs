@@ -2,7 +2,7 @@
 /**
  * AT Terminal — dsh bundle verification (M0 gate).
  *
- * Runs six independent checks and exits non-zero if any of them fails:
+ * Runs ten independent checks and exits non-zero if any of them fails:
  *
  *   1. syntax   — every shipped JavaScript file parses
  *   2. manifest — `package.json` satisfies the documented bundle contract
@@ -19,6 +19,11 @@
  *                 `@deepseek-ai/schemastery`, resolves the documented defaults,
  *                 exposes every field as volatile, and **rejects** illegal
  *                 values through the same `~standard` path dsh validates with
+ *   7. client   — the client half satisfies the browser-bundle contract
+ *   8. bundle   — both committed artifacts match their sources byte for byte
+ *   9. theme-tokens — the token bridge carries no literal colors
+ *  10. policy   — every registered tool is classified in `dsh/policy.js`, and
+ *                 every row names a tool this bundle registers
  *
  * Check 4 is static and always runs. Checks 5 and 6 extract the real package
  * dependency closures out of the installed DeepSeek Harness archive into
@@ -1377,6 +1382,53 @@ await check('theme-tokens', 'The token bridge carries no literal colors', () => 
   )
 
   return `${declarations.length} bridge variables, all theme references; no functional colors`
+})
+
+/* ------------------------------- 10. policy -------------------------------- */
+
+/**
+ * Every registered tool is classified, and every classification is a registered tool.
+ *
+ * `dsh/policy.js` is what makes the registry-layer guard possible: a tool with no row is
+ * denied outright (`createGuard`), so a row that goes missing is an outage and a tool that
+ * ship without one is an unguarded entry point. Both directions are asserted because both
+ * mistakes are silent — a stale row would let `verify` pass while the table lies about what
+ * this bundle can do.
+ *
+ * The categories are checked too: a typo like `write_remote` would otherwise sit in the table
+ * looking classified while no stage recognised it.
+ */
+await check('policy', 'Every tool is classified, and every classification is a tool', async () => {
+  const { TOOL_POLICY, RISK_CATEGORIES } = await import('../policy.js')
+  const registered = createTools({ version: manifest.version }).map((tool) => tool.name)
+  const classified = Object.keys(TOOL_POLICY)
+
+  const unclassified = registered.filter((name) => !classified.includes(name))
+  const stale = classified.filter((name) => !registered.includes(name))
+  assert.equal(
+    unclassified.length,
+    0,
+    `${unclassified.length} tool(s) have no row in dsh/policy.js and would be denied at runtime: ${unclassified.join(', ')}`
+  )
+  assert.equal(
+    stale.length,
+    0,
+    `${stale.length} row(s) describe tools this bundle does not register: ${stale.join(', ')}`
+  )
+
+  for (const [name, entry] of Object.entries(TOOL_POLICY)) {
+    assert.ok(
+      RISK_CATEGORIES.includes(entry.risk),
+      `${name}: "${entry.risk}" is not one of ${RISK_CATEGORIES.join(', ')}`
+    )
+  }
+
+  // The one row whose guard behaviour is load-bearing gets its flag pinned: without it,
+  // `at_terminal_sftp_delete` would accept sensitive paths and the guard would be decorative.
+  assert.equal(TOOL_POLICY.at_terminal_sftp_delete.guard, 'refuse-sensitive-path')
+  assert.equal(TOOL_POLICY.at_terminal_get_hardware_metrics.probe, 'builtin')
+
+  return `${classified.length} classified tool(s), ${RISK_CATEGORIES.length} risk categories`
 })
 
 /* ----------------------------------- report ----------------------------------- */

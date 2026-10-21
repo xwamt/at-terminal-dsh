@@ -16214,6 +16214,24 @@ var AgentToolService = class {
   async getTerminalContext() {
     return this.dependencies.terminalContext.getSnapshot();
   }
+  /**
+   * Resolve the server and decide whether this command needs a human, without running it.
+   *
+   * Exposed so `dsh/policy.js` can ask the registry-layer question at `tools/pre-execute`
+   * by calling **this** method rather than re-deriving trust and policy on its own: two
+   * implementations of "does this need approval" is precisely how a prompt and a gate
+   * start disagreeing. `runRemoteCommand` calls it too, so the tool body and the gate share
+   * one answer.
+   */
+  async authorizeCommand(input) {
+    let server = await this.resolveServer(input.serverId), authorization = await authorizeRemoteCommand({
+      server,
+      command: input.command,
+      cwd: input.cwd,
+      evaluator: this.dependencies.policyEvaluator
+    });
+    return { server, authorization };
+  }
   async runRemoteCommand(input) {
     let command = input.command?.trim();
     if (!command)
@@ -16226,26 +16244,28 @@ var AgentToolService = class {
       status: "running"
     });
     try {
-      let server = await this.resolveServer(input.serverId), authorization = await authorizeRemoteCommand({
-        server,
+      let { server, authorization } = await this.authorizeCommand({
+        serverId: input.serverId,
         command,
-        cwd: input.cwd,
-        evaluator: this.dependencies.policyEvaluator
-      });
-      if (!authorization.autoApprove) {
-        if (this.dependencies.executionBridge?.recordActionStatus(actionId, "confirmation_waiting"), !this.dependencies.confirmation)
-          throw new Error("Command requires human confirmation, but no confirmation channel is available.");
-        if (!await this.dependencies.confirmation.confirmCommand({
-          serverLabel: server.label,
-          host: server.host,
-          command,
-          destructive: authorization.destructive,
-          riskSummaries: authorization.riskSummaries,
-          signal: input.signal
-        }))
-          throw reasonCode = "user_cancelled", new Error("Remote command was cancelled.");
-        reasonCode = "user_approved", this.dependencies.executionBridge?.recordActionStatus(actionId, "running");
-      }
+        cwd: input.cwd
+      }), settled = input.preAuthorized === "asked" || input.preAuthorized === "auto-approved" && authorization.autoApprove;
+      if (!authorization.autoApprove)
+        if (settled)
+          reasonCode = "user_approved";
+        else {
+          if (this.dependencies.executionBridge?.recordActionStatus(actionId, "confirmation_waiting"), !this.dependencies.confirmation)
+            throw new Error("Command requires human confirmation, but no confirmation channel is available.");
+          if (!await this.dependencies.confirmation.confirmCommand({
+            serverLabel: server.label,
+            host: server.host,
+            command,
+            destructive: authorization.destructive,
+            riskSummaries: authorization.riskSummaries,
+            signal: input.signal
+          }))
+            throw reasonCode = "user_cancelled", new Error("Remote command was cancelled.");
+          reasonCode = "user_approved", this.dependencies.executionBridge?.recordActionStatus(actionId, "running");
+        }
       let result = await this.dependencies.executor.execute(server, {
         command,
         cwd: input.cwd,
@@ -18574,15 +18594,13 @@ var DshAgentConfirmation = class {
       throw new Error(
         `Command "${request.command}" requires approval, but no human approval channel is available.`
       );
-    let reason = request.destructive ? `\u26A0\uFE0F Destructive command warning: ${request.command}` : `Remote command requires confirmation: ${request.command}`, baseMessage = formatRemoteCommandConfirmMessage({
+    let { reason, displayReason } = buildCommandApprovalCopy({
       serverLabel: request.serverLabel,
       host: request.host,
       command: request.command,
       destructive: request.destructive,
       riskSummaries: request.riskSummaries
-    }), displayReason = request.destructive ? `\u26A0\uFE0F Destructive command warning: this command appears destructive!
-
-${baseMessage}` : baseMessage;
+    });
     return await approval.request({
       agent: callCtx.agent,
       toolName: "run_remote_command",
@@ -18611,6 +18629,18 @@ ${baseMessage}` : baseMessage;
     }) === "allowed-once" ? "once" : void 0;
   }
 };
+function buildCommandApprovalCopy(request) {
+  let reason = request.destructive ? `\u26A0\uFE0F Destructive command warning: ${request.command}` : `Remote command requires confirmation: ${request.command}`, baseMessage = formatRemoteCommandConfirmMessage({
+    serverLabel: request.serverLabel,
+    host: request.host,
+    command: request.command,
+    destructive: request.destructive,
+    riskSummaries: request.riskSummaries
+  }), displayReason = request.destructive ? `\u26A0\uFE0F Destructive command warning: this command appears destructive!
+
+${baseMessage}` : baseMessage;
+  return { reason, displayReason };
+}
 function formatSftpWriteConfirmMessage(confirmation) {
   let { server, request } = confirmation, isDelete = request.operation === "delete_file", warnings = [];
   return confirmation.outsideWorkspace && warnings.push(
@@ -18925,6 +18955,7 @@ export {
   SFTP_TEXT_MAX_BYTES,
   SFTP_TRANSFER_MAX_BYTES,
   TerminalContextRegistry,
+  buildCommandApprovalCopy,
   createDshAgentToolService,
   createDshAssetApi,
   createDshAuditLog,
@@ -18935,5 +18966,6 @@ export {
   createDshTerminalApi,
   formatSftpWriteConfirmMessage,
   importedPrivateKeyDirectory,
+  isSensitiveRemotePath,
   resolveDshPolicyAssetDirectory
 };

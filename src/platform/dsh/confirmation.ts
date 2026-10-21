@@ -49,21 +49,13 @@ export class DshAgentConfirmation implements AgentConfirmationPort {
       );
     }
 
-    const reason = request.destructive
-      ? `⚠️ Destructive command warning: ${request.command}`
-      : `Remote command requires confirmation: ${request.command}`;
-
-    const baseMessage = formatRemoteCommandConfirmMessage({
+    const { reason, displayReason } = buildCommandApprovalCopy({
       serverLabel: request.serverLabel,
       host: request.host,
       command: request.command,
       destructive: request.destructive,
       riskSummaries: request.riskSummaries
     });
-
-    const displayReason = request.destructive
-      ? `⚠️ Destructive command warning: this command appears destructive!\n\n${baseMessage}`
-      : baseMessage;
 
     const outcome = await approval.request({
       agent: callCtx.agent,
@@ -109,6 +101,41 @@ export class DshAgentConfirmation implements AgentConfirmationPort {
 
     return outcome === 'allowed-once' ? 'once' : undefined;
   }
+}
+
+/**
+ * The two strings a remote-command approval is made of.
+ *
+ * Extracted because the same question is now asked from two places: this class (the tool
+ * body, when the registry stage did not run) and `dsh/policy.js` (the registry's
+ * `tools/pre-execute` stage). Two builders would drift on the first wording change, and the
+ * plan's acceptance criterion for 0.2.1 is that the dialog text is unchanged — which is only
+ * structural if there is one builder.
+ */
+export function buildCommandApprovalCopy(request: {
+  serverLabel: string;
+  host: string;
+  command: string;
+  destructive: boolean;
+  riskSummaries?: readonly string[];
+}): { reason: string; displayReason: string } {
+  const reason = request.destructive
+    ? `⚠️ Destructive command warning: ${request.command}`
+    : `Remote command requires confirmation: ${request.command}`;
+
+  const baseMessage = formatRemoteCommandConfirmMessage({
+    serverLabel: request.serverLabel,
+    host: request.host,
+    command: request.command,
+    destructive: request.destructive,
+    riskSummaries: request.riskSummaries
+  });
+
+  const displayReason = request.destructive
+    ? `⚠️ Destructive command warning: this command appears destructive!\n\n${baseMessage}`
+    : baseMessage;
+
+  return { reason, displayReason };
 }
 
 export function formatSftpWriteConfirmMessage(confirmation: SftpWriteConfirmation): string {
