@@ -84,6 +84,19 @@ const MAX_ENTRIES = 5_000;
 const WRITE_TIMEOUT_MS = 60_000;
 
 /**
+ * Read-side deadline.
+ *
+ * The write paths always had one, because a write that never returns holds a confirmation
+ * prompt and a half-written file. Reads had none: a stalled SFTP channel made `read_file`
+ * return an empty-looking result, which the model reads as "the file is empty" rather than
+ * "the connection is gone" — the difference between a wrong answer and a retryable failure.
+ *
+ * Shorter than the write budget on purpose: a write has a human in the loop (the authorizer
+ * prompt), a read does not.
+ */
+const READ_TIMEOUT_MS = 30_000;
+
+/**
  * How long an idle background session is kept before its SSH connection is closed.
  * Mirrors `RemoteCommandExecutor`: long enough for the pauses in an agent conversation,
  * short enough that an abandoned chat does not hold a server-side session all day.
@@ -105,7 +118,11 @@ export class SftpAgentService {
       const lease = await this.leaseFor(target);
       try {
         const path = await this.resolvePath(lease, input.path);
-        const entries = await lease.session.listDirectory(path);
+        const entries = await withTimeout(
+          lease.session.listDirectory(path),
+          READ_TIMEOUT_MS,
+          `Timed out listing remote directory ${path}.`
+        );
         const maxEntries = clampMaxEntries(input.maxEntries);
         const offset = clampListOffset(input.offset);
         const page = entries.slice(offset, offset + maxEntries);
@@ -134,7 +151,11 @@ export class SftpAgentService {
           terminalId: target.terminalId,
           serverId: target.server.id,
           path,
-          ...(await lease.session.stat(path))
+          ...(await withTimeout(
+            lease.session.stat(path),
+            READ_TIMEOUT_MS,
+            `Timed out reading metadata for ${path}.`
+          ))
         };
       } finally {
         lease.release();
@@ -148,14 +169,24 @@ export class SftpAgentService {
       const lease = await this.leaseFor(target);
       try {
         const path = await this.resolvePath(lease, input.path);
-        const stat = await lease.session.stat(path);
+        const stat = await withTimeout(
+          lease.session.stat(path),
+          READ_TIMEOUT_MS,
+          `Timed out reading metadata for ${path}.`
+        );
         const maxBytes = clampReadBytes(input.maxBytes);
         const start = resolveReadStart(input.offset, stat.size);
         const window = Math.min(Math.max(stat.size - start, 0), maxBytes);
         const buffer =
           window === 0
             ? Buffer.alloc(0)
-            : (await lease.session.readFile(path, window, start)).subarray(0, window);
+            : (
+                await withTimeout(
+                  lease.session.readFile(path, window, start),
+                  READ_TIMEOUT_MS,
+                  `Timed out reading remote file ${path}.`
+                )
+              ).subarray(0, window);
         if (looksBinary(buffer)) {
           throw new Error('Remote file appears to be binary.');
         }
@@ -688,6 +719,11 @@ function auditReasonForError(error: unknown): string {
   }
   if (message.includes('Timed out waiting for SFTP')) {
     return 'confirmation_timeout';
+  }
+  // A stalled channel is not a permission problem and not a bug: it is the case the read
+  // deadline exists for, so it gets its own code rather than `error`.
+  if (message.includes('Timed out reading') || message.includes('Timed out listing')) {
+    return 'read_timeout';
   }
   return 'error';
 }

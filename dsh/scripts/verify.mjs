@@ -679,6 +679,7 @@ if (sandboxSkipReason !== null) {
     assert.ok(Array.isArray(CAPABILITIES) && Object.isFrozen(CAPABILITIES), 'CAPABILITIES must be a frozen array')
     assert.ok(CAPABILITIES.includes('plugin-skeleton'), 'CAPABILITIES must list plugin-skeleton')
     assert.ok(CAPABILITIES.includes('direct-agent-tools'), 'CAPABILITIES must list direct-agent-tools')
+    assert.ok(CAPABILITIES.includes('tool-timeouts'), 'CAPABILITIES must list tool-timeouts once tools declare them')
 
     // The bundle hands `register()` a ready definition, so the gate pins the
     // two normalized shapes against the real package instead of re-deriving
@@ -879,6 +880,19 @@ if (sandboxSkipReason !== null) {
 
     const definitions = createTools({ version: manifest.version, resolveAgentService: () => mockService })
     assert.equal(definitions.length, 15, 'bundle must contribute exactly 15 tools')
+
+    // `register()` accepts a missing `timeoutMs` (it only rejects a non-positive one), so a
+    // tool that forgot to declare a bound hangs until the user cancels. Declaring it on every
+    // tool — including the ones that cannot block — keeps this one rule instead of an
+    // allowlist that would itself need maintaining.
+    const undeclared = definitions
+      .filter((definition) => !(Number.isFinite(definition.timeoutMs) && definition.timeoutMs > 0))
+      .map((definition) => definition.name)
+    assert.equal(
+      undeclared.length,
+      0,
+      `${undeclared.length} tool(s) declare no timeoutMs and would hang until cancelled: ${undeclared.join(', ')}`
+    )
 
     const seen = new Set()
     for (const definition of definitions) {

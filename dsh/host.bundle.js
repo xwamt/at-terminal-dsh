@@ -17066,7 +17066,7 @@ var OutputBuffer = class {
 };
 
 // src/agent/SftpAgentService.ts
-var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
+var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
   constructor(options) {
     this.options = options;
   }
@@ -17079,7 +17079,11 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     return await this.withAudit("sftp_list_directory", input, async () => {
       let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
       try {
-        let path = await this.resolvePath(lease, input.path), entries = await lease.session.listDirectory(path), maxEntries = clampMaxEntries(input.maxEntries), offset = clampListOffset(input.offset), page = entries.slice(offset, offset + maxEntries);
+        let path = await this.resolvePath(lease, input.path), entries = await withTimeout2(
+          lease.session.listDirectory(path),
+          READ_TIMEOUT_MS,
+          `Timed out listing remote directory ${path}.`
+        ), maxEntries = clampMaxEntries(input.maxEntries), offset = clampListOffset(input.offset), page = entries.slice(offset, offset + maxEntries);
         return {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
@@ -17103,7 +17107,11 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
           terminalId: target2.terminalId,
           serverId: target2.server.id,
           path,
-          ...await lease.session.stat(path)
+          ...await withTimeout2(
+            lease.session.stat(path),
+            READ_TIMEOUT_MS,
+            `Timed out reading metadata for ${path}.`
+          )
         };
       } finally {
         lease.release();
@@ -17114,7 +17122,15 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     return await this.withAudit("sftp_read_file", input, async () => {
       let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
       try {
-        let path = await this.resolvePath(lease, input.path), stat = await lease.session.stat(path), maxBytes = clampReadBytes(input.maxBytes), start2 = resolveReadStart(input.offset, stat.size), window2 = Math.min(Math.max(stat.size - start2, 0), maxBytes), buffer = window2 === 0 ? Buffer.alloc(0) : (await lease.session.readFile(path, window2, start2)).subarray(0, window2);
+        let path = await this.resolvePath(lease, input.path), stat = await withTimeout2(
+          lease.session.stat(path),
+          READ_TIMEOUT_MS,
+          `Timed out reading metadata for ${path}.`
+        ), maxBytes = clampReadBytes(input.maxBytes), start2 = resolveReadStart(input.offset, stat.size), window2 = Math.min(Math.max(stat.size - start2, 0), maxBytes), buffer = window2 === 0 ? Buffer.alloc(0) : (await withTimeout2(
+          lease.session.readFile(path, window2, start2),
+          READ_TIMEOUT_MS,
+          `Timed out reading remote file ${path}.`
+        )).subarray(0, window2);
         if (looksBinary(buffer))
           throw new Error("Remote file appears to be binary.");
         return {
@@ -17473,7 +17489,7 @@ function looksBinary(buffer) {
 }
 function auditReasonForError2(error) {
   let message = error instanceof Error ? error.message : String(error);
-  return message.includes("was cancelled") ? "user_cancelled" : message.includes("does not allow background connections") ? "background_denied" : message.includes("Timed out waiting for SFTP") ? "confirmation_timeout" : "error";
+  return message.includes("was cancelled") ? "user_cancelled" : message.includes("does not allow background connections") ? "background_denied" : message.includes("Timed out waiting for SFTP") ? "confirmation_timeout" : message.includes("Timed out reading") || message.includes("Timed out listing") ? "read_timeout" : "error";
 }
 async function withTimeout2(promise, timeoutMs, message) {
   let timer;

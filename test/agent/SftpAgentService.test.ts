@@ -852,3 +852,87 @@ describe('SftpAgentService audit', () => {
     );
   });
 });
+
+/**
+ * A stalled SFTP channel used to be indistinguishable from an empty file.
+ *
+ * `readFile` returned whatever the session eventually gave it, so a channel that never
+ * answered looked like a zero-byte read to the model — a wrong answer rather than a
+ * retryable failure. The write paths always had a deadline; these pin the read side.
+ */
+describe('SftpAgentService read deadlines', () => {
+  /** A promise that never settles, so only the deadline can end the call. */
+  function hang(): Promise<never> {
+    return new Promise<never>(() => {});
+  }
+
+  async function expectTimeout(
+    call: (service: SftpAgentService) => Promise<unknown>,
+    sessionOverrides: Parameters<typeof makeSession>[0],
+    expectedMessage: string,
+    auditTool?: string
+  ) {
+    vi.useFakeTimers();
+    try {
+      const record = vi.fn();
+      const service = new SftpAgentService({
+        terminalContext: connectedRegistry(),
+        createSession: () => makeSession(sessionOverrides) as never,
+        authorizer: authorizer(),
+        audit: { record }
+      });
+
+      const pending = call(service);
+      // Swallow the rejection until the assertion below owns it.
+      pending.catch(() => {});
+      // Let the async chain reach the timer before moving the clock.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(pending).rejects.toThrow(expectedMessage);
+      if (auditTool !== undefined) {
+        // A timeout is not a generic `error`: the audit line is how an operator tells a
+        // stalled connection from a permission problem.
+        expect(record).toHaveBeenCalledWith(expect.objectContaining({ tool: auditTool, reasonCode: 'read_timeout' }));
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('fails a read whose metadata never arrives', async () => {
+    await expectTimeout(
+      (service) => service.readFile({ path: '/home/deploy/app.js' }),
+      { stat: vi.fn(hang) },
+      'Timed out reading metadata for /home/deploy/app.js.',
+      'sftp_read_file'
+    );
+  });
+
+  it('fails a read whose content never arrives, after the metadata did', async () => {
+    await expectTimeout(
+      (service) => service.readFile({ path: '/home/deploy/app.js' }),
+      { stat: vi.fn(async () => ({ size: 10, modifiedAt: 1 })), readFile: vi.fn(hang) },
+      'Timed out reading remote file /home/deploy/app.js.',
+      'sftp_read_file'
+    );
+  });
+
+  it('fails a listing that never arrives', async () => {
+    await expectTimeout(
+      (service) => service.listDirectory({ path: '/home/deploy' }),
+      { listDirectory: vi.fn(hang) },
+      'Timed out listing remote directory /home/deploy.',
+      'sftp_list_directory'
+    );
+  });
+
+  it('fails a stat that never arrives', async () => {
+    await expectTimeout(
+      (service) => service.statPath({ path: '/home/deploy/app.js' }),
+      { stat: vi.fn(hang) },
+      'Timed out reading metadata for /home/deploy/app.js.',
+      'sftp_stat_path'
+    );
+  });
+});

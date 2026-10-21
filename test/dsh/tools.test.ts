@@ -61,6 +61,24 @@ describe('dsh/tools.js createTools', () => {
       'at_terminal_get_hardware_metrics',
       'at_terminal_get_agent_execution_status'
     ]);
+
+    // Every tool declares a bound, because the Host's timeout policy is what enforces it and
+    // a missing declaration means "hang until the user cancels". The five values below are
+    // the plan's numbers; the rest are the same rule applied to tools that cannot block.
+    for (const tool of tools as Array<{ name: string; timeoutMs?: number }>) {
+      expect({ name: tool.name, bounded: Number.isFinite(tool.timeoutMs) && (tool.timeoutMs ?? 0) > 0 }).toEqual({
+        name: tool.name,
+        bounded: true
+      });
+    }
+    const timeouts = Object.fromEntries((tools as Array<{ name: string; timeoutMs?: number }>).map((t) => [t.name, t.timeoutMs]));
+    expect(timeouts).toMatchObject({
+      at_terminal_run_remote_command: 120_000,
+      at_terminal_sftp_read_file: 20_000,
+      at_terminal_sftp_list_directory: 30_000,
+      at_terminal_sftp_stat_path: 10_000,
+      at_terminal_get_hardware_metrics: 8_000
+    });
   });
 
   it('enforces schema contract and render function on all tools', () => {

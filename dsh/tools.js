@@ -47,7 +47,12 @@ export const CAPABILITIES = Object.freeze([
   'remote-command-execution',
   'sftp-file-operations',
   'hardware-metrics',
-  'agent-execution-status'
+  'agent-execution-status',
+  // Every tool that can block declares a `timeoutMs`, and the *Host* enforces it
+  // (`@deepseek-ai/dsh-tool-call-timeout-policy` → `TOOL_TIMEOUT`). Saying so is the point:
+  // the declaration is inert in a preset that does not mount that policy, and a caller
+  // deciding whether to retry needs to know which of the two it is looking at.
+  'tool-timeouts'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
@@ -201,8 +206,11 @@ function normalizeTerminalSummary(s) {
 export function createPingTool({ version = 'unknown', now = () => new Date(), config = {} } = {}) {
   return {
     name: 'at_terminal_ping',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 5000,
     description:
-      'Report whether the AT Terminal plugin is loaded in DeepSeek Harness, which of its capabilities this build provides, and the effective AT Terminal settings. Call it to confirm the plugin is live and to read its current configuration before depending on AT Terminal features; it reaches no remote host and changes nothing.',
+      'Report whether the AT Terminal plugin is loaded in DeepSeek Harness, which of its capabilities this build provides, and the effective AT Terminal settings. Call it to confirm the plugin is live and to read its current configuration before depending on AT Terminal features; it reaches no remote host and changes nothing. Tools that can block declare a `timeoutMs`, which the Host enforces — not the tool.',
     parameters: EMPTY_PARAMETERS,
     output: {
       schema: {
@@ -252,6 +260,9 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
 export function createListSshServersTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_list_ssh_servers',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 10000,
     description:
       'List configured AT Terminal SSH servers authorized for direct background commands, including currently connected interactive terminals. Reports server connection status and trust levels.',
     parameters: EMPTY_PARAMETERS,
@@ -319,6 +330,9 @@ export function createListSshServersTool({ resolveAgentService, runInContext } =
 export function createGetTerminalContextTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_get_terminal_context',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 5000,
     description:
       'Get the active SSH terminal session context, connected terminal list, and known terminal history from AT Terminal.',
     parameters: EMPTY_PARAMETERS,
@@ -372,6 +386,9 @@ export function createGetTerminalContextTool({ resolveAgentService, runInContext
 export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCallContext, runInContext } = {}) {
   return {
     name: 'at_terminal_run_remote_command',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 120000,
     description:
       'Run a non-interactive shell command on a configured AT Terminal SSH server. Commands are evaluated against the server trust level and command policy. Destructive operations require confirmation.',
     parameters: {
@@ -468,6 +485,9 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
 export function createSftpListDirectoryTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_sftp_list_directory',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 30000,
     description:
       'List entries in a remote directory through the selected AT Terminal SFTP session with pagination support.',
     parameters: {
@@ -550,6 +570,9 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
 export function createSftpStatPathTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_sftp_stat_path',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 10000,
     description:
       'Retrieve file or directory metadata (size, type, permissions, modification time) via AT Terminal SFTP.',
     parameters: {
@@ -610,6 +633,9 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
 export function createSftpReadFileTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_sftp_read_file',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 20000,
     description:
       'Read bounded UTF-8 text from a remote file through AT Terminal SFTP with offset and length limits.',
     parameters: {
@@ -674,6 +700,9 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext } = {
 export function createSftpWriteFileTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
   return {
     name: 'at_terminal_sftp_write_file',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 120000,
     description:
       'Write UTF-8 text to a remote file after AT Terminal write authorization and confirmation checks.',
     parameters: {
@@ -744,6 +773,9 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
 export function createSftpCreateFileTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
   return {
     name: 'at_terminal_sftp_create_file',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 120000,
     description:
       'Create an empty or initialized remote file via AT Terminal SFTP with authorization checks.',
     parameters: {
@@ -804,6 +836,9 @@ export function createSftpCreateFileTool({ resolveAgentService, runInContext, se
 export function createSftpCreateDirectoryTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
   return {
     name: 'at_terminal_sftp_create_directory',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 120000,
     description:
       'Create a new remote directory through AT Terminal SFTP after write authorization.',
     parameters: {
@@ -860,6 +895,9 @@ export function createSftpCreateDirectoryTool({ resolveAgentService, runInContex
 export function createSftpRenameTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
   return {
     name: 'at_terminal_sftp_rename',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 120000,
     description:
       'Rename or move a remote file or directory through AT Terminal SFTP with write authorization on both paths.',
     parameters: {
@@ -920,6 +958,9 @@ export function createSftpRenameTool({ resolveAgentService, runInContext, setCur
 export function createSftpDeleteTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
   return {
     name: 'at_terminal_sftp_delete',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 120000,
     description:
       'Remove a single remote file via AT Terminal SFTP; the user always confirms. Directories are refused — for one, use at_terminal_run_remote_command with an explicit rm, which puts the command through the policy engine.',
     parameters: {
@@ -978,6 +1019,9 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
 export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_open_monitor',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 5000,
     description:
       'Open the AT Terminal monitoring HUD for asset hardware metrics or live agent execution status. Returns opened=false with reason="no-client" when no browser panel is connected, because nothing would appear.',
     parameters: {
@@ -1059,6 +1103,9 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
 export function createGetHardwareMetricsTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_get_hardware_metrics',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 8000,
     description: 'Retrieve real-time hardware metrics (CPU, memory, disk, network throughput, top processes) for an SSH server.',
     parameters: {
       type: 'object',
@@ -1183,6 +1230,9 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
 export function createGetAgentExecutionStatusTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_get_agent_execution_status',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    timeoutMs: 10000,
     description: 'Retrieve current agent execution status snapshot, including live running action, recent audit entries, and active SFTP file transfers.',
     parameters: {
       type: 'object',

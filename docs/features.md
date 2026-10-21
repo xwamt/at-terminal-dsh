@@ -89,6 +89,7 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 - Agent SFTP sessions never escalate. A permission-denied write fails; the `sudo -n` fallback exists only in the user-driven SFTP view.
 - Read tools do not return passwords, private keys, or SecretStorage values.
 - SFTP reads are bounded to avoid flooding agent context with large files.
+- SFTP reads, listings and stats have a 30-second deadline. A stalled channel fails with a timeout naming the path instead of returning an empty-looking result; write and delete prompts have their own 60-second budget.
 - Write tools resolve remote paths and do not allow modifying the remote root path.
 
 ## Asset Import And Export
