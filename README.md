@@ -3,7 +3,7 @@
 > **DeepSeek Harness (DSH) 原生 SSH 终端、SFTP 远程文件工作区与 Agent 直连运维套件。**  
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
-[![DSH Verified](https://img.shields.io/badge/DSH-0.1.7--rc.2_Verified-brightgreen.svg)](#installation--setup--安装与配置)
+[![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.2_Verified-brightgreen.svg)](#installation--setup--安装与配置)
 [![Test Coverage](https://img.shields.io/badge/tests-82%2F82%20passed%20(1091%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
@@ -199,13 +199,16 @@ npm run build
 # 2. 执行 DSH 官方规范契约校验 (9 项自动化合规规则全部检查)
 npm run verify:dsh
 
-# 3. 运行全量自动化测试套件 (82 个测试文件，1091 个用例)
+# 3. 执行仓库内核隔离校验 (4 项：src/core 自封闭 / 零 vscode / 零 @deepseek-ai 导入 / 组合根调 setPlatform)
+npm run verify:kernel
+
+# 4. 运行全量自动化测试套件 (82 个测试文件，1091 个用例)
 npm run test
 
-# 4. 执行 TypeScript 静态类型检查 (零报错)
+# 5. 执行 TypeScript 静态类型检查 (零报错)
 npm run typecheck
 
-# 5. 校验/更新 vendored 依赖 (@deepseek-ai/schemastery 等)
+# 6. 校验/更新 vendored 依赖 (@deepseek-ai/schemastery 等)
 npm run vendor:dsh
 ```
 

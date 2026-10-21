@@ -35,7 +35,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { extractPackages, findDshAsar } from './lib/asar.mjs'
+import { extractPackages, findDshAsar, openAsar } from './lib/asar.mjs'
 import { REPO_RESOLVED, VENDORED } from './vendor.mjs'
 import {
   SETTINGS_FIELDS,
@@ -56,6 +56,16 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BUNDLE_DIR = path.resolve(HERE, '..')
 const SANDBOX_DIR = path.join(BUNDLE_DIR, '.cache', 'dsh-sandbox')
 const SANDBOX_MODULES = path.join(SANDBOX_DIR, 'node_modules')
+
+/**
+ * Stamp recording *which* Harness the sandbox was extracted from.
+ *
+ * The cache used to be reused on file existence alone, so after a Harness update the
+ * gate kept validating this bundle against the previous release's `dsh-tools` while
+ * printing nothing about the drift. A stamp turns the cache from "probably fine" into
+ * "matches this install or is discarded".
+ */
+const SANDBOX_STAMP = path.join(SANDBOX_DIR, 'dsh-version.json')
 
 const argv = process.argv.slice(2)
 const skipSandbox = argv.includes('--no-sandbox')
@@ -541,15 +551,60 @@ const sandboxSkipReason = skipSandbox
     : null
 
 /**
+ * Version of the installed Harness, read from the archive's own `@deepseek-ai/dsh`
+ * manifest. That manifest carries `name`/`description`/`version` and **no commit**, so
+ * this stamp can only ever be a version plus an extraction timestamp — recording a
+ * commit here would be an invention.
+ *
+ * @returns {string | null} `null` when there is no install or it cannot be read.
+ */
+function readHostVersion() {
+  if (archive === null) return null
+  let asar
+  try {
+    asar = openAsar(archive)
+    const buffer = asar.read('/dsh/node_modules/@deepseek-ai/dsh/package.json')
+    if (buffer === null) return null
+    const version = JSON.parse(buffer.toString('utf8'))?.version
+    return typeof version === 'string' ? version : null
+  } catch {
+    return null
+  } finally {
+    asar?.close()
+  }
+}
+
+const HOST_VERSION = readHostVersion()
+
+/** Read the sandbox stamp, or `null` when there is none (or it is unreadable). */
+function readSandboxStamp() {
+  try {
+    return JSON.parse(fs.readFileSync(SANDBOX_STAMP, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Extract a seed package's runtime closure into the sandbox if needed, then
  * import one built file from it by absolute path.
+ *
+ * The cache is keyed by the *install it came from*: a missing entry **or** a stamp that
+ * does not name the current Harness version re-extracts. Without the second half, a
+ * Harness upgrade silently kept validating new artifacts against old contracts.
  *
  * @param {string} seed Package name, e.g. `@deepseek-ai/schemastery`.
  * @param {string} entryRelative Path inside the package, e.g. `lib/index.mjs`.
  */
 async function loadSandboxPackage(seed, entryRelative) {
   const entry = path.join(SANDBOX_MODULES, ...seed.split('/'), ...entryRelative.split('/'))
-  if (!fs.existsSync(entry)) {
+  const stamp = readSandboxStamp()
+  const stale =
+    HOST_VERSION === null
+      ? false // no install to compare against: keep whatever is cached rather than churn
+      : stamp === null || stamp.hostVersion !== HOST_VERSION
+  if (stale || !fs.existsSync(entry)) {
+    fs.rmSync(SANDBOX_MODULES, { recursive: true, force: true })
     const { extracted, missing, skipped } = extractPackages({
       seeds: [seed],
       destination: SANDBOX_MODULES,
@@ -563,6 +618,11 @@ async function loadSandboxPackage(seed, entryRelative) {
           (skipped.length > 5 ? ', ...' : '')
       )
     }
+    fs.mkdirSync(SANDBOX_DIR, { recursive: true })
+    fs.writeFileSync(
+      SANDBOX_STAMP,
+      `${JSON.stringify({ hostVersion: HOST_VERSION, extractedAt: new Date().toISOString() }, null, 2)}\n`
+    )
   }
   return import(pathToFileURL(entry).href)
 }
@@ -889,7 +949,7 @@ if (sandboxSkipReason !== null) {
     assert.deepEqual(probeValue.capabilities, [...CAPABILITIES], 'ping must report the real capabilities')
     assert.equal(probeValue.checkedAt, new Date(0).toISOString(), 'ping must use the injected clock')
 
-    return `${definitions.length} tool(s) against dsh-tools ${readInstalledVersion('dsh-tools')}`
+    return `${definitions.length} tool(s) against dsh-tools ${readInstalledVersion('dsh-tools')} (harness ${HOST_VERSION ?? 'unknown'})`
   })
 }
 
@@ -938,6 +998,20 @@ if (sandboxSkipReason !== null) {
     assert.equal(SETTINGS_FIELDS.length, 8, 'the bundle documents eight settings fields')
     for (const field of SETTINGS_FIELDS) {
       assert.equal(field.vscodeKey, `sshManager.${field.key}`, `${field.key}: vscodeKey must mirror the manifest`)
+    }
+
+    // The vendored copies must be the versions the install actually runs. This used to be
+    // an invisible drift (vendored 3.18.4, host 3.18.5): the schema still validated, so
+    // nothing failed, and the next divergence would have been a validation difference
+    // nobody could attribute. The pin lives in `vendor.mjs`, so re-vendor is the fix.
+    for (const name of ['schemastery', 'cosmokit']) {
+      const pinned = VENDORED.find((entry) => entry.name === `@deepseek-ai/${name}`)
+      assert.ok(pinned !== undefined, `vendor.mjs must pin @deepseek-ai/${name}`)
+      assert.equal(
+        readInstalledVersion(name),
+        pinned.version,
+        `vendored ${name} is ${pinned.version} but the harness ships ${readInstalledVersion(name)}; run \`npm run vendor:dsh\``
+      )
     }
 
     const schemastery = await loadSandboxPackage('@deepseek-ai/schemastery', 'lib/index.mjs')
@@ -1025,7 +1099,7 @@ if (sandboxSkipReason !== null) {
     }
     assert.deepEqual(accepted, [], `schema accepted illegal values: ${accepted.join('; ')}`)
 
-    return `${SETTINGS_FIELDS.length} fields, ${ILLEGAL_SETTINGS.length} illegal values rejected against schemastery ${readInstalledVersion('schemastery')}`
+    return `${SETTINGS_FIELDS.length} fields, ${ILLEGAL_SETTINGS.length} illegal values rejected against schemastery ${readInstalledVersion('schemastery')} (harness ${HOST_VERSION ?? 'unknown'})`
   })
 }
 

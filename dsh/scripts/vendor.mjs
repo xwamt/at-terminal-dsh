@@ -56,13 +56,13 @@ const MODULES_DIR = path.join(BUNDLE_DIR, 'node_modules')
 export const VENDORED = Object.freeze([
   Object.freeze({
     name: '@deepseek-ai/schemastery',
-    version: '3.18.4',
-    integrity: 'sha512-SSXO6tYuyrIqKVbmOnIq0s+riUywYzouFMcnBluHF9n4KMo2G8HvEzhCYj6pj2617/glOjbJuVInJ9hfONsjkg=='
+    version: '3.18.5',
+    integrity: 'sha512-Mnobvqf9rHsZYv4g5edj5ddxS1oF1kIdSlz0DunUgnY3LWG5F26MqvH3YOOsSaodCgyzJ16OMN9O99/s5Crtdw=='
   }),
   Object.freeze({
     name: '@deepseek-ai/cosmokit',
-    version: '1.8.5',
-    integrity: 'sha512-LXsrlem9z8dq4sLflj2yuCuYX7KqhdzF5hZly3eZyuTo8d6oDSOXuEgC5DbQWKW+lksm6zmOutQLsP/ma6wR6A=='
+    version: '1.8.6',
+    integrity: 'sha512-ZSD/fN52L498LBIOYwjIOlaLv5veY6ZEwI2yzvZUKQtctn0QAPqu8tKdJ+OF5+Tv6NBq1U+wJWH+QI6OGy5EvQ=='
   })
 ])
 

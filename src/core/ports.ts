@@ -12,6 +12,14 @@
  * `CancellationToken`), and must not import domain directories (`src/sftp`, `src/ssh`,
  * `src/config`, ...). Compatibility with the existing seams is asserted in both
  * directions at compile time by `test/core/domain-seam-compat.test.ts`.
+ *
+ * Citation rule: this layer was derived from the VS Code variant of the extension, so the
+ * "real consumption sites" below name files from **that** repository (`src/extension.ts`,
+ * `src/webview/**`, `src/mcp/**`, several `src/sftp/**` sources). Those names stay — they
+ * are the evidence for why a port exists — but their **line numbers were removed**: the
+ * files are not in this repository, so a `:123` pointer sends a reader nowhere.
+ * `scripts/verify-kernel-seam.mjs` fails on any new `path:line` citation of a file that
+ * does not exist here.
  */
 
 import type { CancellationToken } from './cancellation';
@@ -43,12 +51,12 @@ export interface UriComponents {
 
 /**
  * Covers the host `Uri` static usages:
- * `Uri.file` (src/assets/AssetCommands.ts:31, src/extension.ts:456,714),
- * `Uri.joinPath` (src/mcp/hubSync.ts:80, src/sftp/SftpEditSessionManager.ts:78,86,
- * src/webview/TerminalPanel.ts:623-624), `Uri.parse`
- * (src/sftp/SftpDragAndDropController.ts:61), `Uri.from` (src/sftp/SftpPreview.ts:13),
- * plus `instanceof Uri` (src/sftp/SftpEditSessionManager.ts:400) and the `uri.scheme`
- * check (src/extension.ts:301, src/sftp/SftpEditSessionManager.ts:79).
+ * `Uri.file` (src/assets/AssetCommands.ts:31, src/extension.ts),
+ * `Uri.joinPath` (src/mcp/hubSync.ts, src/sftp/SftpEditSessionManager.ts,
+ * src/webview/TerminalPanel.ts), `Uri.parse`
+ * (src/sftp/SftpDragAndDropController.ts), `Uri.from` (src/sftp/SftpPreview.ts),
+ * plus `instanceof Uri` (src/sftp/SftpEditSessionManager.ts) and the `uri.scheme`
+ * check (src/extension.ts, src/sftp/SftpEditSessionManager.ts).
  */
 export interface UriService {
   file(fsPath: string): UriLike;
@@ -85,16 +93,16 @@ export interface ProgressReporter {
 
 /**
  * Covers the following real consumption sites:
- * - `window.showInformationMessage` (src/extension.ts:405,414,432,477,516,529,587,607,615,996,1033,
+ * - `window.showInformationMessage` (src/extension.ts,
  *   src/agent/AgentToolService.ts:111, src/assets/AssetCommands.ts:65,135 -- 14 sites in total)
- * - `window.showWarningMessage` (src/extension.ts:68,265,282,369,373,680,736,
- *   src/sftp/SftpDragAndDropController.ts:72, src/sftp/SftpEditSessionManager.ts:416,426,473,
+ * - `window.showWarningMessage` (src/extension.ts,
+ *   src/sftp/SftpDragAndDropController.ts, src/sftp/SftpEditSessionManager.ts,
  *   src/agent/SftpWriteAuthorizer.ts:171,181,187, src/agent/AgentToolService.ts:87 -- 15 sites in total)
- * - `window.showErrorMessage` (src/extension.ts:471,546,558,598,964,984,
+ * - `window.showErrorMessage` (src/extension.ts,
  *   src/utils/notifications.ts:48, src/assets/AssetCommands.ts:69,89,105,141,182 -- 12 sites in total)
  * - `window.withProgress` + `ProgressLocation.Notification`
- *   (src/utils/notifications.ts:20-31, src/sftp/VscodeTransferReporter.ts:26-31,
- *   src/sftp/SftpEditSessionManager.ts:451-458)
+ *   (src/utils/notifications.ts:20-31, src/sftp/VscodeTransferReporter.ts,
+ *   src/sftp/SftpEditSessionManager.ts)
  *
  * The three show*Message methods keep their **dual overloads** (`(msg, ...actions)` and
  * `(msg, options, ...actions)`) because both forms have real call sites; collapsing them
@@ -158,15 +166,15 @@ export interface FileDialogOptions {
 
 /**
  * Covers the following real consumption sites:
- * - `window.showInputBox` (src/extension.ts:533,537,549,631,748,765,776,
- *   src/ssh/VscodeKeyboardInteractivePrompt.ts:16, src/assets/AssetCommands.ts:96,169,173
+ * - `window.showInputBox` (src/extension.ts,
+ *   src/ssh/VscodeKeyboardInteractivePrompt.ts, src/assets/AssetCommands.ts:96,169,173
  *   -- 11 sites in total)
- * - `window.showQuickPick` (single value src/extension.ts:1038,
+ * - `window.showQuickPick` (single value src/extension.ts,
  *   src/assets/AssetCommands.ts:115; multi-value `canPickMany: true`
  *   src/assets/AssetCommands.ts:41)
- * - `window.showOpenDialog` (src/extension.ts:454,650,702, src/webview/ServerFormPanel.ts:105,128,
+ * - `window.showOpenDialog` (src/extension.ts, src/webview/ServerFormPanel.ts,
  *   src/assets/AssetCommands.ts:74 -- 6 sites in total)
- * - `window.showSaveDialog` (src/assets/AssetCommands.ts:30, src/extension.ts:714)
+ * - `window.showSaveDialog` (src/assets/AssetCommands.ts:30, src/extension.ts)
  */
 export interface Prompter {
   showQuickPick(
@@ -196,7 +204,7 @@ export interface Prompter {
 
 /**
  * A readable view of one configuration section. Same shape as `ConfigurationLike`
- * (src/webview/TerminalPanel.ts:50).
+ * (src/webview/TerminalPanel.ts).
  */
 export interface ConfigSection {
   get<T>(key: string, defaultValue: T): T;
@@ -204,7 +212,7 @@ export interface ConfigSection {
 
 /**
  * Covers `workspace.getConfiguration('sshManager')`
- * (src/webview/TerminalPanel.ts:300, which via resolveTerminalSettings:605 reads 8
+ * (src/webview/TerminalPanel.ts, which via resolveTerminalSettings:605 reads 8
  * `sshManager.*` settings). Deliberately kept "thin": the real default-value/valid-value
  * logic stays on the domain side; the port only abstracts away "some configuration
  * section".
@@ -321,8 +329,8 @@ export interface Localization {
  * Declares only the `writeText` that is actually used; `readText` currently has no
  * consumption site at all.
  *
- * Real consumption sites: copying the host address (src/extension.ts:396), copying a
- * fingerprint (src/extension.ts:423), copying a remote path (src/extension.ts:788).
+ * Real consumption sites: copying the host address (src/extension.ts), copying a
+ * fingerprint (src/extension.ts), copying a remote path (src/extension.ts).
  */
 export interface Clipboard {
   writeText(text: string): Promise<void>;
@@ -339,12 +347,12 @@ export interface WorkspaceFolderLike {
 
 /**
  * Host environment info. Covers:
- * - `env.appName` / `env.appRoot` / `env.uriScheme` (src/extension.ts:157-159 -> hostEnv)
- * - `context.extensionUri.fsPath` (src/extension.ts:160)
- * - `context.globalStorageUri.fsPath` (src/extension.ts:188 passes it to the audit log,
- *   src/mcp/hubSync.ts:91, src/assets/AssetCommands.ts:164)
- * - `workspace.workspaceFolders` (resolveEditStorageUri at src/extension.ts:107,
- *   currentWorkspaceFolder at src/extension.ts:163)
+ * - `env.appName` / `env.appRoot` / `env.uriScheme` (src/extension.ts -> hostEnv)
+ * - `context.extensionUri.fsPath` (src/extension.ts)
+ * - `context.globalStorageUri.fsPath` (src/extension.ts passes it to the audit log,
+ *   src/mcp/hubSync.ts, src/assets/AssetCommands.ts:164)
+ * - `workspace.workspaceFolders` (resolveEditStorageUri at src/extension.ts,
+ *   currentWorkspaceFolder at src/extension.ts)
  *
  * The host context object itself (the `ExtensionContext` family) is a pure host object and
  * does not enter the port layer; only these facets that are actually read on the domain

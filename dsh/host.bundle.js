@@ -14250,7 +14250,7 @@ var DshUri = class {
    *
    * Query and fragment are appended for both. That is not decoration: the SFTP
    * preview encodes the *local* backing file into `query` and keys its document map
-   * by `uri.toString()` (`src/sftp/SftpPreview.ts:12-20`), so dropping the query here
+   * by `uri.toString()` (`src/sftp/SftpPreview.ts`), so dropping the query here
    * would make two previews collide on one map entry.
    */
   toString() {

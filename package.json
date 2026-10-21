@@ -32,7 +32,7 @@
     "test:watch": "vitest",
     "copy:policy-assets": "node scripts/copy-policy-assets.mjs",
     "verify:dsh": "node dsh/esbuild.dsh.mjs --check && node dsh/scripts/verify.mjs",
-    "verify:kernel": "node dsh/esbuild.dsh.mjs --check && node dsh/scripts/verify.mjs",
+    "verify:kernel": "node scripts/verify-kernel-seam.mjs",
     "vendor:dsh": "node dsh/scripts/vendor.mjs",
     "dsh:channel:probe": "node dsh/scripts/probe-channel.mjs",
     "build:dsh": "node dsh/esbuild.dsh.mjs"

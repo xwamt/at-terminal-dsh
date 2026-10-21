@@ -16,7 +16,7 @@ import type { DshHostFacts } from './host';
  * This is the one field with a real choice, so it is documented rather than defaulted:
  *
  * - The **M2 path does not need a workspace.** The only consumer,
- *   `resolveEditStorageUri` (`src/sftp/SftpEditSessionManager.ts:79`), treats a missing
+ *   `resolveEditStorageUri` (`src/sftp/SftpEditSessionManager.ts`), treats a missing
  *   workspace as "fall back to extension storage" — which is the correct home for
  *   SFTP edit-session scratch files anyway, and is the branch the VS Code adapter also
  *   takes when no folder is open.

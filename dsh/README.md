@@ -6,9 +6,10 @@ Harness loads as a plugin; it does **not** touch the VS Code extension code
 path, and building or installing it must never change the `base` / `mcp`
 variants.
 
-- **Verified against:** DeepSeek Harness Desktop `0.1.7-rc.2` (the version this
+- **Verified against:** DeepSeek Harness Desktop `0.2.1-rc.2` (the version this
   machine has installed; the tool DSL is re-checked against that install on
-  every `verify` run).
+  every `verify` run, and the sandbox is re-extracted whenever the install
+  changes — a cached sandbox from a previous release is discarded, not reused).
 - **Current milestone:** M3/M4 — the Host half carries the asset, server and
   terminal services over the `webServer` channel, and the browser half is a
   built bundle reusing the VS Code variant's xterm terminal and server-form
@@ -43,7 +44,7 @@ variants.
 node dsh/scripts/verify.mjs
 ```
 
-**Eight** independent checks; a non-zero exit fails the gate:
+**Nine** independent checks; a non-zero exit fails the gate:
 
 1. **syntax** — every shipped JavaScript file parses.
 2. **manifest** — the documented bundle contract (name/version/`exports`/patch
@@ -84,6 +85,10 @@ node dsh/scripts/verify.mjs
 8. **bundle** — both committed artifacts (`host.bundle.js` *and* `client.js`) are
    rebuilt in memory and compared byte for byte: a `link:`-installed package runs
    no build step, so a stale artifact is the easiest way to ship code nobody wrote.
+9. **theme-tokens** — the `--vscode-*` → `--dsw-alias-*` bridge carries only theme
+   references (and `color-mix(...)` that resolves through one), and the whole
+   stylesheet is scanned for `rgb()`/`hsl()` forms a `#rrggbb` scan cannot see. A
+   literal does not follow the light/dark switch, so it is a silent theme bug.
 
 Check 4 is static and always runs. Checks 5 and 6 extract the real
 `@deepseek-ai/dsh-tools` and `@deepseek-ai/schemastery` dependency closures out of
@@ -115,11 +120,28 @@ npm run verify:kernel     # scripts/verify-kernel-seam.mjs, 4 checks
 
 It is strictly wider than the check it replaced: the old one scanned the seven domain
 directories against a hard-coded four-file list, while the new one scans **every** `.ts`
-file under `src/`, requires each `vscode`-importing file to carry a documented reason, and
-additionally asserts that `src/core/**` imports nothing outside itself and that
-`src/extension.ts` really calls `setPlatform()`. It too is negative-tested (a stray
-`import * as vscode` in `src/utils/**`, a `src/core` import of a domain module, and a
-deleted `setPlatform()` call each fail it with the offending file).
+file under `src/`. Its four checks:
+
+1. `src/core/**` imports nothing above itself — and no source file cites a `path:line`
+   whose file this repository does not contain (the port layer was derived from the VS
+   Code variant, so a dozen citations named `src/extension.ts:456`; the names stay as
+   evidence, the dead line numbers were dropped).
+2. No `src/**` file imports `vscode`, unless the importing line carries a documented
+   `kernel-allow:` reason.
+3. No `src/**` file **imports** `@deepseek-ai/*`. Only import statements count: the tree
+   has fourteen *comments* naming those packages to explain why they are not imported, and
+   a string scan would fail on the explanation.
+4. The dsh composition root (`src/platform/dsh/index.ts`, which builds `createDshPlatform`)
+   calls `setPlatform()`. The VS Code root is `src/extension.ts` in **another** repository,
+   so it is not — and cannot be — in scope here.
+
+Specifiers are read with the TypeScript compiler's own `preProcessFile`, not a regex, so a
+comment or a template string cannot be mistaken for an import. Each check has been
+negative-tested: a stray `import '../ssh/SshSession'` **and** a dead `src/extension.ts:12`
+citation in `src/core`, an `import * as vscode` in `src/utils/**`, an
+`import '@deepseek-ai/dsh-tools'` in `src/utils/**`, and a commented-out `setPlatform()`
+call each fail it with the offending file and line. (That last one is why the check reads
+the AST: a regexp matched the commented-out call and reported PASS.)
 
 This gate keeps its subject: the bundle. Keep it that way.
 
@@ -151,8 +173,8 @@ authoring helper `defineTool` is not required at runtime.
 
 The Host half needs a real schemastery schema for `Config`, and the Harness's
 copy is unreachable from a `link:` install, so `npm run vendor:dsh` copies
-`@deepseek-ai/schemastery@3.18.4` and its only runtime dependency
-`@deepseek-ai/cosmokit@1.8.5` into `dsh/node_modules/@deepseek-ai/`. The
+`@deepseek-ai/schemastery@3.18.5` and its only runtime dependency
+`@deepseek-ai/cosmokit@1.8.6` into `dsh/node_modules/@deepseek-ai/`. The
 versions match the installed Harness exactly, the npm tarballs are
 byte-identical to the in-`app.asar` copies, and both libraries tag cross-realm
 objects with `Symbol.for(...)` (`"schemastery"`, `"ValidationError"`,
@@ -160,6 +182,11 @@ objects with `Symbol.for(...)` (`"schemastery"`, `"ValidationError"`,
 the Harness's own schemastery. The script is idempotent: it verifies the
 registry's `dist.integrity` against its own lock, and re-runs skip the network
 when `node_modules/` already matches.
+
+The pin is a gate, not a comment: the settings check compares the vendored
+versions against the sandbox's (the install's own) and fails with
+"run `npm run vendor:dsh`" when they differ, so a Harness update cannot leave a
+stale copy silently validating new artifacts.
 
 `dsh/package.json` deliberately declares **no** `dependencies`: a `link:`
 install does not install them, and declaring them would misrepresent how the
@@ -581,7 +608,8 @@ analysis in `docs/research/2026-09-28-at-terminal-迁移为DSH插件-可行性�
 Corrections that plan made on contact with the installed Harness (it assumed
 `0.1.1-rc.2` and a `dsh web` CLI):
 
-- the installed product is the **Desktop** app at `0.1.7-rc.2`, and installs go
+- the installed product is the **Desktop** app (`0.2.1-rc.2` as of this revision; it was
+  an earlier `rc` when the plan was written), and installs go
   through the Desktop Plugin Manager, not `dsh plugin --profile web add`;
 - the settings API is a schemastery `Config` export plus `.volatile()` fields,
   not `ctx.settings.installSection()` — see [Settings](#settings);
