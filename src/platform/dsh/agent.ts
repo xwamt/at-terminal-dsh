@@ -16,6 +16,7 @@ import { SftpSession } from '../../sftp/SftpSession';
 import { HostKeyStore } from '../../ssh/HostKeyStore';
 import type { HostKeyVerifier } from '../../ssh/SshConnectionConfig';
 import { TerminalContextRegistry } from '../../terminal/TerminalContext';
+import type { AgentAuditSummary } from './client/models';
 import { DshAgentConfirmation, type DshApprovalService, type DshCallContext } from './confirmation';
 
 export interface DshAgentServiceOptions {
@@ -27,6 +28,11 @@ export interface DshAgentServiceOptions {
   readonly broadcastMonitor?: (event: string, data: unknown) => void;
   readonly metricsCollector?: HardwareMetricsCollector;
   readonly executionBridge?: AgentExecutionBridge;
+  /**
+   * Reads the durable audit trail. Present in the real composition (`dsh/index.js` builds
+   * the log and its `tools/result` observer), absent in unit tests that do not care.
+   */
+  readonly readAuditTail?: (limit: number) => Promise<AgentAuditSummary[] | undefined>;
 }
 
 export function resolveDshPolicyAssetDirectory(): string | undefined {
@@ -97,6 +103,9 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
     policyEvaluator,
     metricsCollector,
     executionBridge,
+    ...(options.readAuditTail === undefined
+      ? {}
+      : { auditTail: { readRecent: options.readAuditTail } }),
     broadcastMonitor: options.broadcastMonitor
   });
 }

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
 import { join } from 'node:path';
@@ -104,6 +104,9 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
   const logger = new RecordingDshLogger();
   const disposers: Array<() => void> = [];
   const injections: string[][] = [];
+  // Event listeners, so `tools/result` can be delivered the way the registry delivers it:
+  // every observer is called, and whatever one throws is the registry's to swallow.
+  const listeners = new Map<string, Set<(...args: any[]) => unknown>>();
 
   const webServer = {
     register(route: Route) {
@@ -137,6 +140,12 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
       },
       get(name: string) {
         return (raw as any)[name];
+      },
+      on(event: string, listener: (...args: any[]) => unknown) {
+        const set = listeners.get(event) ?? new Set<(...args: any[]) => unknown>();
+        set.add(listener);
+        listeners.set(event, set);
+        return () => set.delete(listener);
       },
       logger,
       ...extra
@@ -176,7 +185,7 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     }
   });
 
-  return { ctx, routes, upgrades, tools, logger, disposers, injections };
+  return { ctx, routes, upgrades, tools, logger, disposers, injections, listeners };
 }
 
 /** Drive the `/rpc` route the way the browser half does. */
@@ -204,6 +213,26 @@ async function callRpc(harness: ReturnType<typeof createHarness>, method: string
   req.emit('end');
   await flush();
   return { status, json: payload === '' ? undefined : JSON.parse(payload) };
+}
+
+/** Deliver one registry event the way `ctx.events.dispatch('emit', …)` does. */
+function fire(harness: ReturnType<typeof createHarness>, event: string, ...args: unknown[]) {
+  for (const listener of harness.listeners.get(event) ?? []) listener(...args);
+}
+
+/** Poll for a file, because the audit append is deliberately not awaited by the observer. */
+async function readWhenReady(file: string, deadlineMs = 2000): Promise<string[]> {
+  const started = Date.now();
+  for (;;) {
+    try {
+      const text = await readFile(file, 'utf8');
+      if (text.trim() !== '') return text.trim().split('\n');
+    } catch {
+      // not there yet
+    }
+    if (Date.now() - started > deadlineMs) throw new Error(`no audit content at ${file}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe('dsh Host half — wiring', () => {
@@ -487,6 +516,113 @@ describe('dsh Host half — wiring', () => {
     // Disposing releases both routes and registered tools
     for (const dispose of harness.disposers) dispose();
     expect(harness.tools).toHaveLength(0);
+  });
+
+  it('lands one audit line per at_terminal_* call, and reports `file` as the status source', async () => {
+    // The regression this pins: `AgentAuditLog` was written, tested, and never constructed —
+    // `agent-audit.jsonl` appeared nowhere in `host.bundle.js`, so "history" was the 50-row
+    // in-memory ring and nothing survived a restart.
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const agent = { session: { id: 'sess-1' } };
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_run_remote_command',
+        callId: 'call-1',
+        arguments: { command: 'mysql --password=hunter2 -e "select 1"', serverId: 'srv-1' },
+        agent
+      },
+      { isError: false, value: { serverId: 'srv-1', exitCode: 0, durationMs: 42, truncated: false } }
+    );
+
+    // An agent-less call is a PTC sub-call: it belongs to no session, so it must not be
+    // written into the user's trail.
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_run_remote_command',
+        callId: 'call-2',
+        arguments: { command: 'rm -rf /', serverId: 'srv-1' }
+      },
+      { isError: false, value: { serverId: 'srv-1', exitCode: 0, durationMs: 1, truncated: false } }
+    );
+
+    // A tool that is not ours must not be audited, even with an agent attached.
+    fire(
+      harness,
+      'tools/result',
+      { name: 'bash_run', callId: 'call-3', arguments: {}, agent },
+      { isError: false, value: {} }
+    );
+
+    const lines = await readWhenReady(joinPath(process.env.DSH_HOME as string, 'at-terminal', 'agent-audit.jsonl'));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      tool: 'run_remote_command',
+      serverId: 'srv-1',
+      sessionId: 'sess-1',
+      reasonCode: 'completed',
+      exitCode: 0,
+      durationMs: 42
+    });
+    // Redaction happens before the line is written, not in the reader.
+    expect(lines[0]).not.toContain('hunter2');
+
+    const statusTool = harness.tools.find((tool) => tool.name === 'at_terminal_get_agent_execution_status');
+    const status = await statusTool?.execute?.({ limit: 5 }, {});
+    expect(status).toMatchObject({ source: 'file' });
+    expect(status.recentAudits).toHaveLength(1);
+    expect(status.recentAudits[0].command).toContain('mysql');
+  });
+
+  it('records a failed call as runtime_error, and keeps the tool result untouched when the audit fails', async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_sftp_read_file',
+        callId: 'call-4',
+        arguments: { path: '/etc/shadow', serverId: 'srv-1' },
+        agent: { session: { id: 'sess-1' } }
+      },
+      { isError: true, error: { message: 'permission denied' }, content: [] }
+    );
+
+    const lines = await readWhenReady(joinPath(process.env.DSH_HOME as string, 'at-terminal', 'agent-audit.jsonl'));
+    expect(JSON.parse(lines[0])).toMatchObject({
+      tool: 'sftp_read_file',
+      path: '/etc/shadow',
+      serverId: 'srv-1',
+      reasonCode: 'runtime_error'
+    });
+
+    // An observer that throws is the registry's business (`notifyResult` catches and logs).
+    // What this pins is narrower and more important: a broken audit must not break the call.
+    expect(() =>
+      fire(harness, 'tools/result', { name: 'at_terminal_ping', get arguments() { throw new Error('boom'); }, agent: {} }, { isError: false, value: {} })
+    ).not.toThrow();
+    expect(harness.logger.join()).toContain('audit observer failed');
+  });
+
+  it('reports `memory` when the audit file has nothing in it yet', async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const statusTool = harness.tools.find((tool) => tool.name === 'at_terminal_get_agent_execution_status');
+    const status = await statusTool?.execute?.({ limit: 5 }, {});
+    // No calls yet: the file does not exist, so the answer is the live ring — and it says so
+    // rather than presenting an empty history as evidence.
+    expect(status).toMatchObject({ source: 'memory', recentAudits: [] });
   });
 });
 

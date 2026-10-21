@@ -12,6 +12,8 @@ export const AGENT_AUDIT_FILE_NAME = 'agent-audit.jsonl';
 export interface AgentAuditEntry {
   serverId?: string;
   terminalId?: string;
+  /** Session that issued the call; absent for PTC sub-calls, which carry no agent. */
+  sessionId?: string;
   tool: string;
   command?: string;
   path?: string;

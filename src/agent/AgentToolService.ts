@@ -10,10 +10,26 @@ import type { SftpAgentService } from './SftpAgentService';
 import type { HardwareMetricsCollector } from './HardwareMetricsCollector';
 import type { AgentExecutionBridge } from './AgentExecutionBridge';
 import type {
+  AgentAuditSummary,
   AgentExecutionSnapshot,
   HardwareMetrics,
   MonitorControlMessage
 } from '../platform/dsh/client/models';
+
+/**
+ * The audit trail as a *reader*: newest `limit` rows, or `undefined` when the evidence is
+ * unavailable (no file yet, or it cannot be read). `undefined` and `[]` are different
+ * answers — "no evidence" versus "nothing happened" — and the status tool reports which.
+ */
+export interface AgentAuditTail {
+  readRecent(limit: number): Promise<AgentAuditSummary[] | undefined>;
+}
+
+/** The status snapshot plus where its `recentAudits` came from. */
+export interface AgentExecutionStatusView extends AgentExecutionSnapshot {
+  /** `file` when the rows were read from `agent-audit.jsonl`, `memory` for the live ring. */
+  source: 'file' | 'memory';
+}
 
 export interface AgentToolServiceDependencies {
   configManager: ConfigManager;
@@ -22,6 +38,8 @@ export interface AgentToolServiceDependencies {
   confirmation?: AgentConfirmationPort;
   sftp?: SftpAgentService;
   audit?: AgentAuditRecorder;
+  /** Durable audit trail; preferred over `executionBridge`'s 50-row ring. */
+  auditTail?: AgentAuditTail;
   policyEvaluator?: RemoteCommandPolicyEvaluator;
   metricsCollector?: HardwareMetricsCollector;
   executionBridge?: AgentExecutionBridge;
@@ -197,14 +215,36 @@ export class AgentToolService {
     };
   }
 
-  async getAgentExecutionStatus(limit?: number): Promise<AgentExecutionSnapshot> {
-    if (this.dependencies.executionBridge) {
-      return this.dependencies.executionBridge.getSnapshot(limit);
+  async getAgentExecutionStatus(limit?: number): Promise<AgentExecutionStatusView> {
+    const wanted = Math.max(1, Math.trunc(limit ?? 5));
+    const bridge = this.dependencies.executionBridge;
+    const tail = this.dependencies.auditTail;
+    if (tail !== undefined) {
+      // The durable trail first: the ring is capped at 50 and dies with the process, so a
+      // session that has restarted has no history at all without this read.
+      const fromFile = await tail.readRecent(wanted).catch(() => undefined);
+      if (fromFile !== undefined && fromFile.length > 0) {
+        const snapshot = bridge?.getSnapshot(wanted) ?? {
+          timestamp: Date.now(),
+          recentAudits: [],
+          activeTransfers: []
+        };
+        return {
+          ...snapshot,
+          // Oldest first in the file; the HUD renders newest first, exactly like the ring.
+          recentAudits: [...fromFile].reverse(),
+          source: 'file'
+        };
+      }
+    }
+    if (bridge !== undefined) {
+      return { ...bridge.getSnapshot(wanted), source: 'memory' };
     }
     return {
       timestamp: Date.now(),
       recentAudits: [],
-      activeTransfers: []
+      activeTransfers: [],
+      source: 'memory'
     };
   }
 

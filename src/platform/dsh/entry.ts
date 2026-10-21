@@ -61,6 +61,12 @@ export {
   type DshAgentServiceOptions
 } from './agent';
 export {
+  createDshAuditLog,
+  type DshAuditLog,
+  type DshAuditLogOptions,
+  type DshAuditLogger
+} from './audit';
+export {
   DshAgentConfirmation,
   formatSftpWriteConfirmMessage,
   type DshApprovalOutcome,

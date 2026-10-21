@@ -44,6 +44,7 @@ import {
   TerminalContextRegistry,
   createDshAgentToolService,
   createDshAssetApi,
+  createDshAuditLog,
   createDshPlatform,
   createDshServerApi,
   createDshSftpApi,
@@ -72,6 +73,59 @@ export const inject = ['tools']
 /** Editable configuration, read and written through the dsh settings panel. */
 export const Config = createConfigSchema(z)
 
+/** Every direct tool this bundle registers is named with this prefix. */
+const AUDIT_TOOL_PREFIX = 'at_terminal_'
+
+/**
+ * Project one completed tool call into an audit entry, or `undefined` when the call is not
+ * ours.
+ *
+ * The reason code is read from the result's own structure — never by matching message text,
+ * which would break the first time an error is reworded: `result.error.info.reasonCode`
+ * when a service supplied one, otherwise `runtime_error` for a failed call and `completed`
+ * for a successful one.
+ *
+ * A call with no `exec.agent` is a programmatic (PTC) sub-call: it belongs to no session
+ * and has no audit trail to join, so it is skipped rather than written into the user's.
+ */
+function auditEntryFrom(exec, result) {
+  const name = exec?.name
+  if (typeof name !== 'string' || !name.startsWith(AUDIT_TOOL_PREFIX)) return undefined
+  if (exec?.agent === undefined || exec.agent === null) return undefined
+
+  const args = exec?.arguments ?? {}
+  const failed = result?.isError === true
+  const value = failed ? undefined : result?.value
+  const reasonCode =
+    (typeof result?.error?.info?.reasonCode === 'string' && result.error.info.reasonCode) ||
+    (failed ? 'runtime_error' : 'completed')
+
+  /** @type {Record<string, unknown>} */
+  const entry = {
+    // The prefix is the namespace, not part of the tool's name: the file records what the
+    // model called, and `at_terminal_` is on every line of it.
+    tool: name.slice(AUDIT_TOOL_PREFIX.length),
+    reasonCode
+  }
+  const serverId = args.serverId ?? value?.serverId
+  if (typeof serverId === 'string' && serverId !== '') entry.serverId = serverId
+  // The command is what an operator actually needs to read back, and it is the field
+  // `AgentAuditLog` redacts before writing — recording only `path` would leave
+  // `run_remote_command` rows saying nothing about what ran.
+  const command = args.command ?? value?.command
+  if (typeof command === 'string' && command !== '') entry.command = command
+  const path = args.path ?? value?.path
+  if (typeof path === 'string' && path !== '') entry.path = path
+  const terminalId = args.terminalId ?? value?.terminalId
+  if (typeof terminalId === 'string' && terminalId !== '') entry.terminalId = terminalId
+  const sessionId = exec?.agent?.session?.id
+  if (typeof sessionId === 'string' && sessionId !== '') entry.sessionId = sessionId
+  if (typeof value?.exitCode === 'number') entry.exitCode = value.exitCode
+  if (typeof value?.durationMs === 'number') entry.durationMs = value.durationMs
+  if (typeof value?.truncated === 'boolean') entry.truncated = value.truncated
+  return entry
+}
+
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {Record<string, { get(): unknown }>} [config] Row config from the
@@ -82,6 +136,7 @@ export function apply(ctx, config = {}) {
   let currentCallContextFallback = undefined
   let agentService = undefined
   let agentError = undefined
+  let auditLog = undefined
 
   const resolveAgentService = () => {
     if (agentService !== undefined) return agentService
@@ -91,6 +146,36 @@ export function apply(ctx, config = {}) {
         : String(agentError?.message ?? agentError)
     throw Object.assign(new Error(detail), { code: 'services-unavailable' })
   }
+
+  /**
+   * The audit trail, mounted before anything else and outside the platform assembly.
+   *
+   * It must not depend on `webServer`/`storageDomain`: a profile that composes differently
+   * still gets tool calls, and evidence about them is the one thing that has to survive the
+   * panel being absent. `tools/result` is an **emit** event — the registry calls every
+   * observer and swallows what they throw — so this observes, never intercepts.
+   */
+  ctx.effect(() => {
+    const log = createDshAuditLog({ storageDir: storageDir(), logger: ctx.logger })
+    auditLog = log
+    const off = ctx.on('tools/result', (exec, result) => {
+      try {
+        const entry = auditEntryFrom(exec, result)
+        if (entry !== undefined) log.record(entry)
+      } catch (error) {
+        // The registry would log this too, but only after it swallowed it; a warning here
+        // names the audit path, which is the part that went wrong.
+        ctx.logger?.warn?.('at-terminal: audit observer failed: %s', error?.message ?? String(error))
+      }
+    })
+    return () => {
+      try {
+        off?.()
+      } catch {}
+      log.dispose()
+      auditLog = undefined
+    }
+  }, 'at-terminal: audit trail')
 
   ctx.effect(() => {
     const disposers = createTools({
@@ -183,7 +268,10 @@ export function apply(ctx, config = {}) {
           terminalContext,
           resolveApproval,
           broadcastMonitor: (ev, data) => broadcastMonitorEvent(ev, data),
-          getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback
+          getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback,
+          // Read through a closure: the status tool is constructed here but asked later,
+          // and the audit log belongs to the plugin's lifetime, not the assembly's.
+          readAuditTail: (limit) => auditLog?.readRecent(limit)
         })
 
         scoped.effect(() => () => {

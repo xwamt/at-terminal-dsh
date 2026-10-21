@@ -16318,10 +16318,27 @@ var AgentToolService = class {
     };
   }
   async getAgentExecutionStatus(limit) {
-    return this.dependencies.executionBridge ? this.dependencies.executionBridge.getSnapshot(limit) : {
+    let wanted = Math.max(1, Math.trunc(limit ?? 5)), bridge = this.dependencies.executionBridge, tail = this.dependencies.auditTail;
+    if (tail !== void 0) {
+      let fromFile = await tail.readRecent(wanted).catch(() => {
+      });
+      if (fromFile !== void 0 && fromFile.length > 0)
+        return {
+          ...bridge?.getSnapshot(wanted) ?? {
+            timestamp: Date.now(),
+            recentAudits: [],
+            activeTransfers: []
+          },
+          // Oldest first in the file; the HUD renders newest first, exactly like the ring.
+          recentAudits: [...fromFile].reverse(),
+          source: "file"
+        };
+    }
+    return bridge !== void 0 ? { ...bridge.getSnapshot(wanted), source: "memory" } : {
       timestamp: Date.now(),
       recentAudits: [],
-      activeTransfers: []
+      activeTransfers: [],
+      source: "memory"
     };
   }
   async openMonitor(input) {
@@ -18651,8 +18668,127 @@ function createDshAgentToolService(options) {
     policyEvaluator,
     metricsCollector,
     executionBridge,
+    ...options.readAuditTail === void 0 ? {} : { auditTail: { readRecent: options.readAuditTail } },
     broadcastMonitor: options.broadcastMonitor
   });
+}
+
+// src/platform/dsh/audit.ts
+import { readFile as readFile4 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+
+// src/agent/AgentAuditLog.ts
+import { appendFile, mkdir as mkdir2 } from "node:fs/promises";
+import { dirname as dirname3, join as join6 } from "node:path";
+var AGENT_AUDIT_FILE_NAME = "agent-audit.jsonl", AgentAuditLog = class {
+  filePath;
+  channel;
+  now;
+  fs;
+  /** Serializes appends so concurrent tool calls cannot interleave half-lines. */
+  tail = Promise.resolve();
+  constructor(options) {
+    this.filePath = join6(options.storageDir, AGENT_AUDIT_FILE_NAME), this.channel = options.channel, this.now = options.now ?? Date.now, this.fs = options.fs ?? { mkdir: mkdir2, appendFile };
+  }
+  /** Fire-and-forget: an audit failure must never fail the tool call it describes. */
+  record(entry) {
+    let line = JSON.stringify({
+      time: new Date(this.now()).toISOString(),
+      ...entry,
+      ...entry.command === void 0 ? {} : { command: redactSensitiveText(entry.command) }
+    });
+    this.channel.appendLine(line), this.tail = this.tail.then(async () => {
+      await this.fs.mkdir(dirname3(this.filePath), { recursive: !0 }), await this.fs.appendFile(this.filePath, `${line}
+`, "utf8");
+    }).catch(() => {
+    });
+  }
+  /** Resolves once every entry recorded so far has been written to disk. */
+  async flush() {
+    await this.tail;
+  }
+  dispose() {
+    this.channel.dispose?.();
+  }
+};
+
+// src/platform/dsh/audit.ts
+function createRingChannel(ringSize, logger) {
+  let ring = [];
+  return {
+    appendLine(line) {
+      ring.push(line), ring.length > ringSize && ring.shift();
+      try {
+        logger?.info(line);
+      } catch {
+      }
+    },
+    lines() {
+      return ring;
+    }
+  };
+}
+function decisionOf(reasonCode) {
+  return reasonCode.includes("denied") || reasonCode === "user_cancelled" ? "denied" : reasonCode === "user_approved" || reasonCode === "completed" ? "confirmed" : "allowed";
+}
+function riskOf(decision) {
+  return decision === "denied" ? "high" : decision === "confirmed" ? "medium" : "low";
+}
+function summaryOfLine(line, ordinal) {
+  let raw;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return;
+  }
+  let parsed = typeof raw.time == "string" ? Date.parse(raw.time) : Number.NaN;
+  if (!Number.isFinite(parsed)) return;
+  let reasonCode = typeof raw.reasonCode == "string" ? raw.reasonCode : "", decision = decisionOf(reasonCode), text = typeof raw.command == "string" ? raw.command : typeof raw.path == "string" ? raw.path : typeof raw.tool == "string" ? raw.tool : "unknown";
+  return {
+    // The file carries no id; this one is stable for as long as the line is. The client
+    // de-duplicates audits by id, so it must change when the line does — the ordinal is the
+    // line's position in the read window, which is why the timestamp comes first.
+    id: `audit-${parsed}-${ordinal}`,
+    timestamp: parsed,
+    command: text,
+    decision,
+    riskLevel: riskOf(decision),
+    ...typeof raw.serverId == "string" ? { serverId: raw.serverId } : {}
+  };
+}
+function createDshAuditLog(options) {
+  let channel = createRingChannel(options.ringSize ?? 50, options.logger), log = new AgentAuditLog({
+    storageDir: options.storageDir,
+    channel,
+    ...options.now === void 0 ? {} : { now: options.now },
+    ...options.writeFs === void 0 ? {} : { fs: options.writeFs }
+  }), filePath = join7(options.storageDir, AGENT_AUDIT_FILE_NAME), readText = options.readText ?? ((file) => readFile4(file, "utf8"));
+  return {
+    filePath,
+    record(entry) {
+      log.record(entry);
+    },
+    flush() {
+      return log.flush();
+    },
+    async readRecent(limit) {
+      let wanted = Math.max(1, Math.trunc(limit));
+      try {
+        let window2 = (await readText(filePath)).split(`
+`).filter((line) => line.trim() !== "").slice(-wanted), summaries = [];
+        for (let [index, line] of window2.entries()) {
+          let summary = summaryOfLine(line, index);
+          summary !== void 0 && summaries.push(summary);
+        }
+        return summaries;
+      } catch {
+        return;
+      }
+    },
+    dispose() {
+      log.dispose();
+    }
+  };
 }
 
 // src/platform/dsh/entry.ts
@@ -18780,6 +18916,7 @@ export {
   TerminalContextRegistry,
   createDshAgentToolService,
   createDshAssetApi,
+  createDshAuditLog,
   createDshPlatform,
   createDshPolicyEvaluator,
   createDshServerApi,

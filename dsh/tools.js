@@ -1197,6 +1197,7 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
           currentCommand: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           currentStatus: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           activeTransfersCount: { type: 'integer' },
+          source: { type: 'string', enum: ['file', 'memory'] },
           recentAudits: {
             type: 'array',
             items: {
@@ -1217,7 +1218,7 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
         return [
           {
             type: 'text',
-            text: `Agent Status: ${val.hasActiveAction ? `Running [${val.currentCommand}]` : 'Idle'}, ${val.activeTransfersCount} transfers, ${val.recentAudits.length} recent audits`
+            text: `Agent Status: ${val.hasActiveAction ? `Running [${val.currentCommand}]` : 'Idle'}, ${val.activeTransfersCount} transfers, ${val.recentAudits.length} recent audits (source: ${val.source})`
           }
         ]
       }
@@ -1236,6 +1237,9 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
           currentCommand: res.currentAction ? res.currentAction.command : null,
           currentStatus: res.currentAction ? res.currentAction.status : null,
           activeTransfersCount: res.activeTransfers ? res.activeTransfers.length : 0,
+          // `file` means the rows came from agent-audit.jsonl and survive a restart;
+          // `memory` means the live ring, which is capped and dies with the process.
+          source: res.source === 'file' ? 'file' : 'memory',
           recentAudits: (res.recentAudits || []).map((a) => ({
             id: a.id,
             timestamp: a.timestamp,
