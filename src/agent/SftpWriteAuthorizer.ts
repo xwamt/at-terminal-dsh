@@ -39,7 +39,8 @@ export interface SftpWriteAuthorizerOptions {
  * A grant is keyed on `(serverId, parent directory)` and carries an expiry. Nothing is keyed
  * on the server alone: the caller may be an agent following injected instructions, and under
  * that threat model "the user allowed one write to this box" cannot mean "this box is now
- * writable". Sensitive paths never produce a grant at all.
+ * writable". Sensitive paths never produce a grant at all, and full trust does not cover
+ * them either — a fully trusted server still asks twice before `~/.ssh/authorized_keys`.
  */
 export class SftpWriteAuthorizer {
   /** grant key -> expiry timestamp; Infinity for session-lifetime grants. */
@@ -53,11 +54,14 @@ export class SftpWriteAuthorizer {
   }
 
   async requireWrite(server: ServerConfig, request: SftpWriteRequest): Promise<void> {
-    if (shouldAutoApproveSftpWrite(server)) {
-      return;
-    }
     const parentDirectory = normalizeRemoteDirectory(dirname(request.path));
     const sensitive = isSensitiveRemotePath(request.path);
+    // Full trust is the one place where "no prompt" is the answer, and it stops here:
+    // sensitive paths are where an agent following injected instructions does the most
+    // damage, and trust is granted to a server, not to `~/.ssh/authorized_keys` on it.
+    if (!sensitive && shouldAutoApproveSftpWrite(server)) {
+      return;
+    }
     const outsideWorkspace = !isWithinRemoteDirectory(request.workspaceRoot, request.path);
     const grantKey = `${server.id}\n${parentDirectory}`;
 

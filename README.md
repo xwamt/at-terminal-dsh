@@ -96,18 +96,21 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 
 | Tool Name | Category | Description |
 | :--- | :--- | :--- |
-| `at_terminal_ping` | Probe | Check plugin readiness, version, and effective settings |
-| `at_terminal_list_ssh_servers` | Assets | List configured SSH hosts and connection status |
-| `at_terminal_get_terminal_context` | Context | Get active focused terminal session and window info |
-| `at_terminal_run_remote_command` | Execution | Safely run remote commands under policy and approval |
-| `at_terminal_sftp_list_directory` | SFTP | List remote directory tree with metadata |
-| `at_terminal_sftp_read_file` | SFTP | Read remote file content with offset and truncation |
-| `at_terminal_sftp_write_file` | SFTP | Write or append remote file protected by authorizer |
-| `at_terminal_sftp_stat_path` | SFTP | Inspect path existence, permissions, and stats |
-| `at_terminal_sftp_create_directory` | SFTP | Create remote directory structures recursively |
-| `at_terminal_sftp_delete` | SFTP | Delete remote files or empty directories |
-| `at_terminal_sftp_rename` | SFTP | Move or rename remote files and folders |
-| `at_terminal_sftp_copy` | SFTP | Copy files or directories on remote host |
+| `at_terminal_ping` | Probe | Report readiness, capabilities, and the effective settings; reaches no remote host |
+| `at_terminal_list_ssh_servers` | Assets | List configured SSH hosts, connection status, and trust level |
+| `at_terminal_get_terminal_context` | Context | Get the focused, connected, and known terminal sessions |
+| `at_terminal_run_remote_command` | Execution | Run a non-interactive command under the server's trust level and the command policy |
+| `at_terminal_sftp_list_directory` | SFTP | List a remote directory with pagination (`offset` / `maxEntries`) |
+| `at_terminal_sftp_stat_path` | SFTP | Inspect type, size, permissions, and modification time |
+| `at_terminal_sftp_read_file` | SFTP | Read bounded UTF-8 text with `offset` and `maxBytes` |
+| `at_terminal_sftp_write_file` | SFTP | Write UTF-8 text after write authorization; existing files need `overwrite: true` |
+| `at_terminal_sftp_create_file` | SFTP | Create a remote file, optionally with initial content |
+| `at_terminal_sftp_create_directory` | SFTP | Create a remote directory after write authorization |
+| `at_terminal_sftp_rename` | SFTP | Move or rename a path; source and destination both need write authorization |
+| `at_terminal_sftp_delete` | SFTP | Delete a single file. Directories are refused — use `at_terminal_run_remote_command` with an explicit `rm` for one; the user always confirms |
+| `at_terminal_open_monitor` | UI | Open the monitoring HUD; answers `opened: false, reason: "no-client"` when no panel is connected |
+| `at_terminal_get_hardware_metrics` | Metrics | Read CPU, memory, disk, network, and top processes for an SSH server |
+| `at_terminal_get_agent_execution_status` | Audit | Report the live action, recent audits (with `source: file \| memory`), and active transfers |
 
 ---
 
@@ -202,7 +205,7 @@ npm run verify:dsh
 # 3. 执行仓库内核隔离校验 (4 项：src/core 自封闭 / 零 vscode / 零 @deepseek-ai 导入 / 组合根调 setPlatform)
 npm run verify:kernel
 
-# 4. 运行全量自动化测试套件 (82 个测试文件，1091 个用例)
+# 4. 运行全量自动化测试套件 (vitest；文件与用例数会随改动增长，故不在此写死)
 npm run test
 
 # 5. 执行 TypeScript 静态类型检查 (零报错)

@@ -60,6 +60,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 
 | 工具 | 类型 | 说明 |
 | --- | --- | --- |
+| `ping` | 只读 | 报告插件是否就绪、本构建提供哪些能力，以及当前生效的设置；不触达任何远程主机。 |
 | `list_ssh_servers` | 只读 | 列出已允许后台连接的 SSH 服务器，不暴露密码或私钥。 |
 | `get_terminal_context` | 只读 | 返回当前聚焦、默认连接、已连接和已知的 AT Terminal SSH 终端上下文。 |
 | `run_remote_command` | 命令 | 执行经过确认的非交互 SSH 命令，并返回 stdout、stderr、exit code、timeout、duration 和截断信息。除非服务器已被信任且 `@at-series/command-policy` 能证明这是普通只读，否则每条命令都要确认。stdout/stderr 各默认 64000 字节（硬顶 256000）。 |
@@ -71,11 +72,14 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `sftp_create_directory` | 写入 | 创建远程目录。 |
 | `sftp_rename` | 写入 | 重命名或移动远程文件/目录；源路径与目标路径都需要写授权。 |
 | `sftp_delete` | 写入 | 删除单个远程文件（拒绝目录——目录请改用 `run_remote_command` 执行显式 `rm`，该路径走命令策略）；即使完全信任也总是询问用户，且答案永不记住。 |
+| `open_monitor` | 界面 | 打开监控 HUD（硬件指标或 Agent 执行状态）。没有已连接的浏览器面板时返回 `opened: false, reason: "no-client"`，因为此时不会有任何东西显示出来。 |
+| `get_hardware_metrics` | 只读 | 读取 SSH 服务器的 CPU、内存、磁盘、网络吞吐与占用最高的进程。探测脚本是内置的，绕过命令策略引擎；该调用仍然会进审计。 |
+| `get_agent_execution_status` | 只读 | 报告正在执行的动作、最近的审计记录与进行中的 SFTP 传输。`source: file` 表示数据来自 `agent-audit.jsonl`（重启后仍在）；`source: memory` 表示不在了。 |
 
 ## 安全行为
 
 - `run_remote_command` 确认跟随服务器信任下拉（`Trust agent remote commands`）。**不信任**每条都弹窗。**有限信任**会加载 npm 精确依赖 `@at-series/command-policy@0.1.0`（禁止 `^`），对管道/链式命令的每一段检查变更状态黑名单：命中黑名单的阶段（写文件、改权限、装包、服务控制、`docker exec`、`iptables -F`）仍会弹窗；无法安全解析的命令（命令替换、文件重定向、未闭合引号）总是弹窗。**不在黑名单中的命令（包括未知命令）在有限信任下不弹窗直接运行。**`# Purpose:` 注释不授予权限；带引号的多行脚本以及静态 `sudo` / `python3 -c` / `sqlite3` 载荷会进入分析，而不是按包装命令名一刀切拦截。**完全信任**远程命令与 SFTP 写入都不弹窗。
-- 有限信任不会跳过 SFTP 写入授权。完全信任会跳过远程命令确认和 SFTP 写入确认（含敏感路径）。任何信任档都不会跳过 SSH 主机指纹信任。
+- 有限信任不会跳过 SFTP 写入授权。完全信任会跳过普通的远程命令确认与 SFTP 写入确认；敏感路径是例外——完全信任下仍然会询问。任何信任档都不会跳过 SSH 主机指纹信任。
 - Bridge 发布到 AT Series 注册表 `~/.at-series/bridges/<hostApp>/`。
 - SFTP 写入按「目录」授权：弹窗提供 `Allow Once`（默认）、`Allow This Folder For 15 Minutes`、`Allow This Folder For The Session` 三档，任何一档都只覆盖用户当时看到的那个目录，不会覆盖整台服务器。
 - 写入目标越出 SFTP 会话初始工作目录时，弹窗会明确高亮，并且不提供「本会话」这一档。

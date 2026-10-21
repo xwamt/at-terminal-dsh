@@ -72,14 +72,37 @@ describe('SftpWriteAuthorizer full trust', () => {
     expect(recorder.seen).toHaveLength(0);
   });
 
-  it('does not prompt for sensitive writes on a fully trusted server', async () => {
-    const recorder = recordingConfirm([]);
+  /**
+   * `docs/features*.md` used to say two opposite things here: that full trust skips
+   * confirmation "including sensitive paths", and that sensitive paths "always require a
+   * second confirmation". The second sentence is the one this repo means — trust is granted
+   * to a server, not to a path on it — so the short-circuit moved *behind* the sensitive
+   * check and this case pins the result: two prompts, both `once`.
+   */
+  it('still asks twice for sensitive writes on a fully trusted server', async () => {
+    const recorder = recordingConfirm(['once', 'once']);
     const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
     const trusted = { ...server(), agentCommandTrust: 'full' as const };
 
     await authorizer.requireWrite(trusted, write('/etc/cron.d/backup'));
 
-    expect(recorder.seen).toHaveLength(0);
+    expect(recorder.seen.map((confirmation) => confirmation.stage)).toEqual([
+      'primary',
+      'sensitive-double-check'
+    ]);
+    expect(recorder.seen[0].sensitive).toBe(true);
+    expect(recorder.seen[0].allowedScopes).toEqual(['once']);
+  });
+
+  it('grants nothing durable for a sensitive write, so the next one asks again', async () => {
+    const recorder = recordingConfirm(['once', 'once', 'once', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+    const trusted = { ...server(), agentCommandTrust: 'full' as const };
+
+    await authorizer.requireWrite(trusted, write('/etc/cron.d/backup'));
+    await authorizer.requireWrite(trusted, write('/etc/cron.d/backup'));
+
+    expect(recorder.seen).toHaveLength(4);
   });
 
   it('still prompts under limited trust even when the legacy checkbox is on', async () => {

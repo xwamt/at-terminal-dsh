@@ -17518,9 +17518,10 @@ var DIRECTORY_GRANT_TTL_MS = 900 * 1e3, SftpWriteAuthorizer = class {
     this.confirm = options.confirm ?? defaultNoConfirmation, this.now = options.now ?? Date.now;
   }
   async requireWrite(server, request) {
-    if (shouldAutoApproveSftpWrite(server))
+    let parentDirectory = normalizeRemoteDirectory(dirname(request.path)), sensitive = isSensitiveRemotePath(request.path);
+    if (!sensitive && shouldAutoApproveSftpWrite(server))
       return;
-    let parentDirectory = normalizeRemoteDirectory(dirname(request.path)), sensitive = isSensitiveRemotePath(request.path), outsideWorkspace = !isWithinRemoteDirectory(request.workspaceRoot, request.path), grantKey = `${server.id}
+    let outsideWorkspace = !isWithinRemoteDirectory(request.workspaceRoot, request.path), grantKey = `${server.id}
 ${parentDirectory}`;
     if (!sensitive && this.hasLiveGrant(grantKey))
       return;

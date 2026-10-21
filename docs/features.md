@@ -60,6 +60,7 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 
 | Tool | Type | Description |
 | --- | --- | --- |
+| `ping` | read-only | Reports readiness, the capabilities this build provides, and the effective settings. Reaches no remote host. |
 | `list_ssh_servers` | read-only | Lists SSH servers authorized for background connections without exposing passwords or private keys. |
 | `get_terminal_context` | read-only | Returns focused, default connected, connected, and known AT Terminal SSH terminal context. |
 | `run_remote_command` | command | Runs a confirmed non-interactive SSH command and returns stdout, stderr, exit code, timeout, duration, and truncation metadata. Every command is confirmed unless the server is trusted and `@at-series/command-policy` proves an ordinary read. stdout/stderr each default to 64000 bytes (hard cap 256000). |
@@ -71,6 +72,9 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 | `sftp_create_directory` | write | Creates a new remote directory. |
 | `sftp_rename` | write | Renames or moves a remote file or directory. Both the source and destination paths require write authorization. |
 | `sftp_delete` | write | Deletes a single remote file (directories are refused — for one, use `run_remote_command` with an explicit `rm`, which goes through the command policy). Always asks the user, even at full trust, and the answer is never remembered. |
+| `open_monitor` | ui | Opens the monitoring HUD for hardware metrics or agent execution status. Answers `opened: false, reason: "no-client"` when no browser panel is connected, because nothing would appear. |
+| `get_hardware_metrics` | read-only | Reads CPU, memory, disk, network throughput, and top processes for an SSH server. Its probe script is built in and bypasses the command policy engine; the call is still audited. |
+| `get_agent_execution_status` | read-only | Reports the live running action, recent audit rows, and active SFTP transfers. `source: file` means the rows came from `agent-audit.jsonl` and outlived a restart; `source: memory` means they did not. |
 
 ## Safety Behavior
 
@@ -79,7 +83,7 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 - Bridges publish into the AT Series registry under `~/.at-series/bridges/<hostApp>/`.
 - Bridge requests validate JSON schemas and enforce a maximum body size (2 MiB).
 - `run_remote_command` confirmation follows the server trust dropdown (`Trust agent remote commands`). Untrusted always asks. Limited trust loads `@at-series/command-policy@0.1.0` (pinned exact npm version, no `^`) and checks every stage of a pipeline or chain against a blocklist of state-changing programs: blocklisted stages (file writes, permissions, packages, services, `docker exec`, `iptables -F`) still ask, and a command whose name cannot be read plainly (command substitution, file redirects, unclosed quotes) always asks. Commands that miss the blocklist — including unknown commands — run without a prompt under limited trust. `# Purpose:` comments never grant authority; quoted multiline scripts and static `sudo` / `python3 -c` / `sqlite3` payloads are analyzed instead of blocked by name. Full trust never asks.
-- Limited trust does not bypass SFTP write authorization. Full trust skips both remote-command and SFTP write confirmation, including sensitive paths. No trust level bypasses SSH host key trust.
+- Limited trust does not bypass SFTP write authorization. Full trust skips ordinary remote-command and SFTP write confirmation; sensitive paths are the exception — full trust still asks for those. No trust level bypasses SSH host key trust.
 - Writes outside the directory the SFTP session was opened in are highlighted in the prompt and cannot be granted for the whole session.
 - Sensitive paths (`~/.ssh`, `/etc`, `/usr`, `/root`, `*.service`, `authorized_keys`, `sudoers*`, `crontab`) always require a second confirmation and are never remembered.
 - Agent SFTP sessions never escalate. A permission-denied write fails; the `sudo -n` fallback exists only in the user-driven SFTP view.
