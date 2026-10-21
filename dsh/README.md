@@ -23,7 +23,7 @@ variants.
 | `package.json` | Bundle manifest: `exports`, `dsh.bundle.patch`, `dsh.client`, icon, shipped files |
 | `cordis.patch.yml` | The patch dsh applies when the bundle is selected; inserts the `at-terminal` row |
 | `index.js` | **Host half** — exports `Config`, `inject` and `apply(ctx, config)`; composes tools, the platform assembly and the channel. The assembly installs itself into the shared platform registry (`src/platform/current.ts`) the domain layer reads through — the dsh counterpart of `setPlatform` in `src/extension.ts`, and the call whose absence made every terminal connect fail with `platform not installed` until a real session found it |
-| `channel.js` | Host↔Client channel over `ctx.webServer`: unary RPC, SSE events, the byte-stream gauge and the terminal WebSocket (DSH-21/25) |
+| `channel.js` | Host↔Client channel over `ctx.webServer`: unary RPC, SSE events, the byte-stream gauge and the terminal WebSocket (DSH-21/25). Mutating routes run a Host/Origin/`Sec-Fetch-Site`/content-type fence copied from the Harness's own `dsh-client-connection`; refusals are counted in `state.get().rejected` and logged with the request's own `host`/`origin` (never its body) |
 | `tools.js` | Tool definitions as plain data, already normalized for `ctx.tools.register()`. No `@deepseek-ai/*` import, so it loads without a dsh checkout |
 | `settings.js` | Settings schema, constraints and defaults. Also free of `@deepseek-ai/*` imports; the schema factory takes the schemastery instance as an argument |
 | `host.bundle.js` | **Built** (committed): the TypeScript domain services (`src/platform/dsh/entry.ts`) compiled for the Host half |

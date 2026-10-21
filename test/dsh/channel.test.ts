@@ -63,8 +63,16 @@ interface Harness {
   mountAgain: () => () => void;
 }
 
-function createHarness(
-  assets?: () => unknown,
+/** `%s`/`%d` substitution, the way the Host half's pino logger formats a line. */
+function format(parts: unknown[]): string {
+  const [first, ...rest] = parts;
+  if (typeof first !== 'string') return parts.map(String).join(' ');
+  let next = 0;
+  const text = first.replace(/%[sd]/g, () => String(rest[next++]));
+  return [text, ...rest.slice(next)].map(String).join(' ');
+}
+
+function createHarness(  assets?: () => unknown,
   servers?: () => unknown,
   terminal?: () => unknown,
   settings?: () => unknown,
@@ -101,9 +109,12 @@ function createHarness(
   const ctx = {
     webServer: server,
     logger: {
-      info: (...parts: unknown[]) => void logs.push(parts.map(String).join(' ')),
-      warn: (...parts: unknown[]) => void logs.push('warn ' + parts.map(String).join(' ')),
-      error: (...parts: unknown[]) => void logs.push('error ' + parts.map(String).join(' '))
+      // printf-style substitution, like the pino logger the Host half really gets: without
+      // it a `%s` line records the placeholders and the assertion would have to match the
+      // argument list instead of the sentence a user would read.
+      info: (...parts: unknown[]) => void logs.push(format(parts)),
+      warn: (...parts: unknown[]) => void logs.push('warn ' + format(parts)),
+      error: (...parts: unknown[]) => void logs.push('error ' + format(parts))
     }
   };
 
@@ -144,13 +155,26 @@ interface RpcAnswer {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Drive the `rpc` route's handler with a fake request/response pair. */
-async function callRpc(harness: Harness, body: unknown, method = 'POST'): Promise<RpcAnswer> {
+async function callRpc(
+  harness: Harness,
+  body: unknown,
+  method = 'POST',
+  headers: Record<string, string> = {}
+): Promise<RpcAnswer> {
   const route = harness.routes.get(`${channel.PREFIX}/rpc`);
   if (route === undefined) throw new Error('rpc route is not registered');
 
-  const req = new EventEmitter() as EventEmitter & { method: string; destroy: () => void };
+  const req = new EventEmitter() as EventEmitter & {
+    method: string;
+    destroy: () => void;
+    headers: Record<string, string>;
+  };
   req.method = method;
   req.destroy = () => {};
+  // What the browser half actually sends. The fence checks Host and content-type, so a
+  // request without them is refused before the dispatcher is reached — which is the point
+  // of the check, and why the default here models a real request rather than a bare object.
+  req.headers = { host: '127.0.0.1:4321', 'content-type': 'application/json', ...headers };
 
   let status = 0;
   let payload = '';
@@ -610,7 +634,10 @@ describe('dsh Host channel — terminal over the websocket', () => {
     };
     socket.end = () => socket.emit('close');
     socket.destroyed = false;
-    route.handler({ headers: { 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==' } }, socket);
+    route.handler(
+      { headers: { host: '127.0.0.1:4321', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==' } },
+      socket
+    );
     return {
       socket,
       written,
@@ -933,6 +960,91 @@ describe('dsh Host channel — server records', () => {
     const answer = await callRpc(harness, { method: 'servers.list' });
     expect(answer.status).toBe(200);
     expect(answer.json?.error?.code).toBe('services-unavailable');
+    harness.dispose();
+  });
+
+  it('refuses a forged Origin, a rebound Host, a cross-site request and a non-JSON body', async () => {
+    // The fence's failure mode is silent: a wrongly refused request leaves the panel blank,
+    // which is indistinguishable from a client that never loaded. Each refusal therefore has
+    // to be asserted here, and every one of them is counted in `state.get().rejected`.
+    const harness = createHarness();
+
+    // Same-origin, no Origin at all: a non-browser client on loopback (the probe script).
+    expect((await callRpc(harness, { method: 'ping' })).status).toBe(200);
+    // Same-origin, Origin present and matching the Host authority.
+    const same = await callRpc(harness, { method: 'ping' }, 'POST', {
+      origin: 'http://127.0.0.1:4321'
+    });
+    expect(same.status).toBe(200);
+    // The Desktop shell's own page: a `dsh-app:` origin may not be forged by a web page.
+    const shell = await callRpc(harness, { method: 'ping' }, 'POST', { origin: 'dsh-app://app' });
+    expect(shell.status).toBe(200);
+    // …and the same page if the IPC carrier forwards the URL's `app` authority as Host.
+    const carrier = await callRpc(harness, { method: 'ping' }, 'POST', {
+      host: 'app',
+      origin: 'dsh-app://app'
+    });
+    expect(carrier.status).toBe(200);
+
+    // A page on another origin.
+    const forged = await callRpc(harness, { method: 'ping' }, 'POST', {
+      origin: 'https://evil.example'
+    });
+    expect(forged.status).toBe(403);
+    expect(forged.json?.error?.code).toBe('forbidden');
+
+    // DNS rebinding: the socket reaches loopback but Host names the attacker.
+    const rebound = await callRpc(harness, { method: 'ping' }, 'POST', {
+      host: 'evil.example:4321'
+    });
+    expect(rebound.status).toBe(403);
+
+    // A browser that tells us it is cross-site, even without an Origin (some GET-shaped
+    // requests carry no Origin at all).
+    const crossSite = await callRpc(harness, { method: 'ping' }, 'POST', {
+      'sec-fetch-site': 'cross-site'
+    });
+    expect(crossSite.status).toBe(403);
+
+    // No Host header at all: nothing to trust.
+    const noHost = await callRpc(harness, { method: 'ping' }, 'POST', { host: '' });
+    expect(noHost.status).toBe(403);
+
+    // A "simple request" a form or an <img> can make without a preflight.
+    const textPlain = await callRpc(harness, { method: 'ping' }, 'POST', {
+      'content-type': 'text/plain'
+    });
+    expect(textPlain.status).toBe(415);
+    expect(textPlain.json?.error?.code).toBe('unsupported-media-type');
+
+    const state = await callRpc(harness, { method: 'state.get' });
+    expect(state.json?.result).toMatchObject({ rejected: 5 });
+    // Nothing refuses silently: the reason names the request's own claims.
+    expect(harness.logs.join('\n')).toContain('origin=https://evil.example');
+    harness.dispose();
+  });
+
+  it('refuses the SSE and WebSocket routes with the same fence', async () => {
+    const harness = createHarness();
+
+    const events = harness.routes.get(`${channel.PREFIX}/events`)!;
+    let sseStatus = 0;
+    events.handler(
+      { method: 'GET', url: `${channel.PREFIX}/events`, headers: { host: '127.0.0.1:4321', origin: 'https://evil.example' } },
+      { writeHead: (code: number) => void (sseStatus = code), end: () => {}, write: () => true, on: () => {} }
+    );
+    expect(sseStatus).toBe(403);
+
+    const ws = harness.upgrades.get(`${channel.PREFIX}/ws`)!;
+    const written: string[] = [];
+    let destroyed = false;
+    ws.handler(
+      { headers: { host: '127.0.0.1:4321', origin: 'https://evil.example', 'sec-websocket-key': 'x' } },
+      { write: (chunk: Buffer) => void written.push(String(chunk)), destroy: () => void (destroyed = true) }
+    );
+    expect(written.join('')).toContain('403 Forbidden');
+    expect(destroyed).toBe(true);
+
     harness.dispose();
   });
 });

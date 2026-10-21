@@ -164,6 +164,150 @@ export function buildChunk(seq, payloadBytes, chunkSize) {
 
 const noop = () => {}
 
+/* ----------------------------- request trust fence ---------------------------- */
+
+/**
+ * Browser-trust fence for the mutating routes, copied from the Harness's own
+ * `dsh-client-connection` (`isTrustedApiRequest` / `isSameAuthorityOrigin`, read out of the
+ * installed `app.asar`).
+ *
+ * It defends the two confused-deputy paths a browser opens against a local HTTP API:
+ *
+ * - **DNS rebinding** — a page on `evil.example` resolves that name to 127.0.0.1, so its
+ *   requests reach this server. Its `Host` header still says `evil.example`, and Host is the
+ *   one header rebinding cannot forge. Hence the Host check applies to **every** request,
+ *   browser-looking or not: over plain HTTP a browser attaches neither `Origin` nor
+ *   Fetch-Metadata to a read, so an unmarked request can still be a rebound read.
+ * - **Cross-site writes** — a malicious page firing `fetch('http://127.0.0.1:<port>/…')`.
+ *   That request carries `Origin: https://evil.example` and/or `Sec-Fetch-Site: cross-site`,
+ *   and both are refused.
+ *
+ * The official page served from `dsh-app://app` reaches the Host over the shell's IPC
+ * carrier, which presents a loopback `Host` like any other client — the Harness's own `/api`
+ * fence has exactly these rules and its own UI passes them, which is why copying the rules is
+ * safer than inventing a special case for the shell. The one deliberate addition: an
+ * `Origin` naming the shell's own scheme (`dsh-app:`) is accepted **only** when `Host` is
+ * loopback. A web page cannot forge that Origin, so it grants nothing to an attacker, and it
+ * keeps the panel working if a future carrier forwards the page's real Origin instead of
+ * stripping it.
+ *
+ * Two escape hatches, both off by default and both noisy:
+ *
+ * - `AT_TERMINAL_TRUSTED_HOSTS=a:b,c` — extra non-loopback authorities to accept (a LAN
+ *   address, a reverse proxy). Same shape as the Harness's `trustedHosts`.
+ * - `AT_TERMINAL_TRUST_ANY_ORIGIN=1` — disables the fence entirely. Only for a deployment
+ *   that has its own front door; a warning is logged at mount time.
+ */
+
+/** Shell-scheme origins: the Desktop page itself, which no web page can claim. */
+const SHELL_ORIGIN_SCHEMES = new Set(['dsh-app:', 'dsh:'])
+
+/**
+ * Authorities the shell's IPC carrier may present.
+ *
+ * The panel is served from `dsh-app://app` and its relative `fetch` is bridged by the shell.
+ * Whether that bridge rewrites `Host` to the loopback authority (which is what the Harness's
+ * own `/api` fence implies, since `/api` accepts only loopback/trusted/bind) or forwards the
+ * URL's `app` host is **not something this repository can observe** — there is no devtools
+ * port to read the request from. `app` is accepted because it costs nothing: it does not
+ * resolve, so it is no DNS-rebinding target, and a page on another origin still fails the
+ * Origin check below.
+ */
+const SHELL_CARRIER_AUTHORITIES = new Set(['app'])
+
+/** One header value as a string, or `undefined`. `req.headers` is lowercased by Node. */
+function headerOf(headers, name) {
+  if (headers === undefined || headers === null) return undefined
+  if (typeof headers.get === 'function') {
+    const value = headers.get(name)
+    return typeof value === 'string' ? value : undefined
+  }
+  const value = headers[name]
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0]
+  return undefined
+}
+
+/** WHATWG URL of a bare authority, or `undefined` when it does not parse. */
+function parseAuthority(authority, scheme = 'http:') {
+  try {
+    return new URL(`${scheme}//${authority}`)
+  } catch {
+    return undefined
+  }
+}
+
+/** `localhost`, `[::1]`, or any `127.x.x.x` literal. */
+function isLoopbackHostname(hostname) {
+  if (hostname === 'localhost' || hostname === '[::1]') return true
+  const parts = hostname.split('.')
+  return (
+    parts.length === 4 &&
+    parts[0] === '127' &&
+    parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+  )
+}
+
+/** Extra authorities this deployment serves; empty unless configured. */
+export function trustedHostAuthorities() {
+  return (process.env.AT_TERMINAL_TRUSTED_HOSTS ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry !== '')
+}
+
+/** `true` when the fence is disabled by the explicit escape hatch. */
+export function trustAnyOrigin() {
+  return process.env.AT_TERMINAL_TRUST_ANY_ORIGIN === '1'
+}
+
+/** Hostname-only comparison for a configured authority (`host` or `host:port`). */
+function isTrustedAuthority(hostUrl, entries) {
+  return entries.some((entry) => {
+    const entryUrl = parseAuthority(entry)
+    if (entryUrl === undefined) return false
+    // A port-less entry matches the hostname on any port; an explicit port must match.
+    return entryUrl.port === '' ? entryUrl.hostname === hostUrl.hostname : entryUrl.host === hostUrl.host
+  })
+}
+
+/**
+ * Decide whether one request may reach a mutating route.
+ *
+ * @param {Record<string, unknown> | undefined} headers Node's `req.headers`.
+ * @returns {boolean}
+ */
+export function isTrustedRequestHeaders(headers) {
+  if (trustAnyOrigin()) return true
+  const host = headerOf(headers, 'host')
+  // No Host at all is not a browser and not a client this channel serves: HTTP/1.1 requires
+  // it, and the shape a proxy or a probe sends without one has no authority to grant.
+  if (host === undefined) return false
+  const hostUrl = parseAuthority(host)
+  if (hostUrl === undefined) return false
+  const loopback = isLoopbackHostname(hostUrl.hostname)
+  const shellCarrier = SHELL_CARRIER_AUTHORITIES.has(hostUrl.hostname)
+  if (!loopback && !shellCarrier && !isTrustedAuthority(hostUrl, trustedHostAuthorities())) return false
+  if (headerOf(headers, 'sec-fetch-site') === 'cross-site') return false
+  const origin = headerOf(headers, 'origin')
+  if (origin === undefined) return true
+  let originUrl
+  try {
+    originUrl = new URL(origin)
+  } catch {
+    return false
+  }
+  if ((loopback || shellCarrier) && SHELL_ORIGIN_SCHEMES.has(originUrl.protocol)) return true
+  if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') return false
+  if (originUrl.protocol === 'https:' && hostUrl.protocol !== 'https:') {
+    // The transport may be HTTP behind an HTTPS proxy, so compare under the Origin's scheme
+    // — the same normalization the official fence performs.
+    const upgraded = parseAuthority(host, 'https:')
+    return upgraded !== undefined && originUrl.host === upgraded.host
+  }
+  return originUrl.host === hostUrl.host
+}
+
 /** Default `resolveAssets`: a channel mounted without asset services says exactly that. */
 function unavailableAssets() {
   throw Object.assign(new Error('the asset services were not assembled'), {
@@ -240,8 +384,44 @@ export function registerChannel(ctx, options) {
   const disposers = []
   const sseClients = new Set()
 
-  function broadcastSse(event, data) {
-    if (sseClients.size === 0) return
+  /**
+   * Requests refused by the trust fence since this channel mounted.
+   *
+   * The counter exists because the fence's failure mode is a **blank panel**: a wrongly
+   * rejected request looks exactly like a client that never loaded, and the browser gives the
+   * user nothing to read. Exposing the count (with the reason in the log) turns "the panel is
+   * empty" into "N requests were refused, here is what they said about themselves".
+   */
+  let rejected = 0
+
+  if (trustAnyOrigin()) {
+    ctx.logger.warn(
+      'at-terminal channel: AT_TERMINAL_TRUST_ANY_ORIGIN=1 — the Host/Origin fence is DISABLED; ' +
+        'any origin that can reach this port may call it'
+    )
+  }
+
+  /**
+   * Refuse one request, and say why in the log.
+   *
+   * Only `origin`/`host`/`sec-fetch-site` are logged: the body may carry a password or a
+   * private key, and a refusal is not a reason to start recording payloads.
+   */
+  function rejectRequest(req, res, status, code, message) {
+    rejected += 1
+    ctx.logger.warn(
+      'at-terminal channel: refused %s %s (%s): host=%s origin=%s sec-fetch-site=%s',
+      req?.method ?? '?',
+      req?.url ?? '?',
+      code,
+      headerOf(req?.headers, 'host') ?? '(none)',
+      headerOf(req?.headers, 'origin') ?? '(none)',
+      headerOf(req?.headers, 'sec-fetch-site') ?? '(none)'
+    )
+    sendJson(res, status, { ok: false, error: { code, message } })
+  }
+
+  function broadcastSse(event, data) {    if (sseClients.size === 0) return
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
     for (const res of sseClients) {
       if (res.destroyed) {
@@ -322,6 +502,8 @@ export function registerChannel(ctx, options) {
         wsSockets: wsSockets.size,
         sseClients: sseClients.size,
         stream: lastStream,
+        // Requests the trust fence refused; see `rejected` above.
+        rejected,
         // Did the browser half ever run? See `clientHellos`.
         clientHellos: clientHellos.length,
         lastClientHello: clientHellos.at(-1) ?? null
@@ -744,6 +926,18 @@ export function registerChannel(ctx, options) {
             sendJson(res, 405, { ok: false, error: { code: 'method-not-allowed', message: 'POST only' } })
             return
           }
+          if (!isTrustedRequestHeaders(req.headers)) {
+            rejectRequest(req, res, 403, 'forbidden', 'request failed the Host/Origin fence')
+            return
+          }
+          // A form post, an `img` request or a `text/plain` "simple request" cannot produce
+          // this content type without a CORS preflight, which the fence would already have
+          // refused — so requiring it closes the CSRF shape that needs no preflight at all.
+          const contentType = headerOf(req.headers, 'content-type') ?? ''
+          if (!/^application\/json\b/i.test(contentType)) {
+            rejectRequest(req, res, 415, 'unsupported-media-type', 'content-type must be application/json')
+            return
+          }
           const chunks = []
           let size = 0
           let tooLarge = false
@@ -824,7 +1018,11 @@ export function registerChannel(ctx, options) {
       server.register({
         kind: 'exact',
         path: `${PREFIX}/events`,
-        handler(_req, res) {
+        handler(req, res) {
+          if (!isTrustedRequestHeaders(req?.headers)) {
+            rejectRequest(req, res, 403, 'forbidden', 'request failed the Host/Origin fence')
+            return
+          }
           res.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',
             'cache-control': 'no-cache, no-transform',
@@ -863,7 +1061,10 @@ export function registerChannel(ctx, options) {
         path: `${PREFIX}/stream`,
         handler(req, res) {
           const url = new URL(req.url ?? '', 'http://localhost')
-          const bytes = Math.max(0, Math.min(512 * 1024 * 1024, Number(url.searchParams.get('bytes') ?? 10 * 1024 * 1024)))
+          // 64 MiB, down from 512: this route is a throughput gauge for the spike probe, not
+          // a product surface, and a fixture that can pull half a gigabyte through the Host's
+          // event loop is a liability that buys nothing.
+          const bytes = Math.max(0, Math.min(64 * 1024 * 1024, Number(url.searchParams.get('bytes') ?? 10 * 1024 * 1024)))
           const chunkBytes = Math.max(1024, Math.min(4 * 1024 * 1024, Number(url.searchParams.get('chunk') ?? 64 * 1024)))
           const mode = url.searchParams.get('mode') === 'drain' ? 'drain' : 'burst'
           const totalChunks = Math.ceil(bytes / chunkBytes)
@@ -924,6 +1125,26 @@ export function registerChannel(ctx, options) {
         kind: 'exact',
         path: `${PREFIX}/ws`,
         handler(req, socket) {
+          // An upgrade has no response object, so a refusal is a hand-written 403 and a
+          // closed socket. The terminal WebSocket is the one route that carries keystrokes
+          // and remote output, so a page that may not talk to it must be told nothing else.
+          if (!isTrustedRequestHeaders(req?.headers)) {
+            rejected += 1
+            ctx.logger.warn(
+              'at-terminal channel: refused WS upgrade (%s): host=%s origin=%s sec-fetch-site=%s',
+              'forbidden',
+              headerOf(req?.headers, 'host') ?? '(none)',
+              headerOf(req?.headers, 'origin') ?? '(none)',
+              headerOf(req?.headers, 'sec-fetch-site') ?? '(none)'
+            )
+            try {
+              socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+            } catch {
+              // peer already gone
+            }
+            socket.destroy()
+            return
+          }
           const key = req.headers['sec-websocket-key']
           if (typeof key !== 'string') {
             socket.destroy()

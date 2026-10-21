@@ -193,9 +193,16 @@ async function callRpc(harness: ReturnType<typeof createHarness>, method: string
   const route = harness.routes.get('/dsh-at-terminal/rpc');
   if (route === undefined) throw new Error('the rpc route is not registered');
 
-  const req = new EventEmitter() as EventEmitter & { method: string; destroy: () => void };
+  const req = new EventEmitter() as EventEmitter & {
+    method: string;
+    destroy: () => void;
+    headers: Record<string, string>;
+  };
   req.method = 'POST';
   req.destroy = () => {};
+  // The channel's Host/content-type fence runs before dispatch; a bare fake request without
+  // these is refused, which is the fence working rather than the wiring being broken.
+  req.headers = { host: '127.0.0.1:4321', 'content-type': 'application/json' };
 
   let status = 0;
   let payload = '';
