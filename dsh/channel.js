@@ -332,6 +332,21 @@ const unavailableAgent = serviceUnavailable('Agent')
 let activeBroadcaster = null
 
 /**
+ * Presence of the browser half, as the channel sees it.
+ *
+ * `null` before the channel mounts. Two independent facts, because they answer different
+ * questions: `sseClients` is "is anyone listening right now" (an SSE connection is open), and
+ * `clientHellos` is "did the client half ever run" (it announces itself on activation, see
+ * `client.hello`). A tool that wants to open a window cares about the first.
+ */
+let activePresence = null
+
+/** Current browser-half presence; `null` when no channel is mounted. */
+export function getChannelPresence() {
+  return activePresence
+}
+
+/**
  * Broadcast an SSE event to all connected clients.
  * Used by agent tools or host events to push monitor-control commands.
  */
@@ -439,6 +454,21 @@ export function registerChannel(ctx, options) {
   activeBroadcaster = broadcastSse
   disposers.push(() => {
     if (activeBroadcaster === broadcastSse) activeBroadcaster = null
+  })
+
+  // Read live rather than snapshotted: the sets change as clients connect and disconnect, and
+  // a caller asking "is anyone there?" wants the answer now.
+  const presence = {
+    get sseClients() {
+      return sseClients.size
+    },
+    get clientHellos() {
+      return clientHellos.length
+    }
+  }
+  activePresence = presence
+  disposers.push(() => {
+    if (activePresence === presence) activePresence = null
   })
 
   /** @type {Map<import('node:net').Socket, {pending: Buffer, alive: boolean}>} */

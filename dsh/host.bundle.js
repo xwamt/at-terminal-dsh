@@ -16342,13 +16342,20 @@ var AgentToolService = class {
     };
   }
   async openMonitor(input) {
-    let mode = input.mode ?? "float", targetServerId = input.serverId;
+    let mode = input.mode ?? "hud", targetServerId = input.serverId;
     if (!targetServerId && input.target === "hardware")
       try {
         targetServerId = (await this.resolveServer(void 0)).id;
       } catch {
       }
-    return this.dependencies.broadcastMonitor && this.dependencies.broadcastMonitor("monitor-control", {
+    let presence = this.dependencies.resolveClientPresence?.();
+    return presence !== void 0 && presence.sseClients === 0 ? {
+      opened: !1,
+      target: input.target,
+      serverId: targetServerId,
+      mode,
+      reason: "no-client"
+    } : (this.dependencies.broadcastMonitor && this.dependencies.broadcastMonitor("monitor-control", {
       action: "open",
       target: input.target,
       serverId: targetServerId,
@@ -16358,7 +16365,7 @@ var AgentToolService = class {
       target: input.target,
       serverId: targetServerId,
       mode
-    };
+    });
   }
   async sftpListDirectory(input) {
     return await this.requireSftp().listDirectory(input);
@@ -18669,6 +18676,7 @@ function createDshAgentToolService(options) {
     metricsCollector,
     executionBridge,
     ...options.readAuditTail === void 0 ? {} : { auditTail: { readRecent: options.readAuditTail } },
+    ...options.resolveClientPresence === void 0 ? {} : { resolveClientPresence: options.resolveClientPresence },
     broadcastMonitor: options.broadcastMonitor
   });
 }

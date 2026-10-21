@@ -33,6 +33,8 @@ export interface DshAgentServiceOptions {
    * the log and its `tools/result` observer), absent in unit tests that do not care.
    */
   readonly readAuditTail?: (limit: number) => Promise<AgentAuditSummary[] | undefined>;
+  /** Whether a browser panel is listening, from the channel's own presence. */
+  readonly resolveClientPresence?: () => { sseClients: number; clientHellos: number };
 }
 
 export function resolveDshPolicyAssetDirectory(): string | undefined {
@@ -106,6 +108,9 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
     ...(options.readAuditTail === undefined
       ? {}
       : { auditTail: { readRecent: options.readAuditTail } }),
+    ...(options.resolveClientPresence === undefined
+      ? {}
+      : { resolveClientPresence: options.resolveClientPresence }),
     broadcastMonitor: options.broadcastMonitor
   });
 }

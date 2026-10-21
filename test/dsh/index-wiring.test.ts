@@ -507,8 +507,10 @@ describe('dsh Host half — wiring', () => {
     // Monitor tools answer cleanly
     const openMonitorTool = harness.tools.find((t) => t.name === 'at_terminal_open_monitor');
     expect(openMonitorTool).toBeDefined();
-    const openRes = await openMonitorTool?.execute?.({ target: 'hardware', mode: 'float' }, {});
-    expect(openRes).toMatchObject({ opened: true, target: 'hardware', mode: 'float' });
+    const openRes = await openMonitorTool?.execute?.({ target: 'hardware', mode: 'hud' }, {});
+    // No browser panel is connected in this harness, so the honest answer is `no-client` —
+    // the tool used to answer `opened: true` unconditionally.
+    expect(openRes).toMatchObject({ opened: false, target: 'hardware', mode: 'hud', reason: 'no-client' });
 
     const metricsTool = harness.tools.find((t) => t.name === 'at_terminal_get_hardware_metrics');
     expect(metricsTool).toBeDefined();

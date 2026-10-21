@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url'
 
 import z from '@deepseek-ai/schemastery'
 
-import { broadcastMonitorEvent, registerChannel } from './channel.js'
+import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
@@ -269,6 +269,9 @@ export function apply(ctx, config = {}) {
           resolveApproval,
           broadcastMonitor: (ev, data) => broadcastMonitorEvent(ev, data),
           getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback,
+          // Whether a browser panel is listening, so `open_monitor` can answer honestly
+          // instead of claiming a window nobody will see. `null` before the channel mounts.
+          resolveClientPresence: () => getChannelPresence() ?? { sseClients: 0, clientHellos: 0 },
           // Read through a closure: the status tool is constructed here but asked later,
           // and the audit log belongs to the plugin's lifetime, not the assembly's.
           readAuditTail: (limit) => auditLog?.readRecent(limit)

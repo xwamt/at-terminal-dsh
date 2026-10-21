@@ -16,7 +16,7 @@ describe('dsh/tools.js createTools', () => {
       sftpCreateDirectory: vi.fn().mockResolvedValue({ serverId: 's1', path: '/dir' }),
       sftpRename: vi.fn().mockResolvedValue({ serverId: 's1', path: '/a', newPath: '/b' }),
       sftpDelete: vi.fn().mockResolvedValue({ serverId: 's1', path: '/x', deleted: true }),
-      openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'float' }),
+      openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'hud' }),
       getHardwareMetrics: vi.fn().mockResolvedValue({
         serverId: 's1',
         timestamp: 1000,
@@ -259,28 +259,43 @@ describe('dsh/tools.js createTools', () => {
     expect(capturedContexts[0]).toMatchObject({ agent: 'agent-custom', callId: 'c-42' });
   });
 
-  it('exercises at_terminal_open_monitor and broadcasts event', async () => {
-    const broadcastFn = vi.fn();
+  it('opens the monitor through the service, and reports a no-client refusal instead of a false success', async () => {
+    // The broadcast moved into the service (it is the only place that knows whether a client
+    // is listening); this asserts the tool forwards and renders both outcomes.
     const mockService = {
-      openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'float' })
+      openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'hud' })
     };
     const tools = createTools({
       version: '0.1.0',
-      resolveAgentService: () => mockService,
-      broadcastMonitor: broadcastFn
+      resolveAgentService: () => mockService
     });
     const tool = tools.find((t: any) => t.name === 'at_terminal_open_monitor')!;
-    const res = await tool.execute({ target: 'hardware', serverId: 's1', mode: 'float' });
-    expect(res).toEqual({ opened: true, target: 'hardware', serverId: 's1', mode: 'float' });
-    expect(mockService.openMonitor).toHaveBeenCalledWith({ target: 'hardware', serverId: 's1', mode: 'float' });
-    expect(broadcastFn).toHaveBeenCalledWith('monitor-control', {
-      action: 'open',
+    const res = await tool.execute({ target: 'hardware', serverId: 's1', mode: 'hud' });
+    expect(res).toEqual({
+      opened: true,
       target: 'hardware',
       serverId: 's1',
-      mode: 'float'
+      mode: 'hud',
+      reason: null
     });
+    expect(mockService.openMonitor).toHaveBeenCalledWith({ target: 'hardware', serverId: 's1', mode: 'hud' });
     const rendered = tool.output.render({ target: 'hardware' }, res);
-    expect(rendered[0].text).toContain('Opened hardware monitor (float) for server: s1');
+    expect(rendered[0].text).toContain('Opened hardware monitor (hud) for server: s1');
+
+    // No panel connected: the model must be able to tell "opened" from "nobody is listening".
+    mockService.openMonitor.mockResolvedValueOnce({
+      opened: false,
+      target: 'hardware',
+      serverId: 's1',
+      mode: 'hud',
+      reason: 'no-client'
+    });
+    const refused = await tool.execute({ target: 'hardware', serverId: 's1' });
+    expect(refused).toMatchObject({ opened: false, reason: 'no-client' });
+    expect(tool.output.render({ target: 'hardware' }, refused)[0].text).toContain('no browser panel is connected');
+
+    // `float` is gone: the enum says so, and the message names the surviving value.
+    await expect(tool.execute({ target: 'hardware', mode: 'float' })).rejects.toThrow(/must be one of: hud/);
   });
 
   it('exercises at_terminal_get_hardware_metrics and get_agent_execution_status', async () => {

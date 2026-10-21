@@ -44,6 +44,14 @@ export interface AgentToolServiceDependencies {
   metricsCollector?: HardwareMetricsCollector;
   executionBridge?: AgentExecutionBridge;
   broadcastMonitor?: (event: string, data: unknown) => void;
+  /**
+   * Is the browser half listening? Wired to the channel's own presence (`sseClients`).
+   *
+   * Absent in unit tests that do not model a client. When absent, `open_monitor` keeps its
+   * historical answer (`opened: true`) because the Host genuinely cannot tell — inventing
+   * `no-client` there would be a different lie, in the other direction.
+   */
+  resolveClientPresence?: () => { sseClients: number; clientHellos: number };
 }
 
 export interface RunRemoteCommandInput {
@@ -251,15 +259,37 @@ export class AgentToolService {
   async openMonitor(input: {
     target: 'hardware' | 'agent_execution';
     serverId?: string;
-    mode?: 'float' | 'hud';
-  }): Promise<{ opened: boolean; target: string; serverId?: string; mode: string }> {
-    const mode = input.mode ?? 'float';
+    mode?: 'hud';
+  }): Promise<{
+    opened: boolean;
+    target: string;
+    serverId?: string;
+    mode: string;
+    reason?: 'no-client';
+  }> {
+    // `hud` is the only presentation that exists. The enum used to advertise `float` (a
+    // DockKit pane the dsh client never renders) and the client folded both into the HUD
+    // silently, so the parameter looked like a choice and was not.
+    const mode = input.mode ?? 'hud';
     let targetServerId = input.serverId;
     if (!targetServerId && input.target === 'hardware') {
       try {
         const srv = await this.resolveServer(undefined);
         targetServerId = srv.id;
       } catch {}
+    }
+    // With no SSE client there is nobody to receive `monitor-control`. Broadcasting into the
+    // void and answering `opened: true` is exactly the false success this reports instead:
+    // the model reads `opened` to decide whether the user can see the window.
+    const presence = this.dependencies.resolveClientPresence?.();
+    if (presence !== undefined && presence.sseClients === 0) {
+      return {
+        opened: false,
+        target: input.target,
+        serverId: targetServerId,
+        mode,
+        reason: 'no-client'
+      };
     }
     if (this.dependencies.broadcastMonitor) {
       this.dependencies.broadcastMonitor('monitor-control', {

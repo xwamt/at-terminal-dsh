@@ -969,10 +969,11 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
   }
 }
 
-export function createOpenMonitorTool({ resolveAgentService, broadcastMonitor, runInContext } = {}) {
+export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_open_monitor',
-    description: 'Open the AT Terminal monitoring window (floating pane or HUD overlay) for asset hardware metrics or live agent execution status.',
+    description:
+      'Open the AT Terminal monitoring HUD for asset hardware metrics or live agent execution status. Returns opened=false with reason="no-client" when no browser panel is connected, because nothing would appear.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -988,8 +989,8 @@ export function createOpenMonitorTool({ resolveAgentService, broadcastMonitor, r
         },
         mode: {
           type: 'string',
-          enum: ['float', 'hud'],
-          description: 'Display mode: "float" for a DockKit native floating pane window, "hud" for the global HUD overlay.'
+          enum: ['hud'],
+          description: 'Display mode. Only "hud" (the global overlay) is implemented; the former "float" option never rendered in this host.'
         }
       },
       required: ['target']
@@ -1002,14 +1003,17 @@ export function createOpenMonitorTool({ resolveAgentService, broadcastMonitor, r
           opened: { type: 'boolean' },
           target: { type: 'string' },
           serverId: { oneOf: [{ type: 'string' }, { type: 'null' }] },
-          mode: { type: 'string' }
+          mode: { type: 'string' },
+          reason: { oneOf: [{ type: 'string', enum: ['no-client'] }, { type: 'null' }] }
         }
       },
       render(_args, val) {
         return [
           {
             type: 'text',
-            text: `Opened ${val.target} monitor (${val.mode}) for server: ${val.serverId ?? 'active'}`
+            text: val.opened
+              ? `Opened ${val.target} monitor (${val.mode}) for server: ${val.serverId ?? 'active'}`
+              : `Monitor not opened for ${val.target}: no browser panel is connected (reason: ${val.reason ?? 'unknown'}), so nothing would appear.`
           }
         ]
       }
@@ -1019,30 +1023,27 @@ export function createOpenMonitorTool({ resolveAgentService, broadcastMonitor, r
       const input = argsOf('at_terminal_open_monitor', args)
       requireEnum('at_terminal_open_monitor', input, 'target', ['hardware', 'agent_execution'])
       if (input.mode !== undefined) {
-        requireEnum('at_terminal_open_monitor', input, 'mode', ['float', 'hud'])
+        // Narrowed to `hud` in 0.2.1. The message says so and says what to do, because the
+        // model may still be carrying `float` from an earlier prompt.
+        requireEnum('at_terminal_open_monitor', input, 'mode', ['hud'])
       }
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_ctx, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
+        // The service owns the broadcast: it is the one place that knows whether a client is
+        // listening. Broadcasting here as well sent every open twice.
         const res = await service.openMonitor({
           target: input.target,
           serverId: input.serverId,
           mode: input.mode
         })
-        if (typeof broadcastMonitor === 'function') {
-          broadcastMonitor('monitor-control', {
-            action: 'open',
-            target: res.target,
-            serverId: res.serverId,
-            mode: res.mode
-          })
-        }
         return {
           opened: Boolean(res.opened),
           target: res.target,
           serverId: res.serverId ?? null,
-          mode: res.mode
+          mode: res.mode,
+          reason: res.reason ?? null
         }
       })
     }
@@ -1258,7 +1259,6 @@ export function createTools({
   version,
   config,
   resolveAgentService,
-  broadcastMonitor,
   setCurrentCallContext,
   runWithCallContext,
   now
@@ -1269,7 +1269,7 @@ export function createTools({
         setCurrentCallContext?.(ctx)
         return fn()
       }
-  const shared = { version, config, resolveAgentService, broadcastMonitor, setCurrentCallContext, runInContext }
+  const shared = { version, config, resolveAgentService, setCurrentCallContext, runInContext }
   return [
     createPingTool({ version, config, now }),
     createListSshServersTool(shared),

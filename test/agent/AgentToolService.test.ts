@@ -808,5 +808,63 @@ describe('AgentToolService', () => {
     );
     expect(execute).toHaveBeenCalled();
   });
+
+  it('answers open_monitor with no-client when nobody is listening, and does not broadcast', async () => {
+    // The old answer was `opened: true` unconditionally, so a model could tell the user "the
+    // monitor is open" while the broadcast went into an empty set. The presence seam is the
+    // fact that fixes it, and the broadcast must not happen either — a broadcast to nobody is
+    // what made the claim look plausible.
+    const broadcastMonitor = vi.fn();
+    const service = createService({
+      configManager: { getServer: async () => server(), listServers: async () => [server()] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: {} as unknown as RemoteCommandExecutor,
+      broadcastMonitor,
+      resolveClientPresence: () => ({ sseClients: 0, clientHellos: 1 })
+    });
+
+    const result = await service.openMonitor({ target: 'agent_execution' });
+    expect(result).toEqual({
+      opened: false,
+      target: 'agent_execution',
+      serverId: undefined,
+      mode: 'hud',
+      reason: 'no-client'
+    });
+    expect(broadcastMonitor).not.toHaveBeenCalled();
+  });
+
+  it('opens the monitor and broadcasts once when a client is present', async () => {
+    const broadcastMonitor = vi.fn();
+    const service = createService({
+      configManager: { getServer: async () => server(), listServers: async () => [server()] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: {} as unknown as RemoteCommandExecutor,
+      broadcastMonitor,
+      resolveClientPresence: () => ({ sseClients: 1, clientHellos: 1 })
+    });
+
+    const result = await service.openMonitor({ target: 'hardware', serverId: 'server-1' });
+    expect(result).toMatchObject({ opened: true, mode: 'hud', serverId: 'server-1' });
+    expect(broadcastMonitor).toHaveBeenCalledTimes(1);
+    expect(broadcastMonitor).toHaveBeenCalledWith('monitor-control', {
+      action: 'open',
+      target: 'hardware',
+      serverId: 'server-1',
+      mode: 'hud'
+    });
+  });
+
+  it('keeps the historical answer when presence is not wired, rather than inventing a refusal', async () => {
+    const service = createService({
+      configManager: { getServer: async () => server(), listServers: async () => [server()] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: {} as unknown as RemoteCommandExecutor
+    });
+
+    // No seam means the Host genuinely cannot tell; `no-client` there would be the same lie
+    // in the other direction.
+    expect(await service.openMonitor({ target: 'agent_execution' })).toMatchObject({ opened: true });
+  });
 });
 

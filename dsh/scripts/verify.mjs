@@ -704,7 +704,7 @@ if (sandboxSkipReason !== null) {
       at_terminal_sftp_create_directory: { path: '/tmp/testdir' },
       at_terminal_sftp_rename: { path: '/tmp/a', newPath: '/tmp/b' },
       at_terminal_sftp_delete: { path: '/tmp/test.txt' },
-      at_terminal_open_monitor: { target: 'hardware', serverId: 'srv-1', mode: 'float' },
+      at_terminal_open_monitor: { target: 'hardware', serverId: 'srv-1', mode: 'hud' },
       at_terminal_get_hardware_metrics: { serverId: 'srv-1' },
       at_terminal_get_agent_execution_status: { limit: 5 }
     }
