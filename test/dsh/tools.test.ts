@@ -259,6 +259,18 @@ describe('dsh/tools.js createTools', () => {
     expect(capturedContexts[0]).toMatchObject({ agent: 'agent-custom', callId: 'c-42' });
   });
 
+  it('tells the model where a directory delete has to go, in the description itself', () => {
+    // Agent-side `sftp_delete` refuses directories on purpose and the UI deletes them
+    // recursively; a model that only reads the tool list has no way to learn that. The
+    // description carries the way out, so the refusal is actionable before the call.
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => ({}) });
+    const remove = tools.find((t: any) => t.name === 'at_terminal_sftp_delete')!;
+    expect(remove.description).toContain('at_terminal_run_remote_command');
+    expect(remove.description).toContain('Directories are refused');
+    // The parameter schema still says "file": nothing here quietly grew a recursive mode.
+    expect(remove.parameters.properties).not.toHaveProperty('recursive');
+  });
+
   it('opens the monitor through the service, and reports a no-client refusal instead of a false success', async () => {
     // The broadcast moved into the service (it is the only place that knows whether a client
     // is listening); this asserts the tool forwards and renders both outcomes.

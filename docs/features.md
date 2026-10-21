@@ -70,7 +70,7 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 | `sftp_create_file` | write | Creates a new remote file, optionally with UTF-8 content. |
 | `sftp_create_directory` | write | Creates a new remote directory. |
 | `sftp_rename` | write | Renames or moves a remote file or directory. Both the source and destination paths require write authorization. |
-| `sftp_delete` | write | Deletes a single remote file (directories are refused). Always asks the user, even at full trust, and the answer is never remembered. |
+| `sftp_delete` | write | Deletes a single remote file (directories are refused — for one, use `run_remote_command` with an explicit `rm`, which goes through the command policy). Always asks the user, even at full trust, and the answer is never remembered. |
 
 ## Safety Behavior
 

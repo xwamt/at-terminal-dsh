@@ -575,7 +575,7 @@ describe('SftpAgentService delete', () => {
     });
 
     await expect(service.deleteFile({ path: 'logs' })).rejects.toThrow(
-      'sftp_delete removes single files only; directories are refused.'
+      'sftp_delete removes single files only. For a directory, use at_terminal_run_remote_command (it goes through the command policy and destructive warnings).'
     );
     expect(auth.requireDelete).not.toHaveBeenCalled();
     expect(session.deleteFile).not.toHaveBeenCalled();

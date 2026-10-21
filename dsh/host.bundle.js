@@ -17250,7 +17250,9 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         if (entryType2 === void 0)
           throw new Error("Remote file was not found.");
         if (entryType2 === "directory")
-          throw new Error("sftp_delete removes single files only; directories are refused.");
+          throw new Error(
+            "sftp_delete removes single files only. For a directory, use at_terminal_run_remote_command (it goes through the command policy and destructive warnings)."
+          );
         return await withTimeout2(
           this.options.authorizer.requireDelete(target2.server, {
             operation: "delete_file",

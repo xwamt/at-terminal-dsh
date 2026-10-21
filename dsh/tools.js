@@ -915,7 +915,7 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
   return {
     name: 'at_terminal_sftp_delete',
     description:
-      'Delete a single remote file via AT Terminal SFTP. Always requires explicit user confirmation dialog.',
+      'Remove a single remote file via AT Terminal SFTP; the user always confirms. Directories are refused — for one, use at_terminal_run_remote_command with an explicit rm, which puts the command through the policy engine.',
     parameters: {
       type: 'object',
       additionalProperties: false,

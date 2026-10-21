@@ -344,7 +344,13 @@ export class SftpAgentService {
           throw new Error('Remote file was not found.');
         }
         if (entryType === 'directory') {
-          throw new Error('sftp_delete removes single files only; directories are refused.');
+          // Refused on purpose (the implementation contract forbids making recursive
+          // directory removal an Agent tool), but not a dead end: the command path already
+          // has a policy engine, destructive-command confirmation and audit, so the message
+          // names it instead of stopping at "no".
+          throw new Error(
+            'sftp_delete removes single files only. For a directory, use at_terminal_run_remote_command (it goes through the command policy and destructive warnings).'
+          );
         }
         await withTimeout(
           this.options.authorizer.requireDelete(target.server, {

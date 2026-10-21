@@ -70,7 +70,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `sftp_create_file` | 写入 | 创建远程文件，可选写入 UTF-8 内容。 |
 | `sftp_create_directory` | 写入 | 创建远程目录。 |
 | `sftp_rename` | 写入 | 重命名或移动远程文件/目录；源路径与目标路径都需要写授权。 |
-| `sftp_delete` | 写入 | 删除单个远程文件（拒绝目录）；即使完全信任也总是询问用户，且答案永不记住。 |
+| `sftp_delete` | 写入 | 删除单个远程文件（拒绝目录——目录请改用 `run_remote_command` 执行显式 `rm`，该路径走命令策略）；即使完全信任也总是询问用户，且答案永不记住。 |
 
 ## 安全行为
 
