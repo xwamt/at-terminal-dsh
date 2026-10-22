@@ -411,10 +411,21 @@ export function apply(ctx, config = {}) {
             return undefined
           }
         }
+        // `ctx.userQuestions` is what can ask "how long?" instead of "yes or no?". Read per
+        // call, and absent means the write still happens — just with a one-time grant.
+        const resolveUserQuestions = () => {
+          try {
+            return scoped?.get?.('userQuestions') ?? ctx?.get?.('userQuestions')
+          } catch {
+            return undefined
+          }
+        }
         agentService = createDshAgentToolService({
           platform: handle.platform,
           terminalContext,
           resolveApproval,
+          resolveUserQuestions,
+          logger: scoped?.logger ?? ctx.logger,
           broadcastMonitor: (ev, data) => broadcastMonitorEvent(ev, data),
           getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback,
           // Whether a browser panel is listening, so `open_monitor` can answer honestly

@@ -18,11 +18,24 @@ import { HostKeyStore } from '../../ssh/HostKeyStore';
 import type { HostKeyVerifier } from '../../ssh/SshConnectionConfig';
 import { TerminalContextRegistry } from '../../terminal/TerminalContext';
 import type { AgentAuditSummary } from './client/models';
-import { DshAgentConfirmation, type DshApprovalService, type DshCallContext } from './confirmation';
+import {
+  DshAgentConfirmation,
+  type DshApprovalService,
+  type DshCallContext,
+  type DshUserQuestionsService
+} from './confirmation';
 
 export interface DshAgentServiceOptions {
   readonly platform: Platform;
   readonly resolveApproval: () => DshApprovalService | undefined;
+  /**
+   * `ctx.userQuestions`, used to offer the three SFTP write grants. Optional: without it the
+   * confirmation falls back to a one-time yes/no, which is the behaviour this plugin had
+   * before the port existed.
+   */
+  readonly resolveUserQuestions?: () => DshUserQuestionsService | undefined;
+  /** Where the one-time "scope question unavailable" warning goes. */
+  readonly logger?: { warn(message: string): void };
   readonly getCurrentCallContext: () => DshCallContext | undefined;
   readonly terminalContext?: TerminalContextRegistry;
   readonly policyEvaluator?: RemoteCommandPolicyEvaluator;
@@ -88,7 +101,9 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
   const terminalContext = options.terminalContext ?? new TerminalContextRegistry();
   const confirmation = new DshAgentConfirmation({
     resolveApproval: options.resolveApproval,
-    getCurrentCallContext: options.getCurrentCallContext
+    getCurrentCallContext: options.getCurrentCallContext,
+    resolveUserQuestions: options.resolveUserQuestions,
+    logger: options.logger
   });
   const executor = new RemoteCommandExecutor(configManager, hostKeyVerifier);
   const writeAuthorizer = new SftpWriteAuthorizer({

@@ -18736,7 +18736,30 @@ ${preview}${warning}${risks}`;
 }
 
 // src/platform/dsh/confirmation.ts
-var DshAgentConfirmation = class {
+function describeAskFailure(error) {
+  if (error instanceof Error) {
+    let code = error.code;
+    return typeof code == "string" ? `${code}: ${error.message}` : `${error.name}: ${error.message}`;
+  }
+  return String(error);
+}
+var SCOPE_QUESTION_ID = "at-terminal-sftp-write-scope", SCOPE_CHOICES = [
+  {
+    scope: "once",
+    label: "Allow Once",
+    describe: () => "Ask again before the next write."
+  },
+  {
+    scope: "directory",
+    label: "Allow This Folder For 15 Minutes",
+    describe: (confirmation) => `Any write in ${confirmation.parentDirectory} without asking, for 15 minutes.`
+  },
+  {
+    scope: "session",
+    label: "Allow This Folder For The Session",
+    describe: (confirmation) => `Any write in ${confirmation.parentDirectory} without asking until the session ends.`
+  }
+], DshAgentConfirmation = class {
   constructor(options) {
     this.options = options;
   }
@@ -18766,14 +18789,22 @@ var DshAgentConfirmation = class {
       signal: request.signal ?? callCtx.signal
     }) === "allowed-once";
   }
+  /** Set once, so a composition without an answerer does not warn on every write. */
+  scopePromptWarned = !1;
   async confirmSftpWrite(confirmation) {
-    let approval = this.options.resolveApproval(), callCtx = this.options.getCurrentCallContext();
+    let callCtx = this.options.getCurrentCallContext();
     if (callCtx?.signal?.aborted)
       return;
+    let approval = this.options.resolveApproval();
     if (!approval || !callCtx?.agent)
       throw new Error(
         `SFTP write to "${confirmation.request.path}" requires approval, but no approval channel is available.`
       );
+    if (confirmation.allowedScopes.length > 1) {
+      let asked = await this.askWriteScope(confirmation, callCtx);
+      if (asked.asked)
+        return asked.scope;
+    }
     let reason = confirmation.stage === "sensitive-double-check" ? `Double confirmation required for sensitive path: ${confirmation.request.path}` : `SFTP write requested: ${confirmation.request.path}`, displayReason = formatSftpWriteConfirmMessage(confirmation);
     return await approval.request({
       agent: callCtx.agent,
@@ -18783,6 +18814,47 @@ var DshAgentConfirmation = class {
       displayReason,
       signal: callCtx.signal
     }) === "allowed-once" ? "once" : void 0;
+  }
+  /**
+   * Ask which grant to use.
+   *
+   * `asked: false` means the question could not be put to anyone — no `userQuestions` service, a
+   * child agent (`DELEGATED_CALLER`), or no answerer registered (`NO_PROVIDER`). The caller then
+   * falls back to the yes/no approval, because a missing UI must cost the *remembered grant*
+   * and not the write itself.
+   */
+  async askWriteScope(confirmation, callCtx) {
+    let questions = this.options.resolveUserQuestions?.();
+    if (!questions)
+      return this.warnScopeUnavailable("no userQuestions service"), { asked: !1 };
+    let offered = SCOPE_CHOICES.filter(
+      (choice) => confirmation.allowedScopes.includes(choice.scope)
+    );
+    try {
+      let selected = (await questions.ask({
+        questions: [
+          {
+            id: SCOPE_QUESTION_ID,
+            header: "SFTP write",
+            question: formatSftpWriteConfirmMessage(confirmation),
+            options: offered.map((choice) => ({
+              label: choice.label,
+              description: choice.describe(confirmation)
+            }))
+          }
+        ],
+        agent: callCtx.agent,
+        signal: callCtx.signal
+      })).answers.find((item) => item.id === SCOPE_QUESTION_ID)?.selected?.[0];
+      return { asked: !0, scope: offered.find((choice) => choice.label === selected)?.scope };
+    } catch (error) {
+      return this.warnScopeUnavailable(describeAskFailure(error)), { asked: !1 };
+    }
+  }
+  warnScopeUnavailable(detail) {
+    this.scopePromptWarned || (this.scopePromptWarned = !0, this.options.logger?.warn?.(
+      `at-terminal: the SFTP write scope question is unavailable (${detail}); falling back to a one-time approval`
+    ));
   }
 };
 function buildCommandApprovalCopy(request) {
@@ -18846,7 +18918,9 @@ function createDshAgentToolService(options) {
     }
   }, terminalContext = options.terminalContext ?? new TerminalContextRegistry(), confirmation = new DshAgentConfirmation({
     resolveApproval: options.resolveApproval,
-    getCurrentCallContext: options.getCurrentCallContext
+    getCurrentCallContext: options.getCurrentCallContext,
+    resolveUserQuestions: options.resolveUserQuestions,
+    logger: options.logger
   }), executor = new RemoteCommandExecutor(configManager, hostKeyVerifier), writeAuthorizer = new SftpWriteAuthorizer({
     confirm: (req) => confirmation.confirmSftpWrite(req)
   }), sftp = new SftpAgentService({

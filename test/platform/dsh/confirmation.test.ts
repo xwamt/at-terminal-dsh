@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { SftpWriteAuthorizer } from '../../../src/agent/SftpWriteAuthorizer';
 import { DshAgentConfirmation, buildCommandApprovalCopy } from '../../../src/platform/dsh/confirmation';
 import type { ServerConfig } from '../../../src/config/schema';
 import type { SftpWriteConfirmation } from '../../../src/agent/SftpWriteAuthorizer';
@@ -333,5 +334,228 @@ describe('buildCommandApprovalCopy', () => {
         displayReason: buildCommandApprovalCopy(request).displayReason
       })
     );
+  });
+});
+
+/**
+ * The three write grants.
+ *
+ * `SftpWriteAuthorizer` has always computed which grants are on offer (a sensitive path gets
+ * one, a path outside the opened folder never gets `session`) and applied them; what was
+ * missing is that `ctx.approval` can only answer yes or no, so every answer collapsed to
+ * `once`. These cases cover the seam that turns "how long?" into a question with options —
+ * and, just as importantly, what happens when nobody can be asked.
+ */
+describe('the SFTP write scope question', () => {
+  const agent = { id: 'agent-1', session: { id: 'session-1' } };
+
+  function sftpWrite(overrides: Partial<SftpWriteConfirmation> = {}): SftpWriteConfirmation {
+    return {
+      server: createDummyServer(),
+      request: {
+        operation: 'write_file',
+        path: '/srv/app/config.yml',
+        overwrite: true,
+        workspaceRoot: '/srv/app'
+      },
+      parentDirectory: '/srv/app',
+      workspaceRoot: '/srv/app',
+      outsideWorkspace: false,
+      sensitive: false,
+      allowedScopes: ['once', 'directory', 'session'],
+      stage: 'primary',
+      ...overrides
+    };
+  }
+
+  it('offers every grant the authorizer allows, and returns the chosen one', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const questions = {
+      ask: vi.fn().mockResolvedValue({ answers: [{ id: 'at-terminal-sftp-write-scope', selected: ['Allow This Folder For 15 Minutes'] }] })
+    };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      resolveUserQuestions: () => questions,
+      getCurrentCallContext: () => ({ agent, callId: 'call-9' })
+    });
+
+    const scope = await confirmation.confirmSftpWrite(sftpWrite());
+
+    expect(scope).toBe('directory');
+    // The yes/no dialog is not a second step: one question, one answer.
+    expect(approval.request).not.toHaveBeenCalled();
+    const [request] = questions.ask.mock.calls[0];
+    expect(request.questions).toHaveLength(1);
+    expect(request.questions[0].options.map((option: { label: string }) => option.label)).toEqual([
+      'Allow Once',
+      'Allow This Folder For 15 Minutes',
+      'Allow This Folder For The Session'
+    ]);
+    // The live agent object is forwarded unchanged: `userQuestions` compares it against the
+    // registry's instance and rejects anything else (CALLER_NOT_LIVE).
+    expect(request.agent).toBe(agent);
+    expect(request.signal).toBeUndefined();
+  });
+
+  it('never offers a session grant outside the folder the session was opened in', async () => {
+    const questions = { ask: vi.fn().mockResolvedValue({ answers: [{ id: 'at-terminal-sftp-write-scope', selected: ['Allow This Folder For 15 Minutes'] }] }) };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => ({ request: vi.fn().mockResolvedValue('allowed-once') }),
+      resolveUserQuestions: () => questions,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    const scope = await confirmation.confirmSftpWrite(
+      sftpWrite({ outsideWorkspace: true, allowedScopes: ['once', 'directory'] })
+    );
+
+    expect(scope).toBe('directory');
+    const labels = questions.ask.mock.calls[0][0].questions[0].options.map(
+      (option: { label: string }) => option.label
+    );
+    expect(labels).toEqual(['Allow Once', 'Allow This Folder For 15 Minutes']);
+    expect(labels).not.toContain('Allow This Folder For The Session');
+  });
+
+  it('asks nothing when only one grant exists, and keeps the plain yes/no dialog', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const questions = { ask: vi.fn() };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      resolveUserQuestions: () => questions,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    const scope = await confirmation.confirmSftpWrite(
+      sftpWrite({ sensitive: true, allowedScopes: ['once'] })
+    );
+
+    expect(scope).toBe('once');
+    // A sensitive path cannot be remembered, so offering "how long" would offer a lie.
+    expect(questions.ask).not.toHaveBeenCalled();
+    expect(approval.request).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats an answer that names an option it never offered as a no, not as a yes', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const questions = {
+      ask: vi.fn().mockResolvedValue({ answers: [{ id: 'at-terminal-sftp-write-scope', selected: ['Allow This Folder For The Session'] }] })
+    };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      resolveUserQuestions: () => questions,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    // `session` was not on offer (outside the folder). Whatever a UI sends back must not widen
+    // what the authorizer allowed, and an invalid answer is not consent.
+    const scope = await confirmation.confirmSftpWrite(
+      sftpWrite({ outsideWorkspace: true, allowedScopes: ['once', 'directory'] })
+    );
+
+    expect(scope).toBeUndefined();
+    expect(approval.request).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a one-time grant when no answerer exists, and warns only once', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const logger = { warn: vi.fn() };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      // The composition has no `userQuestions`: a missing UI must cost the remembered grant,
+      // not the write.
+      resolveUserQuestions: () => undefined,
+      logger,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    expect(await confirmation.confirmSftpWrite(sftpWrite())).toBe('once');
+    expect(await confirmation.confirmSftpWrite(sftpWrite())).toBe('once');
+
+    expect(approval.request).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toContain('scope question is unavailable');
+  });
+
+  it('falls back when the service refuses a child agent, and says which refusal it was', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const logger = { warn: vi.fn() };
+    const refusal = Object.assign(new Error('human interaction is unavailable for a child agent'), {
+      code: 'DELEGATED_CALLER'
+    });
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      resolveUserQuestions: () => ({ ask: vi.fn().mockRejectedValue(refusal) }),
+      logger,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    const scope = await confirmation.confirmSftpWrite(sftpWrite());
+
+    expect(scope).toBe('once');
+    expect(approval.request).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toContain('DELEGATED_CALLER');
+  });
+
+  it('does not fall back to a second dialog when the question was closed', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      // Answered with nothing: the human dismissed the question. Asking a yes/no dialog after
+      // that would be asking twice for one decision.
+      resolveUserQuestions: () => ({
+        ask: vi.fn().mockResolvedValue({ answers: [{ id: 'at-terminal-sftp-write-scope', selected: [] }] })
+      }),
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    expect(await confirmation.confirmSftpWrite(sftpWrite())).toBeUndefined();
+    expect(approval.request).not.toHaveBeenCalled();
+  });
+});
+
+describe('choosing a write grant', () => {
+  it('stops asking inside the folder for the chosen window, and asks again elsewhere', async () => {
+    const agent = { id: 'agent-1', session: { id: 'session-1' } };
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const questions = {
+      ask: vi.fn().mockResolvedValue({
+        answers: [{ id: 'at-terminal-sftp-write-scope', selected: ['Allow This Folder For 15 Minutes'] }]
+      })
+    };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      resolveUserQuestions: () => questions,
+      getCurrentCallContext: () => ({ agent })
+    });
+    let now = 1_000;
+    const authorizer = new SftpWriteAuthorizer({
+      confirm: (request) => confirmation.confirmSftpWrite(request),
+      now: () => now
+    });
+    const server = createDummyServer();
+    const write = (path: string) => ({
+      operation: 'write_file' as const,
+      path,
+      overwrite: true,
+      workspaceRoot: '/srv/app'
+    });
+
+    await authorizer.requireWrite(server, write('/srv/app/a.yml'));
+    expect(questions.ask).toHaveBeenCalledTimes(1);
+
+    // Same folder, still inside the window: no dialog at all.
+    now += 60_000;
+    await authorizer.requireWrite(server, write('/srv/app/b.yml'));
+    expect(questions.ask).toHaveBeenCalledTimes(1);
+
+    // A different folder was never granted.
+    await authorizer.requireWrite(server, write('/srv/other/c.yml'));
+    expect(questions.ask).toHaveBeenCalledTimes(2);
+
+    // Past the window the first folder asks again, which is the whole point of "15 minutes".
+    now += 16 * 60_000;
+    await authorizer.requireWrite(server, write('/srv/app/d.yml'));
+    expect(questions.ask).toHaveBeenCalledTimes(3);
   });
 });

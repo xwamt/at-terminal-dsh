@@ -344,7 +344,7 @@ export function createListSshServersTool({ resolveAgentService, runInContext } =
     },
     async execute(_args, exec) {
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
-      const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
+      const callCtx = { agent: exec?.agent, callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_c, fn) => fn())
       return run(callCtx, async () => {
         const service = resolveAgentService()
