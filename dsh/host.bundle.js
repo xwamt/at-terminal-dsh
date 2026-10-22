@@ -18853,7 +18853,8 @@ function createDshAgentToolService(options) {
     terminalContext,
     createSession: (target2) => new SftpSession(target2.server, configManager, hostKeyVerifier, { allowSudoFallback: !1 }),
     authorizer: writeAuthorizer,
-    resolveBackgroundServer: (serverId) => configManager.getServer(serverId)
+    resolveBackgroundServer: (serverId) => configManager.getServer(serverId),
+    ...options.audit === void 0 ? {} : { audit: options.audit }
   }), policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator(), metricsCollector = options.metricsCollector ?? new HardwareMetricsCollector({ executor }), executionBridge = options.executionBridge ?? new AgentExecutionBridge();
   return new AgentToolService({
     configManager,
@@ -18864,6 +18865,7 @@ function createDshAgentToolService(options) {
     policyEvaluator,
     metricsCollector,
     executionBridge,
+    ...options.audit === void 0 ? {} : { audit: options.audit },
     ...options.readAuditTail === void 0 ? {} : { auditTail: { readRecent: options.readAuditTail } },
     ...options.resolveClientPresence === void 0 ? {} : { resolveClientPresence: options.resolveClientPresence },
     broadcastMonitor: options.broadcastMonitor

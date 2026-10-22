@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { AgentAuditRecorder } from '../../agent/AgentAuditLog';
 import { AgentToolService } from '../../agent/AgentToolService';
 import { HardwareMetricsCollector } from '../../agent/HardwareMetricsCollector';
 import { AgentExecutionBridge } from '../../agent/AgentExecutionBridge';
@@ -28,6 +29,15 @@ export interface DshAgentServiceOptions {
   readonly broadcastMonitor?: (event: string, data: unknown) => void;
   readonly metricsCollector?: HardwareMetricsCollector;
   readonly executionBridge?: AgentExecutionBridge;
+  /**
+   * The durable audit trail. Mapped onto both services' `audit` option.
+   *
+   * Separate from `readAuditTail` on purpose: reading the trail and writing to it are two
+   * different wirings, and for a long time only the first one existed — the status tool
+   * could read `agent-audit.jsonl` while nothing on the service side ever wrote to it, so
+   * every `user_approved` / `user_cancelled` / `job_killed` row silently went nowhere.
+   */
+  readonly audit?: AgentAuditRecorder;
   /**
    * Reads the durable audit trail. Present in the real composition (`dsh/index.js` builds
    * the log and its `tools/result` observer), absent in unit tests that do not care.
@@ -89,7 +99,8 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
     createSession: (target) =>
       new SftpSession(target.server, configManager, hostKeyVerifier, { allowSudoFallback: false }),
     authorizer: writeAuthorizer,
-    resolveBackgroundServer: (serverId) => configManager.getServer(serverId)
+    resolveBackgroundServer: (serverId) => configManager.getServer(serverId),
+    ...(options.audit === undefined ? {} : { audit: options.audit })
   });
 
   const policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator();
@@ -105,6 +116,7 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
     policyEvaluator,
     metricsCollector,
     executionBridge,
+    ...(options.audit === undefined ? {} : { audit: options.audit }),
     ...(options.readAuditTail === undefined
       ? {}
       : { auditTail: { readRecent: options.readAuditTail } }),

@@ -343,7 +343,11 @@ export function apply(ctx, config = {}) {
           resolveClientPresence: () => getChannelPresence() ?? { sseClients: 0, clientHellos: 0 },
           // Read through a closure: the status tool is constructed here but asked later,
           // and the audit log belongs to the plugin's lifetime, not the assembly's.
-          readAuditTail: (limit) => auditLog?.readRecent(limit)
+          readAuditTail: (limit) => auditLog?.readRecent(limit),
+          // The writing half. Without this the services' own `audit?.record()` calls were
+          // no-ops — only the tool-level observer below ever landed a row, which is why
+          // `user_approved` / `user_cancelled` / `job_killed` never appeared in the file.
+          ...(auditLog === undefined ? {} : { audit: auditLog })
         })
 
         scoped.effect(() => () => {

@@ -714,5 +714,37 @@ describe('dsh Host half — wiring', () => {
     // rather than presenting an empty history as evidence.
     expect(status).toMatchObject({ source: 'memory', recentAudits: [] });
   });
+  it("gives the services the writing half of the audit trail, not only the reading half", async () => {
+    // `readAuditTail` and `audit` are two separate wirings, and for a long time only the
+    // first one existed: the status tool could read `agent-audit.jsonl` while every
+    // service-side `audit?.record()` was a no-op. Service rows carry no `sessionId` — only
+    // the tool-level observer adds one — so the presence of such a row is exactly the
+    // evidence that the services were given a recorder.
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const runTool = harness.tools.find((tool) => tool.name === "at_terminal_run_remote_command");
+    await expect(
+      runTool?.execute?.({ serverId: "active", command: "uptime" }, { signal: undefined })
+    ).rejects.toThrow(/No connected active SSH terminal/);
+
+    const file = joinPath(process.env.DSH_HOME as string, "at-terminal", "agent-audit.jsonl");
+    const rows: Array<Record<string, unknown>> = [];
+    for (let attempt = 0; attempt < 100 && rows.length === 0; attempt += 1) {
+      try {
+        const text = await readFile(file, "utf8");
+        for (const line of text.split("\n")) {
+          if (line.trim() !== "") rows.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      } catch {
+        // The append is fire-and-forget, so the file may not exist yet.
+      }
+      if (rows.length === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((row) => row.sessionId === undefined)).toBe(true);
+  });
+
 });
 
