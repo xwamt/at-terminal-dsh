@@ -125,6 +125,65 @@ describe('dsh/tools.js createTools', () => {
     );
   });
 
+  it('hands a background command to the job registry without running it in this turn', async () => {
+    const started: any[] = [];
+    const mockService = {
+      authorizeCommand: vi.fn().mockResolvedValue({ server: { id: 's1' } }),
+      runRemoteCommand: vi.fn().mockResolvedValue({ serverId: 's1', stdout: '', stderr: '' })
+    };
+    const tools = createTools({
+      version: '0.1.0',
+      resolveAgentService: () => mockService,
+      resolveJobs: () => ({ start: (spec: any) => (started.push(spec), 'ssh-command-abc') })
+    });
+    const runTool = tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+    const exec: Record<string, unknown> = { signal: undefined, agent: { id: 'agent-1' }, callId: 'c1' };
+    recordDecision(exec, 'auto-approved');
+
+    const value = await runTool.execute(
+      { serverId: 's1', command: 'sleep 60', run_in_background: true },
+      exec
+    );
+
+    expect(value).toEqual({ kind: 'background', jobId: 'ssh-command-abc' });
+    // The command belongs to the job now: running it here as well would start it twice.
+    expect(mockService.runRemoteCommand).not.toHaveBeenCalled();
+    expect(started).toHaveLength(1);
+  });
+
+  it('degrades to a foreground run with a stated reason when jobs are unavailable', async () => {
+    const mockService = {
+      authorizeCommand: vi.fn().mockResolvedValue({ server: { id: 's1' } }),
+      runRemoteCommand: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        serverLabel: 'S1',
+        host: '1.2.3.4',
+        command: 'sleep 60',
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        durationMs: 1,
+        timedOut: false,
+        truncated: false
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const runTool = tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+    const exec: Record<string, unknown> = { signal: undefined, agent: { id: 'agent-1' }, callId: 'c1' };
+    recordDecision(exec, 'auto-approved');
+
+    const value = await runTool.execute(
+      { serverId: 's1', command: 'sleep 60', run_in_background: true },
+      exec
+    );
+
+    expect(value.kind).toBe('foreground');
+    // Silently ignoring the flag would leave the caller with a 120 s timeout it did not
+    // expect; the reason has to reach the model.
+    expect(value.notice).toMatch(/run_in_background was not honoured/);
+    expect(value.notice).toMatch(/jobs service/);
+  });
+
   it('says out loud that the hardware probe skips the policy engine, and that it is still audited', async () => {
     // The probe runs a fixed script through the executor, so it never meets
     // `authorizeRemoteCommand`. A model reading "get hardware metrics" would reasonably

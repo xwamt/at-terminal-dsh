@@ -740,6 +740,7 @@ if (sandboxSkipReason !== null) {
       at_terminal_get_agent_execution_status: { limit: 5 }
     }
 
+    const terminations = []
     const mockService = {
       async listServers() {
         return {
@@ -791,6 +792,18 @@ if (sandboxSkipReason !== null) {
           timedOut: false,
           truncated: false
         }
+      },
+      // The background path resolves the server *before* starting a job, so the job and its
+      // kill name the same host. Present here so the sample below can reach that branch.
+      async authorizeCommand(input) {
+        return {
+          server: { id: input.serverId || 'srv-1' },
+          authorization: { autoApprove: true, destructive: false, riskSummaries: [] }
+        }
+      },
+      async terminateRemoteCommand(serverId, pidfile) {
+        terminations.push({ serverId, pidfile })
+        return { killed: true, pid: '4242', detail: 'process group 4242 is gone' }
       },
       async sftpListDirectory(input) {
         return {
@@ -983,6 +996,102 @@ if (sandboxSkipReason !== null) {
         `${definition.name}: render() produced an empty text block`
       )
     }
+
+    // `run_in_background` is a producer for the Host's job registry, and the two facts
+    // that make that work are asserted rather than described:
+    //
+    //   * the owner handed to `jobs.start()` is the **agent** id — `dsh-jobs-local` resolves
+    //     it with `agents.get(spec.owner)` (`lib/index.js:537-543`), so a session id would
+    //     not resolve and every background call would fail;
+    //   * the tool names this bundle does *not* register — `@deepseek-ai/dsh-tool-jobs`
+    //     already owns `job_output` / `job_list` / `job_kill`, and a second registration
+    //     under one of those names is a collision, not a feature.
+    const reserved = ['job_output', 'job_list', 'job_kill']
+    for (const definition of definitions) {
+      assert.ok(
+        !reserved.includes(definition.name),
+        `${definition.name}: @deepseek-ai/dsh-tool-jobs already registers that name; this bundle is a job producer, not a controller`
+      )
+    }
+    const runTool = definitions.find((definition) => definition.name === 'at_terminal_run_remote_command')
+    assert.ok(runTool, 'run_remote_command must be registered')
+    assert.equal(
+      runTool.parameters.properties.run_in_background?.type,
+      'boolean',
+      'run_remote_command must declare run_in_background as a boolean'
+    )
+
+    // Without a job registry the flag must degrade to a foreground run with a readable
+    // reason — the plan's DoD, and the reason a preset without `dsh-tool-jobs` still works.
+    const degraded = await runTool.execute(
+      { command: 'sleep 60', serverId: 'srv-1', run_in_background: true },
+      { signal: undefined }
+    )
+    assert.equal(degraded.kind, 'foreground', 'without a jobs service the call must degrade to foreground')
+    assert.equal(
+      typeof degraded.notice,
+      'string',
+      'a degraded background request must say why in `notice` rather than failing silently'
+    )
+
+    // With one, the tool must hand over a job — and the spec it builds is checked, because
+    // every field in it is a place where the plan's own text was wrong once.
+    const started = []
+    const fakeJobs = {
+      start(spec) {
+        started.push(spec)
+        return 'ssh-command-0123456789abcdef'
+      }
+    }
+    const withJobs = createTools({
+      version: manifest.version,
+      resolveAgentService: () => mockService,
+      resolveJobs: () => fakeJobs
+    }).find((definition) => definition.name === 'at_terminal_run_remote_command')
+    const { recordDecision } = await import('../policy.js')
+    const backgroundExec = { agent: { id: 'agent-1' }, callId: 'call-1', rootCallId: 'root-1', signal: undefined }
+    // No verdict → no job: a dialog raised from inside a detached job has nowhere to be
+    // answered, so the tool must refuse to start one (and degrade) instead.
+    const unasked = await withJobs.execute(
+      { command: 'sleep 60', serverId: 'srv-1', run_in_background: true },
+      backgroundExec
+    )
+    assert.equal(unasked.kind, 'foreground', 'a background job must not start without a pre-execute verdict')
+    assert.equal(started.length, 0, 'no job may be registered before the authorization question is answered')
+
+    recordDecision(backgroundExec, 'auto-approved')
+    const accepted = await withJobs.execute(
+      { command: 'sleep 60', serverId: 'srv-1', run_in_background: true },
+      backgroundExec
+    )
+    assert.deepEqual(
+      accepted,
+      { kind: 'background', jobId: 'ssh-command-0123456789abcdef' },
+      'an accepted background call returns exactly the job id'
+    )
+    assert.equal(started.length, 1, 'exactly one job must be registered')
+    assert.equal(started[0].kind, 'ssh-command', 'the job kind must name what it runs')
+    assert.equal(
+      started[0].owner,
+      'agent-1',
+      'the owner must be the agent id: dsh-jobs-local resolves it with agents.get()'
+    )
+    assert.equal(typeof started[0].run, 'function', 'the spec must carry a run() body')
+    assert.ok(CAPABILITIES.includes('background-jobs'), 'CAPABILITIES must list background-jobs')
+    // The body must be able to stop the remote process, not just the local wait.
+    const hooks = started[0].run({ id: 'ssh-command-0123456789abcdef', append() {} })
+    assert.equal(typeof hooks.cancel, 'function', 'cancel must be callable synchronously')
+    assert.ok(hooks.done instanceof Promise, 'done must be a promise the registry can await')
+    hooks.cancel('test cleanup')
+    await hooks.done
+    // Cancelling must reach the *remote* kill, through the pidfile the job id names — the
+    // whole point of the task is that a cancelled job is not just a closed channel.
+    assert.equal(terminations.length, 1, 'cancel must ask the service to terminate the remote process')
+    assert.ok(
+      terminations[0].pidfile.includes('ssh-command-0123456789abcdef'),
+      `cancel must kill the pidfile named after the job, got ${terminations[0].pidfile}`
+    )
+    assert.equal(terminations[0].serverId, 'srv-1', 'cancel must target the server the job resolved')
 
     // The readiness probe is this bundle's own contract: it must report the
     // shipped version, the real capability list, and a machine-readable time.

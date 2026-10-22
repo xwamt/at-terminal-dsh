@@ -27,6 +27,7 @@
 import { SETTINGS_FIELDS, readSettings } from './settings.js'
 import { readPreExecuteDecision } from './policy.js'
 import { spillIfOverBudget } from './spill.js'
+import { startRemoteCommandJob } from './jobs.js'
 
 /** Plugin identity as it appears in the bundle patch row. */
 export const AT_TERMINAL_PLUGIN_ID = 'at-terminal'
@@ -58,7 +59,12 @@ export const CAPABILITIES = Object.freeze([
   // the command policy engine, and pretending otherwise would make the capability list a
   // worse answer than the truth. It is announced here so a caller can tell the difference
   // between "the policy allowed it" and "there was no policy question".
-  'builtin-probe'
+  'builtin-probe',
+  // `run_remote_command` can hand a command to the Host's job registry instead of blocking a
+  // turn. Announced separately from `remote-command-execution` because it depends on the
+  // composition, not on this bundle: a preset without `dsh-tool-jobs` still runs commands,
+  // and a caller reading this list needs to know which of the two it is in.
+  'background-jobs'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
@@ -394,15 +400,18 @@ export function createRunRemoteCommandTool({
   setCurrentCallContext,
   runInContext,
   resolveSpillStore,
+  resolveJobs,
   logger
 } = {}) {
   return {
     name: 'at_terminal_run_remote_command',
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
-    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
+    // TOOL_TIMEOUT. A second timer inside the tool would double-count. A background call
+    // returns before any of it matters, because the job — not this declaration — owns the
+    // command's lifetime.
     timeoutMs: 120000,
     description:
-      'Run a non-interactive shell command on a configured AT Terminal SSH server. Commands are evaluated against the server trust level and command policy. Destructive operations require confirmation.',
+      'Run a non-interactive shell command on a configured AT Terminal SSH server. Commands are evaluated against the server trust level and command policy. Destructive operations require confirmation. Set run_in_background for a command that outlives a turn; the returned job id is collected with job_output and stopped with job_kill.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -410,16 +419,31 @@ export function createRunRemoteCommandTool({
         serverId: { type: 'string', description: 'SSH server id, or "active" to use current terminal.' },
         command: { type: 'string', description: 'Shell command line to execute remotely.' },
         cwd: { type: 'string', description: 'Optional POSIX working directory.' },
-        timeoutMs: { type: 'integer', description: 'Timeout in ms (capped at 120000).' },
-        maxOutputBytes: { type: 'integer', description: 'Max capture bytes (default 64000).' }
+        timeoutMs: { type: 'integer', description: 'Timeout in ms for the foreground path (capped at 120000).' },
+        maxOutputBytes: { type: 'integer', description: 'Max capture bytes (default 64000).' },
+        run_in_background: {
+          type: 'boolean',
+          description:
+            'Return a job id immediately and let the command keep running on the server; collect with job_output, stop with job_kill. The permission question is still answered before the job starts. Default false.'
+        }
       },
       required: ['command']
     },
     output: {
+      // One flat object rather than a `oneOf` of the two shapes, and no `required`
+      // anywhere, because the gate pins this schema to *already-normalized* JSON Schema
+      // (`valueSchemaSpecToJsonSchema(schema)` must be the identity) and this harness's
+      // schema DSL refuses `required` at the root **and** inside a `oneOf` branch. A union
+      // that cannot say which fields are guaranteed is worse than a flat object that says
+      // what it means in `kind`; `render` is what the model reads either way.
       schema: {
         type: 'object',
         additionalProperties: false,
         properties: {
+          // `background` means the command is still running on the server and `jobId` is
+          // the only handle to it; `foreground` means the object below is a finished result.
+          kind: { type: 'string', enum: ['background', 'foreground'] },
+          jobId: { type: 'string' },
           serverId: { type: 'string' },
           serverLabel: { type: 'string' },
           host: { type: 'string' },
@@ -432,20 +456,33 @@ export function createRunRemoteCommandTool({
           durationMs: { type: 'integer' },
           timedOut: { type: 'boolean' },
           truncated: { type: 'boolean' },
-          spillPath: { oneOf: [{ type: 'string' }, { type: 'null' }] }
+          spillPath: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          // Present only when `run_in_background` was asked for and could not be honoured.
+          // Silently running it in the foreground would be the worse answer: the caller
+          // would have a timeout it did not expect.
+          notice: { type: 'string' }
         }
       },
       render(_args, val) {
+        if (val.kind === 'background') {
+          return [
+            {
+              type: 'text',
+              text: `started background job ${val.jobId}; read it with job_output, stop it with job_kill.`
+            }
+          ]
+        }
         const exitText = val.exitCode !== null ? `exit ${val.exitCode}` : `signal ${val.signal ?? 'unknown'}`
         // `timed_out` and `truncated` are part of the header's grammar, not decoration: the
         // conversation card (client/views/toolCall.ts) parses this one line, and a killed or cut
         // command is otherwise indistinguishable from a clean one — the schema carries both flags
         // but a text-only result would not. They read as words to the model as well.
         const flags = `${val.timedOut ? ' timed_out' : ''}${val.truncated ? ' truncated' : ''}`
+        const notice = val.notice === undefined ? '' : `\n${val.notice}`
         return [
           {
             type: 'text',
-            text: `[${val.serverId}] ${exitText} (${val.durationMs}ms)${flags}:\n\`\`\`\n${val.stdout}${val.stderr ? '\n[stderr]\n' + val.stderr : ''}\n\`\`\``
+            text: `[${val.serverId}] ${exitText} (${val.durationMs}ms)${flags}:${notice}\n\`\`\`\n${val.stdout}${val.stderr ? '\n[stderr]\n' + val.stderr : ''}\n\`\`\``
           }
         ]
       }
@@ -467,6 +504,37 @@ export function createRunRemoteCommandTool({
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
+        // Read once, before either path: the value is what lets the service skip a second
+        // dialog, and a background job must hand it over as well or it would raise the
+        // question from a detached context where nobody can answer.
+        const preAuthorized = readPreExecuteDecision(exec)
+        let notice
+        if (input.run_in_background === true) {
+          // Resolve the server *now* rather than inside the job. `serverId: 'active'` is
+          // resolved against the focused terminal, which is not a stable answer across the
+          // lifetime of a job — the job would run on one host and its kill would look up
+          // another. One resolution, used by both.
+          const { server } = await service.authorizeCommand({
+            serverId: input.serverId,
+            command: input.command,
+            cwd: input.cwd
+          })
+          const started = startRemoteCommandJob({
+            jobs: resolveJobs?.(),
+            exec,
+            service,
+            serverId: server.id,
+            command: input.command,
+            cwd: input.cwd,
+            maxOutputBytes: input.maxOutputBytes,
+            preAuthorized,
+            logger
+          })
+          if (started.ok) {
+            return { kind: 'background', jobId: started.jobId }
+          }
+          notice = `run_in_background was not honoured — ${started.reason}. The command ran in the foreground instead, under the usual timeout.`
+        }
         const result = await service.runRemoteCommand({
           ...input,
           signal: exec?.signal,
@@ -474,7 +542,7 @@ export function createRunRemoteCommandTool({
           // (or proved the server trusts the command). Handing that conclusion over is what
           // keeps one prompt per command: the service keeps its own authorization check, but
           // it no longer opens a second dialog.
-          preAuthorized: readPreExecuteDecision(exec)
+          preAuthorized
         })
         const spilled = await spillIfOverBudget({
           // Exactly the text `output.render` would have shown, label included: the inline
@@ -487,6 +555,7 @@ export function createRunRemoteCommandTool({
           logger
         })
         return {
+          kind: 'foreground',
           serverId: result.serverId,
           serverLabel: result.serverLabel,
           host: result.host,
@@ -501,7 +570,8 @@ export function createRunRemoteCommandTool({
           durationMs: result.durationMs,
           timedOut: Boolean(result.timedOut),
           truncated: Boolean(result.truncated),
-          spillPath: spilled.spillPath
+          spillPath: spilled.spillPath,
+          ...(notice === undefined ? {} : { notice })
         }
       })
     }
@@ -1354,6 +1424,7 @@ export function createTools({
   setCurrentCallContext,
   runWithCallContext,
   resolveSpillStore,
+  resolveJobs,
   logger,
   now
 } = {}) {
@@ -1363,7 +1434,16 @@ export function createTools({
         setCurrentCallContext?.(ctx)
         return fn()
       }
-  const shared = { version, config, resolveAgentService, setCurrentCallContext, runInContext, resolveSpillStore, logger }
+  const shared = {
+    version,
+    config,
+    resolveAgentService,
+    setCurrentCallContext,
+    runInContext,
+    resolveSpillStore,
+    resolveJobs,
+    logger
+  }
   return [
     createPingTool({ version, config, now }),
     createListSshServersTool(shared),

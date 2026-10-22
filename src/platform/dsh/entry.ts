@@ -78,6 +78,10 @@ export {
 // Injected into `dsh/policy.js` rather than reimplemented there: the guard must refuse the
 // same paths the authorizer resolves, and two copies of this rule would be two answers.
 export { isSensitiveRemotePath } from '../../agent/remoteWritePolicy';
+// The pidfile name is domain knowledge (it depends on the job id the registry generates),
+// and `dsh/jobs.js` is plain JavaScript that cannot reach into TypeScript. Exporting the
+// one function keeps a single definition instead of a second copy that drifts.
+export { pidfileFor } from '../../agent/remoteCommandShell';
 export { TerminalContextRegistry } from '../../terminal/TerminalContext';
 export { HardwareMetricsCollector } from '../../agent/HardwareMetricsCollector';
 export { AgentExecutionBridge } from '../../agent/AgentExecutionBridge';

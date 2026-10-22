@@ -63,7 +63,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `ping` | 只读 | 报告插件是否就绪、本构建提供哪些能力，以及当前生效的设置；不触达任何远程主机。 |
 | `list_ssh_servers` | 只读 | 列出已允许后台连接的 SSH 服务器，不暴露密码或私钥。 |
 | `get_terminal_context` | 只读 | 返回当前聚焦、默认连接、已连接和已知的 AT Terminal SSH 终端上下文。 |
-| `run_remote_command` | 命令 | 执行经过确认的非交互 SSH 命令，并返回 stdout、stderr、exit code、timeout、duration 和截断信息。除非服务器已被信任且 `@at-series/command-policy` 能证明这是普通只读，否则每条命令都要确认。stdout/stderr 各默认 64000 字节（硬顶 256000）。 |
+| `run_remote_command` | 命令 | 执行经过确认的非交互 SSH 命令，并返回 stdout、stderr、exit code、timeout、duration 和截断信息。除非服务器已被信任且 `@at-series/command-policy` 能证明这是普通只读，否则每条命令都要确认。stdout/stderr 各默认 64000 字节（硬顶 256000）。`run_in_background: true` 会把命令交给宿主的作业注册表：调用立即返回 job id，用 `job_output` 读取、用 `job_kill` 停止——停的是远端进程，不只是本地等待。 |
 | `sftp_list_directory` | 只读 | 通过已连接的 AT Terminal SFTP 会话列出远程目录。最多返回 `maxEntries` 条（默认 500，硬顶 5000），并带 `truncated`/`total`；`offset` 可对大目录分页。 |
 | `sftp_stat_path` | 只读 | 返回远程文件或目录的元信息。 |
 | `sftp_read_file` | 只读 | 读取有限大小的 UTF-8 远程文本文件；默认 `maxBytes` 65536（硬顶 262144）；`offset` 可续读，负值从文件尾部读取；疑似二进制内容会被拒绝。 |
@@ -86,6 +86,8 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 - 敏感路径（`~/.ssh`、`/etc`、`/usr`、`/root`、`*.service`、`authorized_keys`、`sudoers*`、`crontab`）一律二次确认，且永不记忆。
 - Agent 的 SFTP 会话不做提权：权限不足即失败，`sudo -n` 回退只存在于用户手动操作的 SFTP 视图。
 - 只读工具不会返回密码、私钥或 SecretStorage 内容。
+- 后台命令的确认在**作业启动之前**完成，绝不在作业内部发起：作业已脱离这次调用，此时弹窗会出现在没有工具调用在飞的状态下，用户无处回答。若当前组合没有作业注册表，该调用会降级为前台执行，并在 `notice` 里说明原因。
+- 取消后台命令会向远端**进程组**发 `SIGTERM`，并等到它真正消失才把作业结算为 killed——只关闭本地 SSH 通道会让进程继续跑。被信号的 pid 来自作业在远端写下的文件（以 job id 命名），发送信号前先删除该文件。
 - SFTP 读取有大小限制，避免把大文件直接灌入 Agent 上下文。
 - SFTP 的读取、列目录与 stat 有 30 秒上限：通道卡住时会以带路径的超时失败，而不是返回一个看起来像空文件的结果；写入与删除的确认另有 60 秒预算。
 - 写入工具会解析远程路径，不允许修改远程根路径。

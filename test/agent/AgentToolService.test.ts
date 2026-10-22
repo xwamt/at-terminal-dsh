@@ -941,5 +941,78 @@ describe('AgentToolService', () => {
     // in the other direction.
     expect(await service.openMonitor({ target: 'agent_execution' })).toMatchObject({ opened: true });
   });
+
+  describe('terminateRemoteCommand', () => {
+    const commandResult = (stdout: string) => ({
+      serverId: 'server-1',
+      serverLabel: 'Production',
+      host: 'server-1.example.com',
+      command: 'kill',
+      exitCode: 0,
+      signal: undefined,
+      stdout,
+      stderr: '',
+      durationMs: 40,
+      timedOut: false,
+      truncated: false
+    });
+
+    const serviceWith = (stdout: string, audit?: { record: ReturnType<typeof vi.fn> }) => {
+      const executor = { execute: vi.fn(async () => commandResult(stdout)) };
+      const service = createService({
+        configManager: {
+          getServer: async () => ({ ...server(), backgroundConnectionAllowed: true }),
+          listServers: async () => [server()]
+        } as never,
+        terminalContext: new TerminalContextRegistry(),
+        executor: executor as unknown as RemoteCommandExecutor,
+        ...(audit === undefined ? {} : { audit: audit as never })
+      });
+      return { service, executor };
+    };
+
+    it('reports a kill only when the process group is gone, and audits it', async () => {
+      const audit = { record: vi.fn() };
+      const { service, executor } = serviceWith('at-terminal-killed:4242\n', audit);
+
+      const outcome = await service.terminateRemoteCommand('server-1', '/tmp/.at-terminal-job-1.pid');
+
+      expect(outcome).toEqual({ killed: true, pid: '4242', detail: 'process group 4242 is gone' });
+      // The kill is a command on the same server the job ran on, bounded so it cannot
+      // outlive the thing it is ending.
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'server-1' }),
+        expect.objectContaining({
+          command: expect.stringContaining('kill -TERM'),
+          timeoutMs: 15_000
+        })
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ reasonCode: 'job_killed', command: 'kill /tmp/.at-terminal-job-1.pid' })
+      );
+    });
+
+    it('does not claim a kill it cannot prove', async () => {
+      const audit = { record: vi.fn() };
+      const { service } = serviceWith('at-terminal-alive:4242\n', audit);
+
+      const outcome = await service.terminateRemoteCommand('server-1', '/tmp/.at-terminal-job-1.pid');
+
+      expect(outcome.killed).toBe(false);
+      expect(outcome.detail).toContain('did not exit');
+      // The audit has to say which of the two it was, or a later reader cannot tell a
+      // stopped command from a signal that was ignored.
+      expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ reasonCode: 'job_kill_unconfirmed' }));
+    });
+
+    it('says the command had already finished when no pid was recorded', async () => {
+      const { service } = serviceWith('');
+
+      const outcome = await service.terminateRemoteCommand('server-1', '/tmp/.at-terminal-job-1.pid');
+
+      expect(outcome).toMatchObject({ killed: false });
+      expect(outcome.detail).toContain('already finished');
+    });
+  });
 });
 

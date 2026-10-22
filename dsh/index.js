@@ -241,6 +241,16 @@ export function apply(ctx, config = {}) {
         }
       },
       logger: ctx.logger,
+      // Same lazy read as `spillStore`, for the same reason: which preset supplies the job
+      // registry is a runtime fact, not a registration-time one. Absence degrades the
+      // tool to foreground with a stated reason instead of failing it.
+      resolveJobs: () => {
+        try {
+          return ctx.get?.('jobs')
+        } catch {
+          return undefined
+        }
+      },
       runWithCallContext: (callCtx, fn) => callContextStorage.run(callCtx, fn),
       setCurrentCallContext: (callCtx) => {
         currentCallContextFallback = callCtx

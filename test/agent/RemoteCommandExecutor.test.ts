@@ -368,5 +368,64 @@ describe('RemoteCommandExecutor connection pool', () => {
     await expect(promise).rejects.toThrow('Remote command was aborted.');
     expect(stream.close).toHaveBeenCalled();
   });
+
+  it('treats timeoutMs 0 as no deadline at all, so a background command is not killed', async () => {
+    // `0` is how the background path says "the job owns the lifetime". Reading it through
+    // the same clamp that turns `undefined` into 30 s would silently cap every background
+    // command at half a minute — the exact defect the task exists to remove.
+    vi.useFakeTimers();
+    try {
+      const stream = createExecStream();
+      exec.mockImplementation((_command: string, callback: Function) => callback(undefined, stream));
+      const executor = new RemoteCommandExecutor({ getPassword: async () => 'secret' } as never, hostKeyVerifier);
+
+      const promise = executor.execute(server(), { command: 'sleep 3600', timeoutMs: 0 });
+      await flushPromises();
+      clients[0].emit('ready');
+      await flushPromises();
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      // Ten minutes in, the deadline that would have fired twice is not there.
+      expect(stream.close).not.toHaveBeenCalled();
+
+      stream.emit('close', 0, undefined);
+      await expect(promise).resolves.toMatchObject({ exitCode: 0, timedOut: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('streams decoded output as it arrives and stitches a character split across reads', async () => {
+    const stream = createExecStream();
+    exec.mockImplementation((_command: string, callback: Function) => callback(undefined, stream));
+    const executor = new RemoteCommandExecutor({ getPassword: async () => 'secret' } as never, hostKeyVerifier);
+
+    const chunks: Array<{ channel: string; text: string }> = [];
+    const promise = executor.execute(server(), {
+      command: 'printf …',
+      onOutput: (chunk) => chunks.push(chunk)
+    });
+
+    await flushPromises();
+    clients[0].emit('ready');
+    await flushPromises();
+
+    // A three-byte character delivered as 2 + 1: without a streaming decoder this becomes
+    // two replacement characters, and nobody reading the job's ring would know why.
+    const ellipsis = Buffer.from('…', 'utf8');
+    stream.emit('data', ellipsis.subarray(0, 2));
+    stream.emit('data', ellipsis.subarray(2));
+    stream.stderr.emit('data', Buffer.from('oops\n'));
+    stream.emit('close', 0, undefined);
+
+    const result = await promise;
+    expect(chunks).toEqual([
+      { channel: 'stdout', text: '…' },
+      { channel: 'stderr', text: 'oops\n' }
+    ]);
+    // The buffered result is unchanged: the hook is in addition to it, not instead of it.
+    expect(result.stdout).toBe('…');
+    expect(result.stderr).toBe('oops\n');
+  });
 });
 

@@ -27,6 +27,8 @@ variants.
 | `tools.js` | Tool definitions as plain data, already normalized for `ctx.tools.register()`. No `@deepseek-ai/*` import, so it loads without a dsh checkout |
 | `policy.js` | The classification table, the `ctx.tools.guard` and the `tools/pre-execute` stage. Every tool needs a row (an unclassified one is **denied**), sensitive-path deletes are refused outright, and command authorization is delegated to `authorizeCommand()` so the gate and the dialog cannot disagree. Imports nothing: the predicate and the authorizer are injected |
 | `settings.js` | Settings schema, constraints and defaults. Also free of `@deepseek-ai/*` imports; the schema factory takes the schemastery instance as an argument |
+| `spill.js` | Puts a result too big to show into the Host's `ctx.spillStore` and keeps the head, the tail and the account of what fell between them inline. The store is read per call, so a preset that composes it later still works; its absence degrades to truncation, never to an error |
+| `jobs.js` | The job **producer** for `run_remote_command`: it hands `ctx.jobs.start()` a spec whose cancel signals the **remote** process group. Registers no tool — `job_output` / `job_list` / `job_kill` already belong to `@deepseek-ai/dsh-tool-jobs`, and check 5 fails on a name collision. `pidfileFor()` comes from `host.bundle.js`, so the pidfile naming has one definition |
 | `host.bundle.js` | **Built** (committed): the TypeScript domain services (`src/platform/dsh/entry.ts`) compiled for the Host half |
 | `client.js` | **Built** (committed): the browser half — `src/platform/dsh/client/**` bundled with xterm and the reused webview assets into one ModuleLoader factory |
 | `esbuild.dsh.mjs` | Builds both artifacts; `--check` (wired into `verify:dsh`) fails when either is stale |
@@ -63,7 +65,12 @@ node dsh/scripts/verify.mjs
    **not** `{}`), `output.schema` is already raw JSON Schema
    (`valueSchemaSpecToJsonSchema` is the identity on it), `execute()`'s value is
    accepted by the real `validateJsonSchemaValue`, and the renderer is
-   exercised.
+   exercised. It also pins the background-job contract: no tool may take a name
+   `@deepseek-ai/dsh-tool-jobs` already registers, `run_in_background` must be a
+   boolean parameter, a call without a job registry must degrade to foreground
+   with a `notice`, and an accepted call must hand `start()` the **agent** id as
+   `owner` (a session id does not resolve through `agents.get()`) and reach the
+   service's remote kill on cancel.
 6. **settings** — the exported `Config` schema is built with the **installed**
    `@deepseek-ai/schemastery`. It must describe exactly the six documented
    fields, resolve the documented defaults through real `.get()` accessors,

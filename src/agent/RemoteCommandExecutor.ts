@@ -1,21 +1,45 @@
+import { StringDecoder } from 'node:string_decoder';
 import type { Client, ClientChannel } from 'ssh2';
 import type { ConfigManager } from '../config/ConfigManager';
 import type { ServerConfig } from '../config/schema';
-import { quotePosixShellPath } from '../sftp/RemotePath';
 import { attachKeyboardInteractive } from '../ssh/KeyboardInteractive';
 import { getSsh2 } from '../ssh/ssh2Loader';
+import { wrapCommand } from './remoteCommandShell';
 import {
   buildSshConnectionHandle,
   type HostKeyVerifier,
   type SshConnectionHandle
 } from '../ssh/SshConnectionConfig';
 
+/** One decoded chunk of remote output, tagged with the stream it came from. */
+export interface RemoteCommandOutputChunk {
+  channel: 'stdout' | 'stderr';
+  text: string;
+}
+
 export interface RemoteCommandRequest {
   command: string;
   cwd?: string;
+  /**
+   * Deadline in milliseconds. `0` means **no deadline**: the caller owns the lifetime.
+   *
+   * Only the background path sets it, because a background command's lifetime is the job's
+   * and the job is what stops it. `undefined` keeps the documented default, so nothing that
+   * existed before this field changed meaning.
+   */
   timeoutMs?: number;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+  /**
+   * Called as output arrives, in addition to the buffered result.
+   *
+   * A background job needs this: its reader (`job_output`) reads a ring that must fill
+   * while the command runs, and a command that only returns at the end would make the
+   * feature useless for anything long. Text is decoded with a streaming decoder so a
+   * multi-byte character split across two TCP segments is not mangled — the buffered
+   * result already decodes once at the end and cannot suffer this.
+   */
+  onOutput?: (chunk: RemoteCommandOutputChunk) => void;
 }
 
 export interface RemoteCommandResult {
@@ -97,7 +121,13 @@ export class RemoteCommandExecutor {
       throw new Error('Remote command cannot be empty.');
     }
 
-    const timeoutMs = clampPositiveInteger(request.timeoutMs, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
+    // `0` is the one value the clamp must not silently turn back into the default: it is
+    // how the background path says "no deadline", and a default applied here would kill a
+    // legitimate long-running job at 30 seconds.
+    const timeoutMs =
+      request.timeoutMs === 0
+        ? undefined
+        : clampPositiveInteger(request.timeoutMs, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
     const maxOutputBytes = clampPositiveInteger(request.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES);
     const started = Date.now();
     const execCommand = wrapCommand(command, request.cwd);
@@ -108,21 +138,30 @@ export class RemoteCommandExecutor {
     return new Promise<RemoteCommandResult>((resolve, reject) => {
       const stdout = new OutputBuffer(maxOutputBytes);
       const stderr = new OutputBuffer(maxOutputBytes);
+      // Only allocated when someone is listening: `StringDecoder` carries state, and a
+      // decoder that is never read is just an object to keep alive.
+      const decodeOut = request.onOutput ? new StringDecoder('utf8') : undefined;
+      const decodeErr = request.onOutput ? new StringDecoder('utf8') : undefined;
       let lease: ConnectionLease | undefined;
       let abortListener: (() => void) | undefined;
       // Armed before acquisition so the caller's timeout still covers a connection that
       // never comes up, not just a command that never returns.
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        stream?.close();
-        finish(null);
-      }, timeoutMs);
+      const timeout =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              timedOut = true;
+              stream?.close();
+              finish(null);
+            }, timeoutMs);
 
       const onConnectionLost = (error?: Error): void => {
         rejectOnce(error ?? new Error('SSH connection closed before the command finished.'));
       };
       const detach = (): void => {
-        clearTimeout(timeout);
+        if (timeout !== undefined) {
+          clearTimeout(timeout);
+        }
         if (abortListener && request.signal) {
           request.signal.removeEventListener('abort', abortListener);
         }
@@ -164,7 +203,9 @@ export class RemoteCommandExecutor {
           stdout: stdout.text(),
           // A timeout appends its notice instead of replacing stderr: whatever the
           // command managed to print before it overran is usually the diagnosis.
-          stderr: timedOut ? appendTimeoutNotice(stderr.text(), timeoutMs) : stderr.text(),
+          // `timedOut` is only ever set by the timer, which only exists when
+          // `timeoutMs` does, so the fallback is unreachable rather than a real default.
+          stderr: timedOut ? appendTimeoutNotice(stderr.text(), timeoutMs ?? 0) : stderr.text(),
           durationMs: Date.now() - started,
           timedOut,
           truncated: stdout.truncated || stderr.truncated
@@ -196,9 +237,24 @@ export class RemoteCommandExecutor {
           }
 
           stream = execStream;
-          execStream.on('data', (data: Buffer) => stdout.append(data));
-          execStream.stderr.on('data', (data: Buffer) => stderr.append(data));
+          execStream.on('data', (data: Buffer) => {
+            stdout.append(data);
+            const text = decodeOut?.write(data);
+            if (text) request.onOutput?.({ channel: 'stdout', text });
+          });
+          execStream.stderr.on('data', (data: Buffer) => {
+            stderr.append(data);
+            const text = decodeErr?.write(data);
+            if (text) request.onOutput?.({ channel: 'stderr', text });
+          });
           execStream.once('close', (code: number | null, signalName?: string) => {
+            // Whatever the streaming decoder still holds is the tail of the last chunk —
+            // a partial character cannot be, since the stream is done, but a whole
+            // character can still be buffered from an incomplete sequence.
+            const restOut = decodeOut?.end();
+            if (restOut) request.onOutput?.({ channel: 'stdout', text: restOut });
+            const restErr = decodeErr?.end();
+            if (restErr) request.onOutput?.({ channel: 'stderr', text: restErr });
             finish(code, signalName);
           });
         });
@@ -306,14 +362,6 @@ function appendTimeoutNotice(capturedStderr: string, timeoutMs: number): string 
     return notice;
   }
   return capturedStderr.endsWith('\n') ? `${capturedStderr}${notice}` : `${capturedStderr}\n${notice}`;
-}
-
-function wrapCommand(command: string, cwd: string | undefined): string {
-  const trimmedCwd = cwd?.trim();
-  if (!trimmedCwd) {
-    return command;
-  }
-  return `cd ${quotePosixShellPath(trimmedCwd)} && ${command}`;
 }
 
 function clampPositiveInteger(value: number | undefined, fallback: number, max: number): number {
