@@ -24,7 +24,7 @@
  *    exactly the defect this task exists to fix.
  */
 
-import { pidfileFor } from './host.bundle.js'
+import { backgroundScript, pidfileFor } from './host.bundle.js'
 
 /** How much of the command fits in a job label before it stops being a label. */
 const LABEL_LIMIT = 120;
@@ -121,8 +121,16 @@ function runCommand({ handle, service, serverId, command, cwd, limit, preAuthori
     try {
       const result = await service.runRemoteCommand({
         serverId,
-        command,
-        cwd,
+        // The pid write is part of the *command*, not something the executor adds: the
+        // first version of this file named the pidfile and killed it later but never
+        // wrote it, so `cat /tmp/.at-terminal-<job>.pid` returned exit 1 and the cancel
+        // had nothing to signal. Every unit test passed, because they all stopped at
+        // "start() was called"; only a real host showed the gap.
+        command: backgroundScript(command, cwd, pidfile),
+        // Deliberately no `cwd`: `backgroundScript` already folded it in *after* the pid
+        // write. Passing it again would make the executor wrap the whole thing in another
+        // `cd … &&`, and the `;` before the command would then break that `&&` chain —
+        // a failed `cd` would no longer stop the command.
         maxOutputBytes: limit,
         // `0` = no deadline. A background command's lifetime belongs to the job; the
         // executor's 30 s default exists to bound a call that blocks a turn, and this one

@@ -16241,6 +16241,9 @@ function pidfileFor(jobId) {
   let safe = String(jobId).replace(/[^A-Za-z0-9._-]/g, "");
   return `/tmp/.at-terminal-${safe === "" ? "job" : safe}.pid`;
 }
+function backgroundScript(command, cwd, pidfile) {
+  return `printf '%s\\n' "$$" > ${quotePosixShellPath(pidfile)}; ${wrapCommand(command, cwd)}`;
+}
 function terminateScript(pidfile) {
   let file = quotePosixShellPath(pidfile);
   return [
@@ -19093,6 +19096,7 @@ export {
   SFTP_TEXT_MAX_BYTES,
   SFTP_TRANSFER_MAX_BYTES,
   TerminalContextRegistry,
+  backgroundScript,
   buildCommandApprovalCopy,
   createDshAgentToolService,
   createDshAssetApi,

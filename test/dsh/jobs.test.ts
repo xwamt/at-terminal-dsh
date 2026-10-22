@@ -140,8 +140,28 @@ describe('the job body', () => {
     startRemoteCommandJob({ ...BASE, jobs, service } as any);
     await jobs.specs[0].run({ id: 'ssh-command-1', append() {} }).done;
     expect(service.runRemoteCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 0, serverId: 'srv-1', command: 'sleep 60', preAuthorized: 'auto-approved' })
+      expect.objectContaining({ timeoutMs: 0, serverId: 'srv-1', preAuthorized: 'auto-approved' })
     );
+  });
+
+  it('writes the pid into the command it actually sends, and folds cwd in exactly once', async () => {
+    // The first version of `dsh/jobs.js` named the pidfile and killed it later, but never
+    // put the write into the command — so a real `sleep 120` left no pidfile, `cat` exited
+    // 1, and `job_kill` had nothing to signal. Every test passed because they all stopped
+    // at "start() was called". This asserts the bytes that reach the host.
+    const jobs = makeJobs();
+    const service = makeService();
+    startRemoteCommandJob({ ...BASE, cwd: '/srv/app', jobs, service } as any);
+    await jobs.specs[0].run({ id: 'ssh-command-abc', append() {} }).done;
+
+    const call = (service.runRemoteCommand.mock.calls[0] as any[])[0];
+    expect(call.command).toBe(
+      `printf '%s\\n' "$$" > '/tmp/.at-terminal-ssh-command-abc.pid'; cd '/srv/app' && sleep 60`
+    );
+    // Passing `cwd` as well would make the executor wrap this in a second `cd … &&`, and
+    // the `;` after the pid write would then cut that chain — a failed `cd` would no
+    // longer stop the command.
+    expect(call.cwd).toBeUndefined();
   });
 
   it('streams each chunk into the ring under its own channel', async () => {

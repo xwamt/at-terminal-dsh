@@ -741,6 +741,7 @@ if (sandboxSkipReason !== null) {
     }
 
     const terminations = []
+    const runCalls = []
     const mockService = {
       async listServers() {
         return {
@@ -778,6 +779,7 @@ if (sandboxSkipReason !== null) {
         }
       },
       async runRemoteCommand(input) {
+        runCalls.push(input)
         return {
           serverId: input.serverId || 'srv-1',
           serverLabel: 'Test Server',
@@ -1079,11 +1081,29 @@ if (sandboxSkipReason !== null) {
     assert.equal(typeof started[0].run, 'function', 'the spec must carry a run() body')
     assert.ok(CAPABILITIES.includes('background-jobs'), 'CAPABILITIES must list background-jobs')
     // The body must be able to stop the remote process, not just the local wait.
+    const runsBeforeJob = runCalls.length
     const hooks = started[0].run({ id: 'ssh-command-0123456789abcdef', append() {} })
     assert.equal(typeof hooks.cancel, 'function', 'cancel must be callable synchronously')
     assert.ok(hooks.done instanceof Promise, 'done must be a promise the registry can await')
     hooks.cancel('test cleanup')
     await hooks.done
+    // The bytes that reach the host matter more than the spec: the first version built a
+    // correct pidfile name and killed it correctly but never wrote it, so on a real host
+    // `cat /tmp/.at-terminal-<job>.pid` exited 1 and the cancel had nothing to signal.
+    assert.equal(runCalls.length, runsBeforeJob + 1, 'a background job must run the command exactly once')
+    assert.ok(
+      runCalls.at(-1).command.startsWith(`printf '%s\\n' "$$" > '/tmp/.at-terminal-ssh-command-0123456789abcdef.pid'; `),
+      `the command must record its own pid first, got: ${String(runCalls.at(-1).command).slice(0, 120)}`
+    )
+    assert.ok(
+      runCalls.at(-1).command.endsWith('sleep 60'),
+      'the command itself must survive the pid write untouched'
+    )
+    assert.equal(
+      runCalls.at(-1).cwd,
+      undefined,
+      'cwd must be folded into the script, not passed again — a second cd would break the && chain'
+    )
     // Cancelling must reach the *remote* kill, through the pidfile the job id names — the
     // whole point of the task is that a cancelled job is not just a closed channel.
     assert.equal(terminations.length, 1, 'cancel must ask the service to terminate the remote process')
