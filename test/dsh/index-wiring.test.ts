@@ -147,6 +147,20 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     }
   };
 
+  const skillCatalog = new Map<string, { name: string; description?: string }>();
+  const skills = {
+    register(skill: { name: string; description?: string }) {
+      if (skillCatalog.has(skill.name)) return () => {};
+      skillCatalog.set(skill.name, skill);
+      return () => {
+        skillCatalog.delete(skill.name);
+      };
+    },
+    async list() {
+      return [...skillCatalog.values()].map((skill) => ({ name: skill.name }));
+    }
+  };
+
   const storageDomain = options.storageDomain ?? new MemoryStorageDomain();
   const credentials = new MemoryCredentialProvider();
 
@@ -200,7 +214,7 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
 
   // `storageDomain` and `credentials` stand in for the Harness's own services, which the
   // default composition mounts. `webServer` is what makes the channel reachable.
-  const present: Record<string, unknown> = { webServer, storageDomain, credentials, systemPrompt };
+  const present: Record<string, unknown> = { webServer, storageDomain, credentials, systemPrompt, skills };
 
   const ctx = makeCtx({
     systemPrompt,
@@ -225,7 +239,20 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     }
   });
 
-  return { ctx, routes, upgrades, tools, guards, logger, disposers, injections, listeners, promptSections, promptVariables };
+  return {
+    ctx,
+    routes,
+    upgrades,
+    tools,
+    guards,
+    logger,
+    disposers,
+    injections,
+    listeners,
+    promptSections,
+    promptVariables,
+    skillCatalog
+  };
 }
 
 /** Drive the `/rpc` route the way the browser half does. */
@@ -806,6 +833,29 @@ describe('dsh Host half — wiring', () => {
     for (const dispose of harness.disposers) dispose();
     expect(harness.promptSections).toHaveLength(0);
     expect(harness.promptVariables).toHaveLength(0);
+  });
+
+  it("registers the runtime skills, and ping reports what the catalog actually holds", async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    expect([...harness.skillCatalog.keys()].sort()).toEqual([
+      "at-terminal-incident-log",
+      "at-terminal-inspection",
+      "at-terminal-remote-edit"
+    ]);
+
+    // The verification is asynchronous (it reads the catalog), so poll the value the model
+    // would see rather than asserting on a status that may not have been written yet.
+    const ping = harness.tools.find((tool) => tool.name === "at_terminal_ping");
+    let status = "";
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      status = (await ping?.execute?.({}, {}))?.runtimeSkills ?? "";
+      if (status.includes("catalog confirms")) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(status).toBe("registered 3/3 (catalog confirms)");
   });
 
 });

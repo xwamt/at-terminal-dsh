@@ -28,6 +28,7 @@ import { SETTINGS_FIELDS, readSettings } from './settings.js'
 import { readPreExecuteDecision } from './policy.js'
 import { spillIfOverBudget } from './spill.js'
 import { sectionStatusText, updateTrustFact } from './prompt.js'
+import { skillStatusText } from './skills.js'
 import { startRemoteCommandJob } from './jobs.js'
 
 /** Plugin identity as it appears in the bundle patch row. */
@@ -72,7 +73,11 @@ export const CAPABILITIES = Object.freeze([
   'job-control',
   // Registered a prompt section plus the variable it interpolates. Listed separately because
   // a composition without `dsh-system-prompt` keeps the tools and loses the guidance.
-  'prompt-section'
+  'prompt-section',
+  // Three runtime skills, registered on the host catalog. Whether the model can see them
+  // depends on the composition mounting `tool-skill` (this desktop build mounts it for
+  // preset-run agents only), so `ping` reports what actually registered.
+  'runtime-skills'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
@@ -248,7 +253,10 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
           // Whether the guidance section reached the host. Reported rather than assumed:
           // the assembled prompt is not written anywhere a caller can read it, so without
           // this line "the section is live" would be a claim nobody could check.
-          promptSection: { type: 'string' }
+          promptSection: { type: 'string' },
+          // Same reasoning as `promptSection`: whether the catalog landed is not otherwise
+          // observable, and `register()` hides a duplicate behind a no-op disposer.
+          runtimeSkills: { type: 'string' }
         }
       },
       render(_args, value) {
@@ -267,7 +275,7 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
           // only lives in the value is a field nobody can ask about.
           {
             type: 'text',
-            text: `Prompt guidance section: ${value.promptSection}.`
+            text: `Prompt guidance section: ${value.promptSection}. Runtime skills: ${value.runtimeSkills}.`
           }
         ]
       }
@@ -282,7 +290,8 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
         platform: process.platform,
         node: process.versions.node,
         checkedAt: now().toISOString(),
-        promptSection: sectionStatusText()
+        promptSection: sectionStatusText(),
+        runtimeSkills: skillStatusText()
       }
     }
   }

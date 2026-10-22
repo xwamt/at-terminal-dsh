@@ -37,6 +37,7 @@ import z from '@deepseek-ai/schemastery'
 import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
 import { classify, createGuard, createPreExecute } from './policy.js'
 import { TRUST_VARIABLE, promptSection, recordSectionRegistration, trustFact } from './prompt.js'
+import { RUNTIME_SKILLS, recordSkillStatus, registerRuntimeSkills, verifyRegisteredSkills } from './skills.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
@@ -309,6 +310,35 @@ export function apply(ctx, config = {}) {
     }, 'at-terminal: prompt section')
   })
 
+
+  /**
+   * Runtime skills: the three procedures that are too long for a tool description and too
+   * situational for the prompt section.
+   *
+   * Same arrangement as the section above, and for the same reason — a composition without
+   * `dsh-skill` loses the catalog and keeps the tools. Worth knowing when reading the
+   * result: this desktop build **disables `tool-skill` at the base layer** and enables it
+   * again only for preset-run agents (`dsh-web-app/cordis.patch.yml` vs
+   * `dsh-web-app/presets/cordis.patch.yml`). So "registered on the host" and "visible to the
+   * model" are two different questions; `ping` answers the first, and the plan records that
+   * the second depends on the preset.
+   */
+  ctx.inject(['skills'], (scoped) => {
+    scoped.effect(() => {
+      const outcome = registerRuntimeSkills(scoped.skills)
+      if (outcome.registered !== RUNTIME_SKILLS.length) {
+        scoped.logger?.warn?.(`at-terminal: ${outcome.status}`)
+      }
+      // Read back what the catalog actually offers: `register()` answers a duplicate with a
+      // no-op disposer, so the call succeeding proves nothing on its own.
+      void verifyRegisteredSkills(scoped.skills).then((status) => {
+        if (!status.startsWith('registered 3/3')) scoped.logger?.warn?.(`at-terminal: ${status}`)
+      })
+      return () => {
+        recordSkillStatus('not registered: disposed with the plugin')
+      }
+    }, 'at-terminal: runtime skills')
+  })
 
   // Host↔Client channel (DSH-21) plus the asset services (M3) over the web carrier.
   //
