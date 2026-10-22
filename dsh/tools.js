@@ -52,7 +52,12 @@ export const CAPABILITIES = Object.freeze([
   // (`@deepseek-ai/dsh-tool-call-timeout-policy` → `TOOL_TIMEOUT`). Saying so is the point:
   // the declaration is inert in a preset that does not mount that policy, and a caller
   // deciding whether to retry needs to know which of the two it is looking at.
-  'tool-timeouts'
+  'tool-timeouts',
+  // The hardware probe is a fixed script shipped with this bundle: it never passes through
+  // the command policy engine, and pretending otherwise would make the capability list a
+  // worse answer than the truth. It is announced here so a caller can tell the difference
+  // between "the policy allowed it" and "there was no policy question".
+  'builtin-probe'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
@@ -1106,7 +1111,7 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 8000,
-    description: 'Retrieve real-time hardware metrics (CPU, memory, disk, network throughput, top processes) for an SSH server.',
+    description: 'Retrieve real-time hardware metrics (CPU, memory, disk, network throughput, top processes) for an SSH server. Its probe script is built in and bypasses the command policy engine; the call is still audited.',
     parameters: {
       type: 'object',
       additionalProperties: false,

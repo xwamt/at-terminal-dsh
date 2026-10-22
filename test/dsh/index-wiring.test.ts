@@ -628,6 +628,46 @@ describe('dsh Host half — wiring', () => {
     expect(status.recentAudits[0].command).toContain('mysql');
   });
 
+  it('records the built-in hardware probe as builtin_probe, not as a policy-cleared command', async () => {
+    // The probe runs a fixed script straight through the executor, so it never meets the
+    // command policy. Recording it as `completed` would read as "the policy allowed it",
+    // which is the kind of quiet inaccuracy a trail exists to prevent.
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_get_hardware_metrics',
+        callId: 'call-metrics',
+        arguments: { serverId: 'srv-1' },
+        agent: { session: { id: 'sess-1' } }
+      },
+      { isError: false, value: { serverId: 'srv-1', cpuUsagePercent: 3, memoryTotalBytes: 1024 } }
+    );
+
+    const file = joinPath(process.env.DSH_HOME as string, 'at-terminal', 'agent-audit.jsonl');
+    const lines = await readWhenReady(file);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      tool: 'get_hardware_metrics',
+      serverId: 'srv-1',
+      reasonCode: 'builtin_probe'
+    });
+
+    // Every other successful call keeps `completed`: the distinction is the probe's, not a
+    // blanket change to what a success looks like.
+    fire(
+      harness,
+      'tools/result',
+      { name: 'at_terminal_ping', callId: 'call-ping', arguments: {}, agent: { session: { id: 'sess-1' } } },
+      { isError: false, value: { ready: true } }
+    );
+    const after = await readWhenReady(file);
+    expect(after.map((line) => JSON.parse(line).reasonCode)).toEqual(['builtin_probe', 'completed']);
+  });
+
   it('records a failed call as runtime_error, and keeps the tool result untouched when the audit fails', async () => {
     const harness = createHarness();
     hostHalf.apply(harness.ctx, {});

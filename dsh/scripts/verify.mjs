@@ -680,6 +680,19 @@ if (sandboxSkipReason !== null) {
     assert.ok(CAPABILITIES.includes('plugin-skeleton'), 'CAPABILITIES must list plugin-skeleton')
     assert.ok(CAPABILITIES.includes('direct-agent-tools'), 'CAPABILITIES must list direct-agent-tools')
     assert.ok(CAPABILITIES.includes('tool-timeouts'), 'CAPABILITIES must list tool-timeouts once tools declare them')
+    // Announced only while the policy table really exempts the probe from the command
+    // engine — a capability that advertises a bypass outliving the bypass would be worse
+    // than not advertising it, so both halves are asserted together.
+    const { classify } = await import('../policy.js')
+    assert.equal(
+      classify('at_terminal_get_hardware_metrics')?.probe,
+      'builtin',
+      'the hardware probe must stay classified as a built-in probe in dsh/policy.js'
+    )
+    assert.ok(
+      CAPABILITIES.includes('builtin-probe'),
+      'CAPABILITIES must list builtin-probe while the hardware probe bypasses the policy engine'
+    )
 
     // The bundle hands `register()` a ready definition, so the gate pins the
     // two normalized shapes against the real package instead of re-deriving

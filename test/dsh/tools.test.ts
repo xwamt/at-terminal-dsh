@@ -125,6 +125,20 @@ describe('dsh/tools.js createTools', () => {
     );
   });
 
+  it('says out loud that the hardware probe skips the policy engine, and that it is still audited', async () => {
+    // The probe runs a fixed script through the executor, so it never meets
+    // `authorizeRemoteCommand`. A model reading "get hardware metrics" would reasonably
+    // assume the same rules applied; the description is where that assumption is corrected.
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => ({}) });
+    const metrics = tools.find((t: any) => t.name === 'at_terminal_get_hardware_metrics')!;
+    expect(metrics.description).toContain('bypasses the command policy engine');
+    expect(metrics.description).toContain('still audited');
+    // And the capability list a caller uses to decide what it may attempt says the same.
+    const ping = tools.find((t: any) => t.name === 'at_terminal_ping')!;
+    const value = await ping.execute({});
+    expect(value.capabilities).toContain('builtin-probe');
+  });
+
   it('delegates run_remote_command execution with abort signal', async () => {
     const mockService = {
       runRemoteCommand: vi.fn().mockResolvedValue({

@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 
 import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
-import { createGuard, createPreExecute } from './policy.js'
+import { classify, createGuard, createPreExecute } from './policy.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
@@ -86,7 +86,8 @@ const AUDIT_TOOL_PREFIX = 'at_terminal_'
  * The reason code is read from the result's own structure — never by matching message text,
  * which would break the first time an error is reworded: `result.error.info.reasonCode`
  * when a service supplied one, otherwise `runtime_error` for a failed call and `completed`
- * for a successful one.
+ * for a successful one — except for the built-in hardware probe, which never meets the
+ * command policy and is recorded as `builtin_probe` so the trail does not imply it did.
  *
  * A call with no `exec.agent` is a programmatic (PTC) sub-call: it belongs to no session
  * and has no audit trail to join, so it is skipped rather than written into the user's.
@@ -101,7 +102,11 @@ function auditEntryFrom(exec, result) {
   const value = failed ? undefined : result?.value
   const reasonCode =
     (typeof result?.error?.info?.reasonCode === 'string' && result.error.info.reasonCode) ||
-    (failed ? 'runtime_error' : 'completed')
+    // A built-in probe never meets the command policy, so `completed` would read as "the
+    // policy allowed it". The distinction comes from the policy table rather than from the
+    // tool minting a reason code of its own: one table, one answer, and the tool's output
+    // schema stays exactly what the Host validated.
+    (failed ? 'runtime_error' : classify(name)?.probe === 'builtin' ? 'builtin_probe' : 'completed')
 
   /** @type {Record<string, unknown>} */
   const entry = {
