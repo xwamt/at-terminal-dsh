@@ -273,7 +273,9 @@ describe('dsh Host half — wiring', () => {
       'at_terminal_sftp_delete',
       'at_terminal_open_monitor',
       'at_terminal_get_hardware_metrics',
-      'at_terminal_get_agent_execution_status'
+      'at_terminal_get_agent_execution_status',
+      'at_terminal_job_output',
+      'at_terminal_job_kill'
     ]);
     expect([...harness.routes.keys()].sort()).toEqual(
       [
@@ -467,7 +469,7 @@ describe('dsh Host half — wiring', () => {
     const harness = createHarness();
     hostHalf.apply(harness.ctx, {});
 
-    expect(harness.tools).toHaveLength(15);
+    expect(harness.tools).toHaveLength(17);
     const pingTool = harness.tools.find((t) => t.name === 'at_terminal_ping');
     expect(pingTool).toBeDefined();
 

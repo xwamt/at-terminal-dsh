@@ -75,6 +75,8 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 | `open_monitor` | ui | Opens the monitoring HUD for hardware metrics or agent execution status. Answers `opened: false, reason: "no-client"` when no browser panel is connected, because nothing would appear. |
 | `get_hardware_metrics` | read-only | Reads CPU, memory, disk, network throughput, and top processes for an SSH server. Its probe script is built in and bypasses the command policy engine; the call is still audited. |
 | `get_agent_execution_status` | read-only | Reports the live running action, recent audit rows, and active SFTP transfers. `source: file` means the rows came from `agent-audit.jsonl` and outlived a restart; `source: memory` means they did not. |
+| `job_output` | read-only | Reads what a background `run_remote_command` printed since the previous read; `wait` blocks until the job settles or the budget expires. Each call consumes what it returns. |
+| `job_kill` | command | Stops a background job. For an SSH command that means SIGTERM to the remote process group and up to one second proving it is gone, so `killed` means the process ended rather than that a signal was sent. |
 
 ## Safety Behavior
 

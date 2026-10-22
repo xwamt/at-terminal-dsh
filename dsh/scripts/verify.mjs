@@ -737,7 +737,9 @@ if (sandboxSkipReason !== null) {
       at_terminal_sftp_delete: { path: '/tmp/test.txt' },
       at_terminal_open_monitor: { target: 'hardware', serverId: 'srv-1', mode: 'hud' },
       at_terminal_get_hardware_metrics: { serverId: 'srv-1' },
-      at_terminal_get_agent_execution_status: { limit: 5 }
+      at_terminal_get_agent_execution_status: { limit: 5 },
+      at_terminal_job_output: { jobId: 'ssh-command-1', wait: true, timeoutMs: 10 },
+      at_terminal_job_kill: { jobId: 'ssh-command-1', reason: 'verification' }
     }
 
     const terminations = []
@@ -918,8 +920,30 @@ if (sandboxSkipReason !== null) {
       }
     }
 
-    const definitions = createTools({ version: manifest.version, resolveAgentService: () => mockService })
-    assert.equal(definitions.length, 15, 'bundle must contribute exactly 15 tools')
+    // The job-control tools need a registry to answer at all, so the loop gets one. The
+    // degradation path (no registry) is exercised separately below, on its own tool set.
+    const loopJobs = {
+      read(id) {
+        return {
+          chunks: [{ text: "hello from the job\n", channel: "stdout" }],
+          lossy: false,
+          job: { id, status: "completed", detail: "exit 0 (12ms)" }
+        }
+      },
+      kill() {
+        return "requested"
+      },
+      get(id) {
+        return { id, status: "stopping", detail: "verification" }
+      },
+      async wait() {}
+    }
+    const definitions = createTools({
+      version: manifest.version,
+      resolveAgentService: () => mockService,
+      resolveJobs: () => loopJobs
+    })
+    assert.equal(definitions.length, 17, 'bundle must contribute exactly 17 tools')
 
     // `register()` accepts a missing `timeoutMs` (it only rejects a non-positive one), so a
     // tool that forgot to declare a bound hangs until the user cancels. Declaring it on every
@@ -981,7 +1005,13 @@ if (sandboxSkipReason !== null) {
 
       // execute() must return a value its own declared schema accepts, through
       // the real validator rather than a hand-rolled walker.
-      const value = await definition.execute(sample, { signal: undefined })
+      // Every real call arrives with an agent attached; the job tools need one to fence
+      // ownership by, and the others ignore it.
+      const value = await definition.execute(sample, {
+        signal: undefined,
+        agent: { id: 'agent-1' },
+        callId: 'call-1'
+      })
       const outputErrors = validateJsonSchemaValue(definition.output.schema, value, '')
       assert.deepEqual(
         outputErrors,
@@ -1025,7 +1055,11 @@ if (sandboxSkipReason !== null) {
 
     // Without a job registry the flag must degrade to a foreground run with a readable
     // reason — the plan's DoD, and the reason a preset without `dsh-tool-jobs` still works.
-    const degraded = await runTool.execute(
+    // A tool set with no registry at all: the degradation path, not the happy path.
+    const withoutRegistry = createTools({ version: manifest.version, resolveAgentService: () => mockService }).find(
+      (candidate) => candidate.name === 'at_terminal_run_remote_command'
+    )
+    const degraded = await withoutRegistry.execute(
       { command: 'sleep 60', serverId: 'srv-1', run_in_background: true },
       { signal: undefined }
     )

@@ -111,6 +111,8 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 | `at_terminal_open_monitor` | UI | Open the monitoring HUD; answers `opened: false, reason: "no-client"` when no panel is connected |
 | `at_terminal_get_hardware_metrics` | Metrics | Read CPU, memory, disk, network, and top processes for an SSH server |
 | `at_terminal_get_agent_execution_status` | Audit | Report the live action, recent audits (with `source: file \| memory`), and active transfers |
+| `at_terminal_job_output` | Reads what a background command has printed since the last read, with `wait` to block until it settles or the budget expires. Each call consumes what it returns |
+| `at_terminal_job_kill` | Stops a background command: SIGTERM to the remote process group, then up to a second proving it is gone, so a reported kill means the process ended |
 
 ---
 

@@ -42,7 +42,7 @@ describe('dsh/tools.js createTools', () => {
       resolveAgentService: () => mockService
     });
 
-    expect(tools.length).toBe(15);
+    expect(tools.length).toBe(17);
     const names = tools.map((t: any) => t.name);
     expect(names).toEqual([
       'at_terminal_ping',
@@ -59,7 +59,9 @@ describe('dsh/tools.js createTools', () => {
       'at_terminal_sftp_delete',
       'at_terminal_open_monitor',
       'at_terminal_get_hardware_metrics',
-      'at_terminal_get_agent_execution_status'
+      'at_terminal_get_agent_execution_status',
+      'at_terminal_job_output',
+      'at_terminal_job_kill'
     ]);
 
     // Every tool declares a bound, because the Host's timeout policy is what enforces it and
@@ -77,7 +79,9 @@ describe('dsh/tools.js createTools', () => {
       at_terminal_sftp_read_file: 20_000,
       at_terminal_sftp_list_directory: 30_000,
       at_terminal_sftp_stat_path: 10_000,
-      at_terminal_get_hardware_metrics: 8_000
+      at_terminal_get_hardware_metrics: 8_000,
+      at_terminal_job_output: 90_000,
+      at_terminal_job_kill: 60_000
     });
   });
 
@@ -727,3 +731,104 @@ describe('dsh/tools.js createTools', () => {
 });
 
 
+describe('job control', () => {
+  /** The registry as the tool sees it: a delta read, a kill, and a projection. */
+  function fakeJobs(overrides: Record<string, unknown> = {}) {
+    const calls: Array<[string, ...unknown[]]> = [];
+    return {
+      calls,
+      read: vi.fn((id: string, caller: string) => {
+        calls.push(['read', id, caller]);
+        return {
+          chunks: [{ text: 'line one\n' }, { text: 'line two\n' }],
+          lossy: false,
+          job: { id, status: 'running' }
+        };
+      }),
+      kill: vi.fn((id: string, caller: string, reason: string) => {
+        calls.push(['kill', id, caller, reason]);
+        return 'requested';
+      }),
+      get: vi.fn((id: string) => ({ id, status: 'stopping', detail: 'requested by the agent' })),
+      wait: vi.fn(async () => undefined),
+      ...overrides
+    };
+  }
+
+  const JOBS = { agent: { id: 'agent-1' }, signal: undefined };
+
+  it('returns what arrived since the last read, under the job status', async () => {
+    const jobs = fakeJobs();
+    const tool = createTools({ version: '0.1.0', resolveJobs: () => jobs }).find(
+      (t: any) => t.name === 'at_terminal_job_output'
+    )!;
+
+    const value = await tool.execute({ jobId: 'ssh-command-1' }, JOBS);
+
+    expect(value).toEqual({
+      jobId: 'ssh-command-1',
+      status: 'running',
+      text: 'line one\nline two\n',
+      lossy: false,
+      waitTimedOut: false
+    });
+    // The caller id must be the agent id: the registry fences access by it.
+    expect(jobs.read).toHaveBeenCalledWith('ssh-command-1', 'agent-1');
+    // No wait unless asked: polling must not block.
+    expect(jobs.wait).not.toHaveBeenCalled();
+  });
+
+  it('treats an expired wait as a live job, not as an error', async () => {
+    const jobs = fakeJobs({ wait: vi.fn(async () => Promise.reject(new Error('wait timed out'))) });
+    const tool = createTools({ version: '0.1.0', resolveJobs: () => jobs }).find(
+      (t: any) => t.name === 'at_terminal_job_output'
+    )!;
+
+    const value = await tool.execute({ jobId: 'ssh-command-1', wait: true, timeoutMs: 5 }, JOBS);
+
+    expect(value.waitTimedOut).toBe(true);
+    // Whatever arrived before the deadline is still returned.
+    expect(value.text).toBe('line one\nline two\n');
+  });
+
+  it('names the missing piece instead of failing obscurely', async () => {
+    const noJobs = createTools({ version: '0.1.0' }).find((t: any) => t.name === 'at_terminal_job_kill')!;
+    await expect(noJobs.execute({ jobId: 'x' }, JOBS)).rejects.toThrow(/jobs service/);
+
+    const jobs = fakeJobs();
+    const tool = createTools({ version: '0.1.0', resolveJobs: () => jobs }).find(
+      (t: any) => t.name === 'at_terminal_job_kill'
+    )!;
+    // Without an agent there is no owner to fence by; reaching for a default would let one
+    // session kill another's job.
+    await expect(tool.execute({ jobId: 'x' }, { signal: undefined })).rejects.toThrow(/initiating agent/);
+    expect(jobs.kill).not.toHaveBeenCalled();
+  });
+
+  it('reports a kill it requested, and does not pretend an already-finished job failed', async () => {
+    const requested = fakeJobs();
+    const kill = createTools({ version: '0.1.0', resolveJobs: () => requested }).find(
+      (t: any) => t.name === 'at_terminal_job_kill'
+    )!;
+
+    expect(await kill.execute({ jobId: 'ssh-command-1', reason: 'verification' }, JOBS)).toEqual({
+      jobId: 'ssh-command-1',
+      outcome: 'requested',
+      status: 'stopping',
+      detail: 'requested by the agent'
+    });
+    expect(requested.kill).toHaveBeenCalledWith('ssh-command-1', 'agent-1', 'verification');
+
+    const finished = fakeJobs({
+      kill: vi.fn(() => 'already-finished'),
+      get: vi.fn((id: string) => ({ id, status: 'completed' }))
+    });
+    const kill2 = createTools({ version: '0.1.0', resolveJobs: () => finished }).find(
+      (t: any) => t.name === 'at_terminal_job_kill'
+    )!;
+    expect(await kill2.execute({ jobId: 'ssh-command-1' }, JOBS)).toMatchObject({
+      outcome: 'already-finished',
+      status: 'completed'
+    });
+  });
+});

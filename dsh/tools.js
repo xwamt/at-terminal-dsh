@@ -64,7 +64,11 @@ export const CAPABILITIES = Object.freeze([
   // turn. Announced separately from `remote-command-execution` because it depends on the
   // composition, not on this bundle: a preset without `dsh-tool-jobs` still runs commands,
   // and a caller reading this list needs to know which of the two it is in.
-  'background-jobs'
+  'background-jobs',
+  // The pair that reads and stops those jobs. Listed separately because a composition can
+  // have the registry without them — that is exactly what the desktop build does — and a
+  // caller deciding whether to background a command needs to know which case it is in.
+  'job-control'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
@@ -1416,6 +1420,178 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
   }
 }
 
+/**
+ * The owner id a job call is fenced by.
+ *
+ * `dsh-jobs-local` resolves owners with `agents.get(spec.owner)` and compares protected
+ * jobs against the caller id, so this must be the **agent** id. A call without one cannot
+ * be authorized at all, which is a better answer than reaching for a default that would
+ * match somebody else's jobs.
+ */
+function callerAgentId(toolName, exec) {
+  const id = exec?.agent?.id
+  if (typeof id !== 'string' || id === '') {
+    throw new Error(`${toolName} needs the initiating agent: background jobs are owned by one.`)
+  }
+  return id
+}
+
+/**
+ * Read the output a background job has produced since the previous read.
+ *
+ * This exists because the composition the desktop app builds has `tool-jobs` **disabled**
+ * (`dsh-web-app/cordis.patch.yml`), which leaves the registry running and the model with no
+ * way to collect what it started. The names are prefixed rather than mirroring the official
+ * `job_output` so a composition that *does* load `tool-jobs` cannot collide with it.
+ *
+ * The read is a *delta*: `jobs.read()` advances the job's own model cursor, exactly as the
+ * official control does, so polling twice does not return the same bytes twice.
+ */
+export function createJobOutputTool({ resolveJobs } = {}) {
+  return {
+    name: 'at_terminal_job_output',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this
+    // into TOOL_TIMEOUT. Long enough to cover a `wait` and the read that follows it.
+    timeoutMs: 90000,
+    description:
+      'Read what a background AT Terminal command has printed since the last read. Pass wait to block until the job finishes or a timeout elapses. Returns the new text plus the job status. Each call consumes what it returns.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        jobId: { type: 'string', description: 'Job id returned by at_terminal_run_remote_command.' },
+        wait: { type: 'boolean', description: 'Block until the job settles or timeoutMs elapses. Default false.' },
+        timeoutMs: { type: 'integer', description: 'How long to wait when wait is true (default 30000).' }
+      },
+      required: ['jobId']
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          jobId: { type: 'string' },
+          status: { type: 'string', description: 'running, stopping, completed, killed or failed.' },
+          text: { type: 'string' },
+          // True when the ring had already dropped bytes this reader never saw, so a caller
+          // cannot mistake a gap for the whole story.
+          lossy: { type: 'boolean' },
+          // `wait` is best-effort: a job still running when the wait expires is not an
+          // error, and reporting it as one would make a healthy job look broken.
+          waitTimedOut: { type: 'boolean' }
+        }
+      },
+      render(_args, val) {
+        const note = val.waitTimedOut ? ' (wait timed out; the job is still running)' : ''
+        return [
+          {
+            type: 'text',
+            text: `[${val.status}] ${val.jobId}${note}${val.lossy ? ' (output ringed: earlier bytes were dropped)' : ''}\n\`\`\`\n${val.text}\n\`\`\``
+          }
+        ]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Background job read was aborted.')
+      const input = argsOf('at_terminal_job_output', args)
+      requireNonEmptyString('at_terminal_job_output', input, 'jobId')
+      const jobs = resolveJobs?.()
+      if (!jobs || typeof jobs.read !== 'function') {
+        throw new Error(
+          'at_terminal_job_output needs the jobs service (@deepseek-ai/dsh-jobs); this composition does not include it.'
+        )
+      }
+      const caller = callerAgentId('at_terminal_job_output', exec)
+      let waitTimedOut = false
+      if (input.wait === true) {
+        const budget =
+          Number.isInteger(input.timeoutMs) && input.timeoutMs > 0 ? Math.min(input.timeoutMs, 600000) : 30000
+        try {
+          await jobs.wait(input.jobId, budget, caller, exec?.signal)
+        } catch {
+          // A wait that expires, or a signal that fires, leaves the job running. The read
+          // below still returns whatever arrived, which is more useful than an error.
+          waitTimedOut = true
+        }
+      }
+      const read = jobs.read(input.jobId, caller)
+      const chunks = Array.isArray(read?.chunks) ? read.chunks : []
+      const body = chunks.map((chunk) => (typeof chunk?.text === 'string' ? chunk.text : '')).join('')
+      return {
+        jobId: input.jobId,
+        status: String(read?.job?.status ?? 'unknown'),
+        text: typeof read?.result === 'string' ? `${body}${read.result}` : body,
+        lossy: read?.lossy === true,
+        waitTimedOut
+      }
+    }
+  }
+}
+
+/**
+ * Stop a background job — which for an SSH command means signalling the remote process
+ * group, not closing a local channel.
+ */
+export function createJobKillTool({ resolveJobs } = {}) {
+  return {
+    name: 'at_terminal_job_kill',
+    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this
+    // into TOOL_TIMEOUT. The kill itself is one SSH round trip with its own 15 s budget.
+    timeoutMs: 60000,
+    description:
+      'Stop a background AT Terminal command. The remote process group is signalled and its disappearance waits up to a second, so a reported kill means the process is gone rather than that a signal was sent.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        jobId: { type: 'string', description: 'Job id returned by at_terminal_run_remote_command.' },
+        reason: { type: 'string', description: 'Optional reason, recorded with the job.' }
+      },
+      required: ['jobId']
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          jobId: { type: 'string' },
+          // `already-finished` is not an error: the caller asked to stop something that had
+          // stopped, and pretending it failed would invite a pointless retry.
+          outcome: { type: 'string', enum: ['requested', 'already-finished'] },
+          status: { type: 'string' },
+          detail: { type: 'string' }
+        }
+      },
+      render(_args, val) {
+        const detail = val.detail === undefined ? '' : ` — ${val.detail}`
+        return [{ type: 'text', text: `${val.jobId}: kill ${val.outcome}, now ${val.status}${detail}` }]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Background job kill was aborted.')
+      const input = argsOf('at_terminal_job_kill', args)
+      requireNonEmptyString('at_terminal_job_kill', input, 'jobId')
+      const jobs = resolveJobs?.()
+      if (!jobs || typeof jobs.kill !== 'function') {
+        throw new Error(
+          'at_terminal_job_kill needs the jobs service (@deepseek-ai/dsh-jobs); this composition does not include it.'
+        )
+      }
+      const caller = callerAgentId('at_terminal_job_kill', exec)
+      const reason = typeof input.reason === 'string' && input.reason !== '' ? input.reason : 'requested by the agent'
+      const outcome = jobs.kill(input.jobId, caller, reason)
+      const job = typeof jobs.get === 'function' ? jobs.get(input.jobId, caller) : undefined
+      const detail = typeof job?.detail === 'string' ? job.detail : undefined
+      return {
+        jobId: input.jobId,
+        outcome: outcome === 'already-finished' ? 'already-finished' : 'requested',
+        status: String(job?.status ?? (outcome === 'already-finished' ? 'settled' : 'stopping')),
+        ...(detail === undefined ? {} : { detail })
+      }
+    }
+  }
+}
+
 /** Every tool this bundle contributes, in registration order. */
 export function createTools({
   version,
@@ -1459,7 +1635,11 @@ export function createTools({
     createSftpDeleteTool(shared),
     createOpenMonitorTool(shared),
     createGetHardwareMetricsTool(shared),
-    createGetAgentExecutionStatusTool(shared)
+    createGetAgentExecutionStatusTool(shared),
+    // Last, and only reachable after a background command exists: the pair a caller needs
+    // to collect and stop what `run_in_background` started.
+    createJobOutputTool(shared),
+    createJobKillTool(shared)
   ]
 }
 

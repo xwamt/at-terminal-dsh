@@ -28,7 +28,7 @@ variants.
 | `policy.js` | The classification table, the `ctx.tools.guard` and the `tools/pre-execute` stage. Every tool needs a row (an unclassified one is **denied**), sensitive-path deletes are refused outright, and command authorization is delegated to `authorizeCommand()` so the gate and the dialog cannot disagree. Imports nothing: the predicate and the authorizer are injected |
 | `settings.js` | Settings schema, constraints and defaults. Also free of `@deepseek-ai/*` imports; the schema factory takes the schemastery instance as an argument |
 | `spill.js` | Puts a result too big to show into the Host's `ctx.spillStore` and keeps the head, the tail and the account of what fell between them inline. The store is read per call, so a preset that composes it later still works; its absence degrades to truncation, never to an error |
-| `jobs.js` | The job **producer** for `run_remote_command`: it hands `ctx.jobs.start()` a spec whose cancel signals the **remote** process group. Registers no tool — `job_output` / `job_list` / `job_kill` already belong to `@deepseek-ai/dsh-tool-jobs`, and check 5 fails on a name collision. `pidfileFor()` comes from `host.bundle.js`, so the pidfile naming has one definition |
+| `jobs.js` | The job **producer** for `run_remote_command`: it hands `ctx.jobs.start()` a spec whose cancel signals the **remote** process group. `pidfileFor()` and `backgroundScript()` come from `host.bundle.js`, so the pidfile naming and the pid write have one definition each. The two `at_terminal_job_*` tools in `tools.js` are the matching consumers: the desktop composition ships `tool-jobs` **disabled** (`dsh-web-app/cordis.patch.yml`), which leaves the registry running and the model with no way to read or stop what it started |
 | `host.bundle.js` | **Built** (committed): the TypeScript domain services (`src/platform/dsh/entry.ts`) compiled for the Host half |
 | `client.js` | **Built** (committed): the browser half — `src/platform/dsh/client/**` bundled with xterm and the reused webview assets into one ModuleLoader factory |
 | `esbuild.dsh.mjs` | Builds both artifacts; `--check` (wired into `verify:dsh`) fails when either is stale |
@@ -70,7 +70,10 @@ node dsh/scripts/verify.mjs
    boolean parameter, a call without a job registry must degrade to foreground
    with a `notice`, and an accepted call must hand `start()` the **agent** id as
    `owner` (a session id does not resolve through `agents.get()`) and reach the
-   service's remote kill on cancel.
+   service's remote kill on cancel. The bytes the host receives are asserted too,
+   not just the spec: the command must begin with the pid write, because a version
+   that named the pidfile and killed it but never wrote it passed every
+   "start() was called" test on the shelf and failed on the first real host.
 6. **settings** — the exported `Config` schema is built with the **installed**
    `@deepseek-ai/schemastery`. It must describe exactly the six documented
    fields, resolve the documented defaults through real `.get()` accessors,

@@ -57,7 +57,14 @@ export const TOOL_POLICY = Object.freeze({
   at_terminal_sftp_delete: Object.freeze({ risk: 'destructive', guard: 'refuse-sensitive-path' }),
   at_terminal_open_monitor: Object.freeze({ risk: 'ui' }),
   at_terminal_get_hardware_metrics: Object.freeze({ risk: 'read', probe: 'builtin' }),
-  at_terminal_get_agent_execution_status: Object.freeze({ risk: 'read' })
+  at_terminal_get_agent_execution_status: Object.freeze({ risk: 'read' }),
+  // Job control is not a command and never reaches a host: `read` stops the output it
+  // collects, and `disturb` names what `job_kill` really does. It is graded `command`
+  // because it can end a process the user started on purpose — but the prompt belongs to
+  // whoever started the job, not to this call: killing a job you already have is the
+  // undo, and asking again for it would teach the user to approve without reading.
+  at_terminal_job_output: Object.freeze({ risk: 'read' }),
+  at_terminal_job_kill: Object.freeze({ risk: 'command', jobControl: true })
 })
 
 /** The row for `name`, or `undefined` when this tool is not ours or is unclassified. */
