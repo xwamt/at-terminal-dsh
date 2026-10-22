@@ -251,9 +251,7 @@ All commands are grouped under the `AT Terminal` category in the command palette
 - `sshManager.scrollback`: terminal scrollback lines.
 - `sshManager.semanticHighlight`: enables frontend semantic highlighting for plain SSH output without ANSI colors.
 - `sshManager.idleDisconnectMinutes`: disconnect idle SSH terminals after this many minutes. `0` disables idle disconnect.
-- `sshManager.keepAliveInterval`: SSH keep-alive interval in seconds. `0` disables keep-alive.
 - `sshManager.zebraStripes`: render alternating row backgrounds in the SSH terminal. Off by default.
-- `sshManager.sessionLogDirectory`: directory for SSH session output logs. Empty disables session logging.
 
 ## Development
 

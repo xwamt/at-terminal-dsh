@@ -32,9 +32,23 @@
 export const SETTINGS_SECTION_ID = 'at-terminal'
 
 /**
- * The eight `sshManager.*` contributions from the extension manifest, as the
- * single source of truth for key, type, constraints and default. `vscodeKey`
- * records the original contribution so the two surfaces can be diffed.
+ * The `sshManager.*` contributions this host renders, as the single source of truth for
+ * key, type, constraints and default. `vscodeKey` records the original contribution so the
+ * two surfaces can be diffed.
+ *
+ * Two fields were **removed** rather than kept as decoration, because a form input that no
+ * code reads is worse than a missing one — it invites the user to change something and take
+ * the silence as agreement:
+ *
+ * - `sessionLogDirectory` needed a whole terminal-output-to-disk pipeline (rotation,
+ *   redaction, a path the user can find) that does not exist here; the field was the only
+ *   part of that feature that had ever been written.
+ * - `keepAliveInterval` had no insertion point: `SshConnectionConfig` builds keep-alive from
+ *   the **per-server** `keepAliveInterval`, which every server already carries (schema
+ *   default 30), so a global value could only shadow an explicit per-server one.
+ *
+ * An old profile that still carries either key keeps starting — schemastery preserves
+ * unknown keys and `readSettings` ignores them (asserted in `dsh/scripts/verify.mjs`).
  */
 export const SETTINGS_FIELDS = Object.freeze([
   Object.freeze({
@@ -79,28 +93,13 @@ export const SETTINGS_FIELDS = Object.freeze([
     default: 60,
     description: 'Disconnect an idle SSH session after this many minutes. 0 disables the timeout.'
   }),
-  Object.freeze({
-    key: 'keepAliveInterval',
-    vscodeKey: 'sshManager.keepAliveInterval',
-    type: 'integer',
-    min: 0,
-    max: 3600,
-    default: 30,
-    description: 'Send an SSH keep-alive packet every this many seconds. 0 disables keep-alive.'
-  }),
+
   Object.freeze({
     key: 'zebraStripes',
     vscodeKey: 'sshManager.zebraStripes',
     type: 'boolean',
     default: false,
     description: 'Alternate row backgrounds in asset and SFTP lists.'
-  }),
-  Object.freeze({
-    key: 'sessionLogDirectory',
-    vscodeKey: 'sshManager.sessionLogDirectory',
-    type: 'string',
-    default: '',
-    description: 'Directory for session logs. Empty disables session logging.'
   })
 ])
 

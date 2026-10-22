@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error plain-JS host module
+import { SETTINGS_FIELDS } from '../../../dsh/settings.js';
 import { createDshConfigReader } from '../../../src/platform/dsh/config';
 import type { DshResolvedSettings, DshSettingAccessor } from '../../../src/platform/dsh/host';
 import { resolveTerminalSettings } from '../../../src/terminal/terminalSettings';
@@ -30,7 +32,7 @@ describe('createDshConfigReader', () => {
       settingsOf({ scrollback: 25000, terminalFontSize: 18, semanticHighlight: false })
     ).getSection('sshManager');
 
-    // The exact eight reads `resolveTerminalSettings` performs (src/terminal/terminalSettings.ts:30-37).
+    // The exact reads `resolveTerminalSettings` performs, one per field it resolves.
     expect(section.get('scrollback', 10000)).toBe(25000);
     expect(section.get('terminalFontSize', 14)).toBe(18);
     expect(section.get('semanticHighlight', true)).toBe(false);
@@ -39,7 +41,6 @@ describe('createDshConfigReader', () => {
     );
     expect(section.get('idleDisconnectMinutes', 60)).toBe(60);
     expect(section.get('zebraStripes', false)).toBe(false);
-    expect(section.get('sessionLogDirectory', '')).toBe('');
 
     // And the same section through the consumer itself: the resolved shape the terminal
     // is built from must match the VS Code path field for field.
@@ -50,21 +51,19 @@ describe('createDshConfigReader', () => {
       semanticHighlight: false,
       idleDisconnectMinutes: 60,
       zebraStripes: false,
-      sessionLogDirectory: '',
       encoding: 'utf-8'
     });
   });
 
   it('a configured false / 0 is a value, not an absent setting', () => {
     const section = createDshConfigReader(
-      settingsOf({ semanticHighlight: false, idleDisconnectMinutes: 0, sessionLogDirectory: '' })
+      settingsOf({ semanticHighlight: false, idleDisconnectMinutes: 0 })
     ).getSection('sshManager');
 
     // `false` and `0` must survive the `undefined` check; returning the default for them
     // would make the settings form's own toggles impossible to persist.
     expect(section.get('semanticHighlight', true)).toBe(false);
     expect(section.get('idleDisconnectMinutes', 60)).toBe(0);
-    expect(section.get('sessionLogDirectory', '/var/log')).toBe('');
   });
 
   it('an accessor whose get() resolves to undefined falls back to the default', () => {
@@ -108,5 +107,17 @@ describe('createDshConfigReader', () => {
     expect(() => reader.getSection('sftp')).toThrow(/sftp/);
     expect(() => reader.getSection('sshmanager')).toThrow(/sshmanager/);
     expect(() => reader.getSection('')).toThrow(/unsupported configuration section/);
+  });
+
+  it('renders no settings field that nothing reads', () => {
+    // Three fields had drifted into "editable but inert". Two are gone rather than kept as
+    // decoration: a form input that no code reads takes a change and answers with silence.
+    // `keepAliveInterval` is the one that hid from a substring search, because the same name
+    // is also the per-server field in src/config/schema.ts.
+    const keys = SETTINGS_FIELDS.map((field: { key: string }) => field.key);
+    expect(keys).not.toContain('sessionLogDirectory');
+    expect(keys).not.toContain('keepAliveInterval');
+    // The one that stayed got wired instead: SshSession applies it (test/ssh/SshSession.idle.test.ts).
+    expect(keys).toContain('idleDisconnectMinutes');
   });
 });

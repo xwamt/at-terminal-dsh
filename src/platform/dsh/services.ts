@@ -6,6 +6,7 @@ import type { Platform } from '../../core/ports';
 import { HostKeyStore } from '../../ssh/HostKeyStore';
 import type { HostKeyVerifier } from '../../ssh/SshConnectionConfig';
 import { SshSession, type SshSessionStatus } from '../../ssh/SshSession';
+import { resolveTerminalSettings } from '../../terminal/terminalSettings';
 import { classifySshFailure } from './sshFailure';
 
 /**
@@ -441,7 +442,12 @@ export function createDshTerminalApi({ platform, observer }: DshTerminalApiOptio
         // Keyboard-interactive authentication needs a prompt, and this host has no dialog.
         // Leaving it undefined makes such an attempt fail cleanly instead of hanging on a
         // prompt nobody can see — the same choice the platform's port makes.
-        undefined
+        undefined,
+        // `idleDisconnectMinutes` was a settings field with no consumer: it reached
+        // `TerminalSettings` and stopped there, so the form offered a switch that could not
+        // do anything. Read through the same `resolveTerminalSettings` the other terminal
+        // settings use, so there is one answer to "what did the user configure".
+        { idleDisconnectMinutes: resolveTerminalSettings(platform.config.getSection('sshManager')).idleDisconnectMinutes }
       );
 
       live.add(session);

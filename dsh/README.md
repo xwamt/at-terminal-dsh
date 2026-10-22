@@ -65,7 +65,7 @@ node dsh/scripts/verify.mjs
    accepted by the real `validateJsonSchemaValue`, and the renderer is
    exercised.
 6. **settings** — the exported `Config` schema is built with the **installed**
-   `@deepseek-ai/schemastery`. It must describe exactly the eight documented
+   `@deepseek-ai/schemastery`. It must describe exactly the six documented
    fields, resolve the documented defaults through real `.get()` accessors,
    mark every field `.volatile()` after a JSON round-trip (the projection
    `dsh-settings` performs), and **reject** eleven illegal values — both on
@@ -242,16 +242,19 @@ their own page.
 | `scrollback` | `z.natural().min(100).max(1000000)` | `"abc"`, `10` |
 | `semanticHighlight` | `z.boolean()` | `1` |
 | `idleDisconnectMinutes` | `z.natural().max(10080)` (0 disables) | `-5` |
-| `keepAliveInterval` | `z.natural().max(3600)` (0 disables) | `1.5` |
 | `zebraStripes` | `z.boolean()` | `"yes"` |
-| `sessionLogDirectory` | `z.string()` (empty disables) | `42` |
 
 Every field also carries `.default(...)` and `.volatile()`; the defaults and the
 field table live in `settings.js`, which is the single source of truth. Check 5
 enforces both directions — the illegal values above must be rejected and the
 inclusive boundaries (`terminalFontSize` 8 and 200, `scrollback` 100,
-`idleDisconnectMinutes` 0, `keepAliveInterval` 0, `sessionLogDirectory` `""`)
-must stay accepted.
+`idleDisconnectMinutes` 0) must stay accepted.
+
+Check 5 also fails when a field is rendered but **nothing reads it** — and that rule is how
+`sessionLogDirectory` and `keepAliveInterval` were found: both sat in the form, looked
+configurable, and changed nothing. They are gone rather than deprecated, because a
+declared-but-inert field is worse than an absent one. A profile written before the removal
+still starts; schemastery keeps the unknown key and `readSettings` ignores it.
 
 ## Install (Desktop)
 

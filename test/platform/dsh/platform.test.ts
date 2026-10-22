@@ -44,7 +44,6 @@ async function assemble(overrides: { domain?: MemoryStorageDomain } = {}) {
       scrollback: 20_000,
       semanticHighlight: false,
       idleDisconnectMinutes: 0,
-      sessionLogDirectory: '',
       terminalFontFamily: 'Menlo, monospace',
       zebraStripes: true
     }),

@@ -23,6 +23,18 @@ export interface SshSessionEvents {
   error(error: unknown): void;
 }
 
+export interface SshSessionOptions {
+  /**
+   * Disconnect after this many minutes with no traffic **in either direction**, where
+   * traffic means remote output or a keystroke. `0` disables the timeout.
+   *
+   * Counting only input would kill a `tail -f`: the user typed nothing for an hour and the
+   * session is demonstrably alive. Counting output too is what makes the setting mean
+   * "nobody is using this" rather than "nobody is typing".
+   */
+  readonly idleDisconnectMinutes?: number;
+}
+
 export class SshSession {
   private client: Client | undefined;
   private shell: ClientChannel | undefined;
@@ -30,14 +42,21 @@ export class SshSession {
   private cols = 80;
   private connected = false;
   private connectionHandle: SshConnectionHandle | undefined;
+  /** When the last byte moved in either direction; `0` until the shell is up. */
+  private lastActivityAt = 0;
+  private idleTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly idleDisconnectMinutes: number;
 
   constructor(
     private readonly server: ServerConfig,
     private readonly configManager: ConfigManager,
     private readonly events: SshSessionEvents,
     private readonly hostKeyVerifier: HostKeyVerifier,
-    private readonly keyboardInteractivePrompt?: KeyboardInteractivePrompt
-  ) {}
+    private readonly keyboardInteractivePrompt?: KeyboardInteractivePrompt,
+    options: SshSessionOptions = {}
+  ) {
+    this.idleDisconnectMinutes = options.idleDisconnectMinutes ?? 0;
+  }
 
   /**
    * Keep a **permanent** `error` listener on an ssh2 client for its whole life.
@@ -107,13 +126,17 @@ export class SshSession {
     }
 
     this.shell.on('data', (data: Buffer) => {
+      this.lastActivityAt = Date.now();
       this.events.output(data);
     });
     this.shell.on('close', () => {
       this.connected = false;
+      this.stopIdleWatch();
       this.events.status({ state: 'disconnected', text: t('Disconnected') });
     });
     this.connected = true;
+    this.lastActivityAt = Date.now();
+    this.startIdleWatch();
     this.events.status({ state: 'connected', text: t('Connected') });
   }
 
@@ -123,6 +146,9 @@ export class SshSession {
   }
 
   write(data: string): void {
+    // A keystroke is activity even when the remote side stays silent, so typing into a
+    // prompt that has not answered yet does not count as idleness.
+    this.lastActivityAt = Date.now();
     this.shell?.write(data);
   }
 
@@ -169,6 +195,7 @@ export class SshSession {
   }
 
   dispose(): void {
+    this.stopIdleWatch();
     this.shell?.end();
     this.client?.end();
     this.connectionHandle?.dispose();
@@ -176,6 +203,39 @@ export class SshSession {
     this.client = undefined;
     this.connectionHandle = undefined;
     this.connected = false;
+  }
+
+  /**
+   * Tick no faster than the deadline itself, and never faster than every 30 s.
+   *
+   * `unref()` matters as much as the interval: this timer belongs to one session, and a
+   * timer that keeps the process alive after every terminal closed would be a leak with a
+   * plausible-looking cause. The status is emitted *before* disposal so the panel shows why
+   * the session went away instead of just going blank.
+   */
+  private startIdleWatch(): void {
+    this.stopIdleWatch();
+    const limitMinutes = this.idleDisconnectMinutes;
+    if (!(limitMinutes > 0)) return;
+    const limitMs = limitMinutes * 60_000;
+    this.idleTimer = setInterval(() => {
+      if (!this.connected) return;
+      if (Date.now() - this.lastActivityAt < limitMs) return;
+      this.events.status({
+        state: 'disconnected',
+        text: t('Disconnected after {minutes} min of inactivity', { minutes: String(limitMinutes) })
+      });
+      this.dispose();
+    }, Math.min(limitMs, 30_000));
+    // `setInterval` returns a `Timeout` in Node and a number in a browser; only the former
+    // has `unref`, and this class runs on both sides of the port.
+    (this.idleTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private stopIdleWatch(): void {
+    if (this.idleTimer === undefined) return;
+    clearInterval(this.idleTimer);
+    this.idleTimer = undefined;
   }
 
   private async buildConnectionHandle(): Promise<SshConnectionHandle> {

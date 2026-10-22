@@ -12,7 +12,6 @@ export interface TerminalSettings {
   semanticHighlight: boolean;
   idleDisconnectMinutes: number;
   zebraStripes: boolean;
-  sessionLogDirectory: string;
   encoding: string;
 }
 
@@ -33,7 +32,6 @@ export function resolveTerminalSettings(
     semanticHighlight: configuration.get('semanticHighlight', true),
     idleDisconnectMinutes: configuration.get('idleDisconnectMinutes', 60),
     zebraStripes: configuration.get('zebraStripes', false),
-    sessionLogDirectory: configuration.get('sessionLogDirectory', ''),
     encoding: server?.encoding ?? 'utf-8'
   };
 }

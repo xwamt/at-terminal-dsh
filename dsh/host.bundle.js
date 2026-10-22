@@ -15809,12 +15809,13 @@ import { basename as basename2 } from "node:path";
 
 // src/ssh/SshSession.ts
 var SshSession = class {
-  constructor(server, configManager, events, hostKeyVerifier, keyboardInteractivePrompt) {
+  constructor(server, configManager, events, hostKeyVerifier, keyboardInteractivePrompt, options = {}) {
     this.server = server;
     this.configManager = configManager;
     this.events = events;
     this.hostKeyVerifier = hostKeyVerifier;
     this.keyboardInteractivePrompt = keyboardInteractivePrompt;
+    this.idleDisconnectMinutes = options.idleDisconnectMinutes ?? 0;
   }
   client;
   shell;
@@ -15822,6 +15823,10 @@ var SshSession = class {
   cols = 80;
   connected = !1;
   connectionHandle;
+  /** When the last byte moved in either direction; `0` until the shell is up. */
+  lastActivityAt = 0;
+  idleTimer;
+  idleDisconnectMinutes;
   /**
    * Keep a **permanent** `error` listener on an ssh2 client for its whole life.
    *
@@ -15876,16 +15881,16 @@ var SshSession = class {
       throw client.end(), handle2.dispose(), this.connectionHandle = void 0, error;
     }
     this.shell.on("data", (data) => {
-      this.events.output(data);
+      this.lastActivityAt = Date.now(), this.events.output(data);
     }), this.shell.on("close", () => {
-      this.connected = !1, this.events.status({ state: "disconnected", text: t("Disconnected") });
-    }), this.connected = !0, this.events.status({ state: "connected", text: t("Connected") });
+      this.connected = !1, this.stopIdleWatch(), this.events.status({ state: "disconnected", text: t("Disconnected") });
+    }), this.connected = !0, this.lastActivityAt = Date.now(), this.startIdleWatch(), this.events.status({ state: "connected", text: t("Connected") });
   }
   async reconnect() {
     this.dispose(), await this.connect();
   }
   write(data) {
-    this.shell?.write(data);
+    this.lastActivityAt = Date.now(), this.shell?.write(data);
   }
   /**
    * Flow-control hooks for the terminal host's high-water mark: pausing the shell
@@ -15920,7 +15925,30 @@ var SshSession = class {
     return this.connected;
   }
   dispose() {
-    this.shell?.end(), this.client?.end(), this.connectionHandle?.dispose(), this.shell = void 0, this.client = void 0, this.connectionHandle = void 0, this.connected = !1;
+    this.stopIdleWatch(), this.shell?.end(), this.client?.end(), this.connectionHandle?.dispose(), this.shell = void 0, this.client = void 0, this.connectionHandle = void 0, this.connected = !1;
+  }
+  /**
+   * Tick no faster than the deadline itself, and never faster than every 30 s.
+   *
+   * `unref()` matters as much as the interval: this timer belongs to one session, and a
+   * timer that keeps the process alive after every terminal closed would be a leak with a
+   * plausible-looking cause. The status is emitted *before* disposal so the panel shows why
+   * the session went away instead of just going blank.
+   */
+  startIdleWatch() {
+    this.stopIdleWatch();
+    let limitMinutes = this.idleDisconnectMinutes;
+    if (!(limitMinutes > 0)) return;
+    let limitMs = limitMinutes * 6e4;
+    this.idleTimer = setInterval(() => {
+      this.connected && (Date.now() - this.lastActivityAt < limitMs || (this.events.status({
+        state: "disconnected",
+        text: t("Disconnected after {minutes} min of inactivity", { minutes: String(limitMinutes) })
+      }), this.dispose()));
+    }, Math.min(limitMs, 3e4)), this.idleTimer.unref?.();
+  }
+  stopIdleWatch() {
+    this.idleTimer !== void 0 && (clearInterval(this.idleTimer), this.idleTimer = void 0);
   }
   async buildConnectionHandle() {
     return buildSshConnectionHandle(this.server, this.configManager, this.hostKeyVerifier, {
@@ -15928,6 +15956,19 @@ var SshSession = class {
     });
   }
 };
+
+// src/terminal/terminalSettings.ts
+function resolveTerminalSettings(configuration, server) {
+  return {
+    scrollback: configuration.get("scrollback", 1e4),
+    fontSize: configuration.get("terminalFontSize", 14),
+    fontFamily: configuration.get("terminalFontFamily", "Cascadia Code, Menlo, monospace"),
+    semanticHighlight: configuration.get("semanticHighlight", !0),
+    idleDisconnectMinutes: configuration.get("idleDisconnectMinutes", 60),
+    zebraStripes: configuration.get("zebraStripes", !1),
+    encoding: server?.encoding ?? "utf-8"
+  };
+}
 
 // src/platform/dsh/services.ts
 function toView(server, hasPassword) {
@@ -16059,7 +16100,12 @@ function createDshTerminalApi({ platform: platform2, observer }) {
         // Keyboard-interactive authentication needs a prompt, and this host has no dialog.
         // Leaving it undefined makes such an attempt fail cleanly instead of hanging on a
         // prompt nobody can see — the same choice the platform's port makes.
-        void 0
+        void 0,
+        // `idleDisconnectMinutes` was a settings field with no consumer: it reached
+        // `TerminalSettings` and stopped there, so the form offered a switch that could not
+        // do anything. Read through the same `resolveTerminalSettings` the other terminal
+        // settings use, so there is one answer to "what did the user configure".
+        { idleDisconnectMinutes: resolveTerminalSettings(platform2.config.getSection("sshManager")).idleDisconnectMinutes }
       );
       live.add(session);
       try {

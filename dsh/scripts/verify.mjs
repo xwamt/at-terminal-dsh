@@ -106,6 +106,18 @@ function listJsFiles(dir) {
   return out
 }
 
+/** Every `.ts`/`.js`/`.mjs` file under `dir`, skipping installed and cached trees. */
+function listSourceFiles(dir) {
+  const out = []
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.cache' || entry.name === '.git') continue
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...listSourceFiles(full))
+    else if (/\.(ts|js|mjs)$/.test(entry.name)) out.push(full)
+  }
+  return out
+}
+
 /* ------------------------------- 4. deps helpers ------------------------------ */
 
 /**
@@ -1001,9 +1013,7 @@ const ILLEGAL_SETTINGS = [
   { field: 'scrollback', value: 10, why: 'below the minimum of 100' },
   { field: 'semanticHighlight', value: 1, why: 'not a boolean' },
   { field: 'idleDisconnectMinutes', value: -5, why: 'below the minimum of 0' },
-  { field: 'keepAliveInterval', value: 1.5, why: 'not an integer' },
   { field: 'zebraStripes', value: 'yes', why: 'not a boolean' },
-  { field: 'sessionLogDirectory', value: 42, why: 'not a string' }
 ]
 
 /** Inclusive boundaries and documented defaults must stay accepted. */
@@ -1013,10 +1023,7 @@ const LEGAL_SETTINGS = [
   { terminalFontSize: 200 },
   { scrollback: 100 },
   { idleDisconnectMinutes: 0 },
-  { keepAliveInterval: 0 },
-  { terminalFontFamily: 'Menlo, monospace' },
-  { sessionLogDirectory: '' },
-  { sessionLogDirectory: '/tmp/at-terminal-logs' }
+  { terminalFontFamily: 'Menlo, monospace' }
 ]
 
 if (sandboxSkipReason !== null) {
@@ -1027,10 +1034,45 @@ if (sandboxSkipReason !== null) {
     // form is addressed by must be the row this bundle inserts.
     assert.equal(SETTINGS_SECTION_ID, AT_TERMINAL_PLUGIN_ID, 'SETTINGS_SECTION_ID must match the patch row id')
     assert.ok(Object.isFrozen(SETTINGS_FIELDS), 'SETTINGS_FIELDS must be frozen')
-    assert.equal(SETTINGS_FIELDS.length, 8, 'the bundle documents eight settings fields')
+    assert.equal(SETTINGS_FIELDS.length, 6, 'the bundle documents six settings fields')
     for (const field of SETTINGS_FIELDS) {
       assert.equal(field.vscodeKey, `sshManager.${field.key}`, `${field.key}: vscodeKey must mirror the manifest`)
     }
+
+    // No dead switches. A settings field the form renders but no code reads is worse than a
+    // missing one: it invites a change and answers it with silence. Three fields had drifted
+    // into exactly that state (`sessionLogDirectory`, `idleDisconnectMinutes`,
+    // `keepAliveInterval`) while the gate was busy checking their types.
+    //
+    // The signal is a read *through the settings port* — `get('<key>'` — rather than the key
+    // appearing anywhere. Mere appearance is what let `keepAliveInterval` hide: the name is
+    // also the per-server field in `src/config/schema.ts`, so a substring search found
+    // consumers that had nothing to do with this setting.
+    const repoRoot = path.resolve(HERE, '..', '..')
+    const consumerSources = [
+      ...listSourceFiles(path.join(repoRoot, 'src')),
+      // The bundle's own JavaScript, minus the file that *declares* the fields and the two
+      // generated artifacts (`client.js`, `host.bundle.js`) that would match by construction.
+      ...listSourceFiles(BUNDLE_DIR).filter(
+        (file) =>
+          !file.startsWith(path.join(BUNDLE_DIR, 'scripts')) &&
+          path.basename(file) !== 'settings.js' &&
+          !file.endsWith('.bundle.js') &&
+          path.basename(file) !== 'client.js'
+      )
+    ]
+      .map((file) => fs.readFileSync(file, 'utf8'))
+      .join('\n')
+
+    const unread = SETTINGS_FIELDS.map((field) => field.key).filter(
+      (key) => !new RegExp(`get\\(\\s*['"]${key}['"]`).test(consumerSources)
+    )
+    assert.equal(
+      unread.length,
+      0,
+      `${unread.length} settings field(s) are rendered but never read: ${unread.join(', ')} — ` +
+        'either read them through ConfigSection#get() or remove the field'
+    )
 
     // The vendored copies must be the versions the install actually runs. This used to be
     // an invisible drift (vendored 3.18.4, host 3.18.5): the schema still validated, so
@@ -1089,12 +1131,20 @@ if (sandboxSkipReason !== null) {
       scrollback: 250000,
       semanticHighlight: false,
       idleDisconnectMinutes: 0,
-      keepAliveInterval: 120,
-      zebraStripes: true,
-      sessionLogDirectory: '/tmp/at-terminal-logs'
+      zebraStripes: true
     }
     const custom = schema(overrides)
     assert.deepEqual(readSettings(custom), overrides, 'valid overrides must round-trip through readSettings')
+
+    // A profile written before `sessionLogDirectory` was removed still carries the key.
+    // That must not stop the plugin from starting: schemastery keeps the unknown key and
+    // `readSettings` ignores it, so the upgrade is a leftover line rather than a crash.
+    const legacy = schema({ ...overrides, sessionLogDirectory: '/tmp/at-terminal-logs' })
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(readSettings(legacy), 'sessionLogDirectory'),
+      false,
+      'a leftover sessionLogDirectory must not reach the read settings'
+    )
 
     const { validateJsonSchemaValue } = await loadSandboxPackage('@deepseek-ai/dsh-tools', 'lib/index.js')
     const probe = createPingTool({ version: manifest.version, now: () => new Date(0), config: custom })
