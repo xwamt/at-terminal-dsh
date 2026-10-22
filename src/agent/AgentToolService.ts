@@ -277,38 +277,59 @@ export class AgentToolService {
    * the kind of thing a later "who ran what" question needs to answer.
    */
   async terminateRemoteCommand(serverId: string | undefined, pidfile: string): Promise<RemoteCommandTermination> {
-    const server = await this.resolveServer(serverId);
-    const result = await this.dependencies.executor.execute(server, {
-      command: terminateScript(pidfile),
-      // Bounded and short: this runs while a job is already settling, and a kill that hangs
-      // must not outlive the thing it was meant to end.
-      timeoutMs: 15_000
-    });
-    const report = readTerminateReport(result.stdout);
-    const detail = report.killed
-      ? `process group ${report.pid} is gone`
-      : result.stdout.trim() === ''
-        ? 'no pid was recorded: the command had already finished'
-        : `the process did not exit after SIGTERM (${result.stdout.trim().split('\n').pop() ?? 'no output'})`;
-    this.dependencies.audit?.record({
-      tool: 'run_remote_command',
-      serverId: server.id,
-      command: `kill ${pidfile}`,
-      reasonCode: report.killed ? 'job_killed' : 'job_kill_unconfirmed',
-      exitCode: result.exitCode,
-      durationMs: result.durationMs
-    });
-    this.dependencies.executionBridge?.recordAudit({
-      tool: 'run_remote_command',
-      serverId: server.id,
-      command: `kill ${pidfile}`,
-      reasonCode: report.killed ? 'job_killed' : 'job_kill_unconfirmed'
-    });
-    return {
-      killed: report.killed,
-      ...(report.pid === undefined ? {} : { pid: report.pid }),
-      detail
-    };
+    try {
+      const server = await this.resolveServer(serverId);
+      const result = await this.dependencies.executor.execute(server, {
+        command: terminateScript(pidfile),
+        // Bounded and short: this runs while a job is already settling, and a kill that hangs
+        // must not outlive the thing it was meant to end.
+        timeoutMs: 15_000
+      });
+      const report = readTerminateReport(result.stdout);
+      const detail = report.killed
+        ? `process group ${report.pid} is gone`
+        : result.stdout.trim() === ''
+          ? 'no pid was recorded: the command had already finished'
+          : `the process did not exit after SIGTERM (${result.stdout.trim().split('\n').pop() ?? 'no output'})`;
+      this.dependencies.audit?.record({
+        tool: 'run_remote_command',
+        serverId: server.id,
+        command: `kill ${pidfile}`,
+        reasonCode: report.killed ? 'job_killed' : 'job_kill_unconfirmed',
+        exitCode: result.exitCode,
+        durationMs: result.durationMs
+      });
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'run_remote_command',
+        serverId: server.id,
+        command: `kill ${pidfile}`,
+        reasonCode: report.killed ? 'job_killed' : 'job_kill_unconfirmed'
+      });
+      return {
+        killed: report.killed,
+        ...(report.pid === undefined ? {} : { pid: report.pid }),
+        detail
+      };
+    } catch (error) {
+      // A kill that fails must leave a row of its own. The first real-machine run of this
+      // path produced *no* audit line at all — the throw happened before the success row —
+      // and the absence of evidence was indistinguishable from a kill that simply worked
+      // through some other mechanism. That ambiguity is the bug this catch removes.
+      const message = error instanceof Error ? error.message : String(error);
+      this.dependencies.audit?.record({
+        tool: 'run_remote_command',
+        serverId: serverId ?? 'unknown',
+        command: `kill ${pidfile}`,
+        reasonCode: 'job_kill_failed'
+      });
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'run_remote_command',
+        serverId: serverId ?? 'unknown',
+        command: `kill ${pidfile}`,
+        reasonCode: 'job_kill_failed'
+      });
+      return { killed: false, detail: `the kill could not be sent: ${message}` };
+    }
   }
 
   async getHardwareMetrics(serverId?: string): Promise<HardwareMetrics> {

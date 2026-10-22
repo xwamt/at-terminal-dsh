@@ -16401,30 +16401,45 @@ var AgentToolService = class {
    * the kind of thing a later "who ran what" question needs to answer.
    */
   async terminateRemoteCommand(serverId, pidfile) {
-    let server = await this.resolveServer(serverId), result = await this.dependencies.executor.execute(server, {
-      command: terminateScript(pidfile),
-      // Bounded and short: this runs while a job is already settling, and a kill that hangs
-      // must not outlive the thing it was meant to end.
-      timeoutMs: 15e3
-    }), report = readTerminateReport(result.stdout), detail = report.killed ? `process group ${report.pid} is gone` : result.stdout.trim() === "" ? "no pid was recorded: the command had already finished" : `the process did not exit after SIGTERM (${result.stdout.trim().split(`
+    try {
+      let server = await this.resolveServer(serverId), result = await this.dependencies.executor.execute(server, {
+        command: terminateScript(pidfile),
+        // Bounded and short: this runs while a job is already settling, and a kill that hangs
+        // must not outlive the thing it was meant to end.
+        timeoutMs: 15e3
+      }), report = readTerminateReport(result.stdout), detail = report.killed ? `process group ${report.pid} is gone` : result.stdout.trim() === "" ? "no pid was recorded: the command had already finished" : `the process did not exit after SIGTERM (${result.stdout.trim().split(`
 `).pop() ?? "no output"})`;
-    return this.dependencies.audit?.record({
-      tool: "run_remote_command",
-      serverId: server.id,
-      command: `kill ${pidfile}`,
-      reasonCode: report.killed ? "job_killed" : "job_kill_unconfirmed",
-      exitCode: result.exitCode,
-      durationMs: result.durationMs
-    }), this.dependencies.executionBridge?.recordAudit({
-      tool: "run_remote_command",
-      serverId: server.id,
-      command: `kill ${pidfile}`,
-      reasonCode: report.killed ? "job_killed" : "job_kill_unconfirmed"
-    }), {
-      killed: report.killed,
-      ...report.pid === void 0 ? {} : { pid: report.pid },
-      detail
-    };
+      return this.dependencies.audit?.record({
+        tool: "run_remote_command",
+        serverId: server.id,
+        command: `kill ${pidfile}`,
+        reasonCode: report.killed ? "job_killed" : "job_kill_unconfirmed",
+        exitCode: result.exitCode,
+        durationMs: result.durationMs
+      }), this.dependencies.executionBridge?.recordAudit({
+        tool: "run_remote_command",
+        serverId: server.id,
+        command: `kill ${pidfile}`,
+        reasonCode: report.killed ? "job_killed" : "job_kill_unconfirmed"
+      }), {
+        killed: report.killed,
+        ...report.pid === void 0 ? {} : { pid: report.pid },
+        detail
+      };
+    } catch (error) {
+      let message = error instanceof Error ? error.message : String(error);
+      return this.dependencies.audit?.record({
+        tool: "run_remote_command",
+        serverId: serverId ?? "unknown",
+        command: `kill ${pidfile}`,
+        reasonCode: "job_kill_failed"
+      }), this.dependencies.executionBridge?.recordAudit({
+        tool: "run_remote_command",
+        serverId: serverId ?? "unknown",
+        command: `kill ${pidfile}`,
+        reasonCode: "job_kill_failed"
+      }), { killed: !1, detail: `the kill could not be sent: ${message}` };
+    }
   }
   async getHardwareMetrics(serverId) {
     let server = await this.resolveServer(serverId);

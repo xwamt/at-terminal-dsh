@@ -1013,6 +1013,35 @@ describe('AgentToolService', () => {
       expect(outcome).toMatchObject({ killed: false });
       expect(outcome.detail).toContain('already finished');
     });
+
+    it('records a failed kill instead of leaving no trace at all', async () => {
+      // The first real-machine run produced *no* audit row: the throw happened before the
+      // success row, so "the kill failed" and "the kill never ran" looked identical from
+      // outside. A failure has to be a row of its own.
+      const audit = { record: vi.fn() };
+      const executor = {
+        execute: vi.fn(async () => {
+          throw new Error('SSH connection closed');
+        })
+      };
+      const service = createService({
+        configManager: {
+          getServer: async () => ({ ...server(), backgroundConnectionAllowed: true }),
+          listServers: async () => [server()]
+        } as never,
+        terminalContext: new TerminalContextRegistry(),
+        executor: executor as unknown as RemoteCommandExecutor,
+        audit: audit as never
+      });
+
+      const outcome = await service.terminateRemoteCommand('server-1', '/tmp/.at-terminal-job-1.pid');
+
+      expect(outcome).toMatchObject({ killed: false });
+      expect(outcome.detail).toContain('SSH connection closed');
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ reasonCode: 'job_kill_failed', command: 'kill /tmp/.at-terminal-job-1.pid' })
+      );
+    });
   });
 });
 
