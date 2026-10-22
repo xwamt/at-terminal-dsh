@@ -139,6 +139,70 @@ describe('dsh/tools.js createTools', () => {
     expect(value.capabilities).toContain('builtin-probe');
   });
 
+  it('spills an over-budget command result and names the file in the output', async () => {
+    // The wiring, not just the helper: `run_remote_command` has to hand the *rendered* text
+    // to the spill store and put the head/tail back where the render reads from.
+    const long = `${'a'.repeat(40_000)}TAIL-MARKER`;
+    const saveText = vi.fn(async () => ({ locator: '/tmp/spill/run.txt', bytes: long.length }));
+    const mockService = {
+      runRemoteCommand: vi.fn().mockResolvedValue({
+        serverId: 's1',
+        serverLabel: 'S1',
+        host: '1.2.3.4',
+        command: 'ps aux',
+        exitCode: 0,
+        stdout: long,
+        stderr: '',
+        durationMs: 5,
+        timedOut: false,
+        truncated: false
+      })
+    };
+    const tools = createTools({
+      version: '0.1.0',
+      resolveAgentService: () => mockService,
+      resolveSpillStore: () => ({ saveText }),
+      logger: { warn: vi.fn() }
+    });
+    const runTool = tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+
+    const result = await runTool.execute(
+      { serverId: 's1', command: 'ps aux' },
+      { agent: { session: { id: 'sess-1' } } }
+    );
+
+    expect(result.spillPath).toBe('/tmp/spill/run.txt');
+    expect(saveText).toHaveBeenCalledWith(expect.objectContaining({ content: long, owner: { sessionId: 'sess-1' } }));
+    // Head and tail survive; the middle is what got replaced by the pointer.
+    expect(result.stdout.startsWith('aaaa')).toBe(true);
+    expect(result.stdout.endsWith('TAIL-MARKER')).toBe(true);
+    expect(result.stdout).toContain('/tmp/spill/run.txt');
+    expect(result.stdout.length).toBeLessThan(long.length);
+  });
+
+  it('leaves a short result untouched and reports no spill path', async () => {
+    const saveText = vi.fn();
+    const mockService = {
+      runRemoteCommand: vi.fn().mockResolvedValue({
+        serverId: 's1', serverLabel: 'S1', host: '1.2.3.4', command: 'uptime',
+        exitCode: 0, stdout: 'ok', stderr: '', durationMs: 1, timedOut: false, truncated: false
+      })
+    };
+    const tools = createTools({
+      version: '0.1.0',
+      resolveAgentService: () => mockService,
+      resolveSpillStore: () => ({ saveText }),
+      logger: { warn: vi.fn() }
+    });
+    const runTool = tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+
+    const result = await runTool.execute({ serverId: 's1', command: 'uptime' }, { agent: { session: { id: 's' } } });
+
+    expect(result.spillPath).toBeNull();
+    expect(result.stdout).toBe('ok');
+    expect(saveText).not.toHaveBeenCalled();
+  });
+
   it('delegates run_remote_command execution with abort signal', async () => {
     const mockService = {
       runRemoteCommand: vi.fn().mockResolvedValue({

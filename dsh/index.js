@@ -230,6 +230,17 @@ export function apply(ctx, config = {}) {
       version: pkg.version,
       config,
       resolveAgentService,
+      // `ctx.get('spillStore')` is read per call, not captured at registration: a preset
+      // that composes the store later (or never) must not be frozen into whatever was
+      // present when tools were registered. Absence degrades to truncation, never an error.
+      resolveSpillStore: () => {
+        try {
+          return ctx.get?.('spillStore')
+        } catch {
+          return undefined
+        }
+      },
+      logger: ctx.logger,
       runWithCallContext: (callCtx, fn) => callContextStorage.run(callCtx, fn),
       setCurrentCallContext: (callCtx) => {
         currentCallContextFallback = callCtx

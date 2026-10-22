@@ -26,6 +26,7 @@
 
 import { SETTINGS_FIELDS, readSettings } from './settings.js'
 import { readPreExecuteDecision } from './policy.js'
+import { spillIfOverBudget } from './spill.js'
 
 /** Plugin identity as it appears in the bundle patch row. */
 export const AT_TERMINAL_PLUGIN_ID = 'at-terminal'
@@ -388,7 +389,13 @@ export function createGetTerminalContextTool({ resolveAgentService, runInContext
   }
 }
 
-export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCallContext, runInContext } = {}) {
+export function createRunRemoteCommandTool({
+  resolveAgentService,
+  setCurrentCallContext,
+  runInContext,
+  resolveSpillStore,
+  logger
+} = {}) {
   return {
     name: 'at_terminal_run_remote_command',
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
@@ -424,7 +431,8 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
           stderr: { type: 'string' },
           durationMs: { type: 'integer' },
           timedOut: { type: 'boolean' },
-          truncated: { type: 'boolean' }
+          truncated: { type: 'boolean' },
+          spillPath: { oneOf: [{ type: 'string' }, { type: 'null' }] }
         }
       },
       render(_args, val) {
@@ -468,6 +476,16 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
           // it no longer opens a second dialog.
           preAuthorized: readPreExecuteDecision(exec)
         })
+        const spilled = await spillIfOverBudget({
+          // Exactly the text `output.render` would have shown, label included: the inline
+          // value and the spilled file then agree about what "the result" is.
+          text: result.stderr ? `${result.stdout}\n[stderr]\n${result.stderr}` : result.stdout,
+          exec,
+          toolName: 'at_terminal_run_remote_command',
+          suggestedName: 'run-remote-command.txt',
+          resolveSpillStore,
+          logger
+        })
         return {
           serverId: result.serverId,
           serverLabel: result.serverLabel,
@@ -476,11 +494,14 @@ export function createRunRemoteCommandTool({ resolveAgentService, setCurrentCall
           cwd: result.cwd ?? null,
           exitCode: result.exitCode ?? null,
           signal: result.signal ?? null,
-          stdout: result.stdout,
-          stderr: result.stderr,
+          // The head, the tail and the account of what fell between them. `stderr` is folded
+          // in only when the result was spilled; otherwise it keeps its own field.
+          stdout: spilled.saved ? spilled.text : result.stdout,
+          stderr: spilled.saved ? '' : result.stderr,
           durationMs: result.durationMs,
           timedOut: Boolean(result.timedOut),
-          truncated: Boolean(result.truncated)
+          truncated: Boolean(result.truncated),
+          spillPath: spilled.spillPath
         }
       })
     }
@@ -635,7 +656,7 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
   }
 }
 
-export function createSftpReadFileTool({ resolveAgentService, runInContext } = {}) {
+export function createSftpReadFileTool({ resolveAgentService, runInContext, resolveSpillStore, logger } = {}) {
   return {
     name: 'at_terminal_sftp_read_file',
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
@@ -666,7 +687,8 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext } = {
           truncated: { type: 'boolean' },
           offset: { type: 'integer' },
           size: { type: 'integer' },
-          modifiedAt: { type: 'integer' }
+          modifiedAt: { type: 'integer' },
+          spillPath: { oneOf: [{ type: 'string' }, { type: 'null' }] }
         }
       },
       render(_args, val) {
@@ -687,11 +709,20 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext } = {
       return run(callCtx, async () => {
         const service = resolveAgentService()
         const res = await service.sftpReadFile(input)
+        const spilled = await spillIfOverBudget({
+          text: res.content,
+          exec,
+          toolName: 'at_terminal_sftp_read_file',
+          suggestedName: 'remote-file.txt',
+          resolveSpillStore,
+          logger
+        })
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
           path: res.path,
-          content: res.content,
+          content: spilled.text,
+          spillPath: spilled.spillPath,
           truncated: Boolean(res.truncated),
           offset: typeof res.offset === 'number' ? res.offset : 0,
           size: typeof res.size === 'number' ? res.size : 0,
@@ -1322,6 +1353,8 @@ export function createTools({
   resolveAgentService,
   setCurrentCallContext,
   runWithCallContext,
+  resolveSpillStore,
+  logger,
   now
 } = {}) {
   const runInContext = runWithCallContext
@@ -1330,7 +1363,7 @@ export function createTools({
         setCurrentCallContext?.(ctx)
         return fn()
       }
-  const shared = { version, config, resolveAgentService, setCurrentCallContext, runInContext }
+  const shared = { version, config, resolveAgentService, setCurrentCallContext, runInContext, resolveSpillStore, logger }
   return [
     createPingTool({ version, config, now }),
     createListSshServersTool(shared),
