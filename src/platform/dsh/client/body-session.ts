@@ -80,7 +80,10 @@ import { renderSftpView } from './views/sftp';
 import { renderSftpFileView } from './views/sftpFile';
 import { renderConfirmDialog, type ConfirmDialogProps } from './views/dialogs';
 import { h, renderFailure, type El } from './views/shared';
-import { TerminalView } from './views/terminal';
+// The pane lives in the xterm chunk: this import is the entry-side shell, and `TerminalView`
+// keeps its name and props (see views/terminalRemote.ts). Static import of views/terminal
+// here would re-bundle xterm into client.js and undo the split.
+import { TerminalView } from './views/terminalRemote';
 import type { TerminalEngine, TerminalEngineHooks } from './xtermEngine';
 
 /** The `servers.list` reply, as this body needs it: which servers exist, and their encodings. */

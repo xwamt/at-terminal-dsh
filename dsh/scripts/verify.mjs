@@ -1238,7 +1238,8 @@ if (sandboxSkipReason !== null) {
           !file.startsWith(path.join(BUNDLE_DIR, 'scripts')) &&
           path.basename(file) !== 'settings.js' &&
           !file.endsWith('.bundle.js') &&
-          path.basename(file) !== 'client.js'
+          path.basename(file) !== 'client.js' &&
+          path.basename(file) !== 'client.xterm.js'
       )
     ]
       .map((file) => fs.readFileSync(file, 'utf8'))
@@ -1509,7 +1510,46 @@ await check('client', 'Client half satisfies the browser-bundle contract', async
     assert.ok(plugin.inject.includes(service), `inject must list "${service}"`)
   }
 
-  return `${manifest.name} -> ${rel}, factory executes (apply + inject[${plugin.inject.length}])`
+  // 4. The terminal chunk, and the property that makes the split worth having.
+  //
+  //    An accidental `import { TerminalView } from './views/terminal'` puts xterm's ~410 kB
+  //    back into the entry and leaves the chunk unreferenced — everything still works, and
+  //    the only symptom is the payload nobody re-measures. So the assertion is on the bytes:
+  //    the entry must not contain xterm, the chunk must.
+  const chunkRel = './client.xterm.js'
+  const chunkPath = path.resolve(BUNDLE_DIR, chunkRel)
+  assert.ok(fs.existsSync(chunkPath), `the terminal chunk is missing: ${chunkRel}`)
+  assert.ok(
+    new Set(manifest.files ?? []).has(chunkRel.replace(/^\.\//, '')),
+    `files must list ${chunkRel}, or the browser 404s the chunk`
+  )
+  const chunkSource = fs.readFileSync(chunkPath, 'utf8')
+  const chunkLead = chunkSource.replace(/^\/\*[\s\S]*?\*\/\s*/, '')
+  assert.ok(
+    chunkLead.startsWith('window.__ModuleLoader__.load({'),
+    'the chunk must register through window.__ModuleLoader__.load({...}) as its first statement'
+  )
+  assert.equal(
+    chunkSource.split('window.__ModuleLoader__.load(').length - 1,
+    1,
+    'the chunk must register exactly once'
+  )
+  const chunkIdMatch = chunkSource.match(/\bid:\s*["']([^"']+)["']/)
+  assert.equal(
+    chunkIdMatch?.[1],
+    manifest.name,
+    'the chunk id must equal the package name: the loader keys a chunk by (id, chunk)'
+  )
+  assert.ok(
+    /chunk:\s*["']client\.xterm\.js["']/.test(chunkSource),
+    'the chunk must declare its own file name in a `chunk` field, which is how the host derives its module id'
+  )
+  assert.ok(
+    /WebglAddon/.test(chunkSource) && !/WebglAddon/.test(source),
+    'xterm belongs to the chunk only: the entry must not contain it, or first paint pays for a panel nobody opened'
+  )
+
+  return `${manifest.name} -> ${rel} (${source.length} B) + ${chunkRel} (${chunkSource.length} B), factory executes (apply + inject[${plugin.inject.length}])`
 })
 
 /* --------------------------------- 8. build artifact -------------------------- */

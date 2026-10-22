@@ -221,6 +221,42 @@ function collectText(tree: Tree): string {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
+ * Instantiate the terminal pane, waiting out its lazily fetched chunk.
+ *
+ * `views/terminal` now lives in `client.xterm.js` and is fetched on first render, so the
+ * entry-side shell legitimately returns `null` once. A page re-renders a tick later; doing the
+ * same here keeps the assertion about the toolbar instead of about the loading frame.
+ */
+async function instantiatePane(
+  harness: Harness,
+  view: ElementLike,
+  overrides: Record<string, unknown> = {}
+): Promise<unknown> {
+  const element = (): ElementLike =>
+    ({ type: view.type, props: { ...view.props, ...overrides } }) as ElementLike;
+  let rendered = harness.shim.instantiate(element());
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const node = rendered as ElementLike | null;
+    // `instantiate` resolves one level at a time, and the shell starts its fetch in an effect
+    // that only `drainEffects` runs. So: keep going while the level is a component, and wait a
+    // tick whenever a level returns nothing (the loading frame).
+    if (node === null) {
+      harness.shim.drainEffects();
+      await flush();
+      rendered = harness.shim.instantiate(element());
+      continue;
+    }
+    if (typeof node.type === 'function') {
+      harness.shim.drainEffects();
+      rendered = harness.shim.instantiate(node);
+      continue;
+    }
+    break;
+  }
+  return rendered;
+}
+
+/**
  * Fire the form's submit the way the browser does when the `type=submit` button
  * is clicked. Deliberately not a synthetic `onClick` on the button: the real
  * click path ends in the form's `onSubmit`, and wiring the save to both would
@@ -824,10 +860,58 @@ function createHarness(
   };
 
   expect(registrations).toHaveLength(1);
-  const plugin = registrations[0].factory((id: string) => {
+
+  // Package-local chunks, served the way `dsh-client-modules` serves them: the file is fetched
+  // on demand, executed in the **same** context (same window/document), and registers itself
+  // through the same loader with a `chunk` field. Captured in its own array so the entry's
+  // single-registration assertion above keeps meaning what it says.
+  const chunkRegistrations: Array<{
+    id: string;
+    chunk?: string;
+    factory: (require: (id: string) => unknown) => unknown;
+  }> = [];
+  const loadChunk = (fileName: string): void => {
+    if (chunkRegistrations.some((entry) => entry.chunk === fileName)) return;
+    const chunkSource = readFileSync(join(process.cwd(), 'dsh', fileName), 'utf8');
+    const loader = (sandbox.window as { __ModuleLoader__: { load: (r: unknown) => void } })
+      .__ModuleLoader__;
+    const original = loader.load;
+    loader.load = (registration) => {
+      chunkRegistrations.push(
+        registration as unknown as {
+          id: string;
+          chunk?: string;
+          factory: (require: (id: string) => unknown) => unknown;
+        }
+      );
+    };
+    try {
+      vm.runInContext(chunkSource, context, { filename: `dsh/${fileName}` });
+    } finally {
+      loader.load = original;
+    }
+  };
+
+  const requireExternal = (id: string): unknown => {
     if (id === 'react') return shim.react;
     throw new Error(`unexpected external require: ${id}`);
-  }) as { apply: (ctx: unknown) => void; inject: string[] };
+  };
+  const harnessRequire = Object.assign(requireExternal, {
+    async: async (spec: string): Promise<unknown> => {
+      const fileName = spec.replace(/^\.\//, '');
+      loadChunk(fileName);
+      const entry = chunkRegistrations.find((candidate) => candidate.chunk === fileName);
+      if (entry === undefined) {
+        throw new Error(`the chunk ${fileName} registered nothing`);
+      }
+      return entry.factory(harnessRequire);
+    }
+  });
+
+  const plugin = registrations[0].factory(harnessRequire) as {
+    apply: (ctx: unknown) => void;
+    inject: string[];
+  };
 
   const harness: Harness = {
     tree: null,
@@ -2334,7 +2418,7 @@ describe('client bundle — terminal over the websocket', () => {
     expect(view).not.toBeNull();
     expect(view?.props.onNewTab).toBeUndefined();
 
-    const rendered = harness.shim.instantiate(view);
+    const rendered = await instantiatePane(harness, view as ElementLike);
     // Non-vacuity: the walk finds the toolbar's **other** controls, so a bare `null` below means the
     // button is absent rather than the search being blind to this element.
     expect(findByAction(rendered as Tree, 'term-select')).not.toBeNull();
@@ -2360,10 +2444,9 @@ describe('client bundle — terminal over the websocket', () => {
     const view = findByFunctionName(harness.tree, 'TerminalView');
     expect(view).not.toBeNull();
 
-    const rendered = harness.shim.instantiate({
-      type: view?.type,
-      props: { ...view?.props, termState: { kind: 'connected', text: '' } }
-    } as ElementLike);
+    const rendered = await instantiatePane(harness, view as ElementLike, {
+      termState: { kind: 'connected', text: '' }
+    });
 
     const select = findByAction(rendered as Tree, 'term-select');
     expect(select).not.toBeNull();
@@ -2386,10 +2469,9 @@ describe('client bundle — terminal over the websocket', () => {
     const harness = createSessionHarness();
     await harness.settle();
     const view = findByFunctionName(harness.tree, 'TerminalView');
-    const rendered = harness.shim.instantiate({
-      type: view?.type,
-      props: { ...view?.props, termState: { kind: 'idle', text: '' } }
-    } as ElementLike);
+    const rendered = await instantiatePane(harness, view as ElementLike, {
+      termState: { kind: 'idle', text: '' }
+    });
 
     const select = findByAction(rendered as Tree, 'term-select');
     expect(select?.props['data-at-terminal-locked']).toBe('false');

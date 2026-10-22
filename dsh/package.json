@@ -17,6 +17,7 @@
     "settings.js",
     "channel.js",
     "client.js",
+    "client.xterm.js",
     "host.bundle.js",
     "cordis.patch.yml",
     "icon.svg",
