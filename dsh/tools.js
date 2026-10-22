@@ -27,6 +27,7 @@
 import { SETTINGS_FIELDS, readSettings } from './settings.js'
 import { readPreExecuteDecision } from './policy.js'
 import { spillIfOverBudget } from './spill.js'
+import { sectionStatusText, updateTrustFact } from './prompt.js'
 import { startRemoteCommandJob } from './jobs.js'
 
 /** Plugin identity as it appears in the bundle patch row. */
@@ -68,7 +69,10 @@ export const CAPABILITIES = Object.freeze([
   // The pair that reads and stops those jobs. Listed separately because a composition can
   // have the registry without them — that is exactly what the desktop build does — and a
   // caller deciding whether to background a command needs to know which case it is in.
-  'job-control'
+  'job-control',
+  // Registered a prompt section plus the variable it interpolates. Listed separately because
+  // a composition without `dsh-system-prompt` keeps the tools and loses the guidance.
+  'prompt-section'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */
@@ -102,8 +106,8 @@ export const EMPTY_PARAMETERS = Object.freeze({
 })
 
 const SFTP_TARGET_PROPERTIES = Object.freeze({
-  terminalId: { type: 'string', description: 'Connected AT Terminal terminal id.' },
-  serverId: { type: 'string', description: 'Configured AT Terminal SSH server id.' }
+  terminalId: { type: 'string' },
+  serverId: { type: 'string' }
 })
 
 /**
@@ -226,7 +230,7 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
     description:
-      'Report whether the AT Terminal plugin is loaded in DeepSeek Harness, which of its capabilities this build provides, and the effective AT Terminal settings. Call it to confirm the plugin is live and to read its current configuration before depending on AT Terminal features; it reaches no remote host and changes nothing. Tools that can block declare a `timeoutMs`, which the Host enforces — not the tool.',
+      'Report plugin liveness, version, capabilities and effective settings. Reaches no host.',
     parameters: EMPTY_PARAMETERS,
     output: {
       schema: {
@@ -240,7 +244,11 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
           settings: settingsOutputSchema(),
           platform: { type: 'string' },
           node: { type: 'string' },
-          checkedAt: { type: 'string' }
+          checkedAt: { type: 'string' },
+          // Whether the guidance section reached the host. Reported rather than assumed:
+          // the assembled prompt is not written anywhere a caller can read it, so without
+          // this line "the section is live" would be a claim nobody could check.
+          promptSection: { type: 'string' }
         }
       },
       render(_args, value) {
@@ -254,6 +262,12 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
           {
             type: 'text',
             text: `Effective settings: ${settings.join(', ')}.`
+          },
+          // Rendered, not just returned: the model reads the rendered text, so a field that
+          // only lives in the value is a field nobody can ask about.
+          {
+            type: 'text',
+            text: `Prompt guidance section: ${value.promptSection}.`
           }
         ]
       }
@@ -267,7 +281,8 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
         settings: readSettings(config),
         platform: process.platform,
         node: process.versions.node,
-        checkedAt: now().toISOString()
+        checkedAt: now().toISOString(),
+        promptSection: sectionStatusText()
       }
     }
   }
@@ -280,7 +295,7 @@ export function createListSshServersTool({ resolveAgentService, runInContext } =
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 10000,
     description:
-      'List configured AT Terminal SSH servers authorized for direct background commands, including currently connected interactive terminals. Reports server connection status and trust levels.',
+      'List usable SSH servers with connection state and command trust.',
     parameters: EMPTY_PARAMETERS,
     output: {
       schema: {
@@ -325,8 +340,7 @@ export function createListSshServersTool({ resolveAgentService, runInContext } =
       return run(callCtx, async () => {
         const service = resolveAgentService()
         const res = await service.listServers()
-        return {
-          servers: (res.servers || []).map((s) => ({
+        const servers = (res.servers || []).map((s) => ({
             id: s.id,
             label: s.label,
             host: s.host,
@@ -337,7 +351,11 @@ export function createListSshServersTool({ resolveAgentService, runInContext } =
             agentCommandTrust: s.agentCommandTrust,
             agentCommandAutoApprove: Boolean(s.agentCommandAutoApprove)
           }))
-        }
+        // This is the only moment the plugin knows the truth about the inventory, so the
+        // prompt section's dynamic fact is refreshed here rather than by a poll that would
+        // keep opening the state store for a string nobody asked for.
+        updateTrustFact(servers)
+        return { servers }
       })
     }
   }
@@ -350,7 +368,7 @@ export function createGetTerminalContextTool({ resolveAgentService, runInContext
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
     description:
-      'Get the active SSH terminal session context, connected terminal list, and known terminal history from AT Terminal.',
+      'Get the active terminal context and recent history.',
     parameters: EMPTY_PARAMETERS,
     output: {
       schema: {
@@ -415,21 +433,17 @@ export function createRunRemoteCommandTool({
     // command's lifetime.
     timeoutMs: 120000,
     description:
-      'Run a non-interactive shell command on a configured AT Terminal SSH server. Commands are evaluated against the server trust level and command policy. Destructive operations require confirmation. Set run_in_background for a command that outlives a turn; the returned job id is collected with job_output and stopped with job_kill.',
+      'Run a command on a server; returns stdout, stderr, exit code. run_in_background keeps it past this turn.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        serverId: { type: 'string', description: 'SSH server id, or "active" to use current terminal.' },
-        command: { type: 'string', description: 'Shell command line to execute remotely.' },
-        cwd: { type: 'string', description: 'Optional POSIX working directory.' },
-        timeoutMs: { type: 'integer', description: 'Timeout in ms for the foreground path (capped at 120000).' },
-        maxOutputBytes: { type: 'integer', description: 'Max capture bytes (default 64000).' },
-        run_in_background: {
-          type: 'boolean',
-          description:
-            'Return a job id immediately and let the command keep running on the server; collect with job_output, stop with job_kill. The permission question is still answered before the job starts. Default false.'
-        }
+        serverId: { type: 'string' },
+        command: { type: 'string' },
+        cwd: { type: 'string' },
+        timeoutMs: { type: 'integer' },
+        maxOutputBytes: { type: 'integer' },
+        run_in_background: { type: 'boolean' }
       },
       required: ['command']
     },
@@ -589,15 +603,15 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 30000,
     description:
-      'List entries in a remote directory through the selected AT Terminal SFTP session with pagination support.',
+      'List a remote directory, paged; returns entries plus total and truncation flags.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote directory POSIX path.' },
-        maxEntries: { type: 'integer', description: 'Optional max entries to return (default 500).' },
-        offset: { type: 'integer', description: 'Optional paging offset index (default 0).' }
+        path: { type: 'string' },
+        maxEntries: { type: 'integer' },
+        offset: { type: 'integer' }
       },
       required: []
     },
@@ -674,13 +688,13 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 10000,
     description:
-      'Retrieve file or directory metadata (size, type, permissions, modification time) via AT Terminal SFTP.',
+      'Get remote metadata: size, type, permissions, modification time.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote POSIX path to inspect.' }
+        path: { type: 'string' }
       },
       required: ['path']
     },
@@ -737,15 +751,15 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext, reso
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 20000,
     description:
-      'Read bounded UTF-8 text from a remote file through AT Terminal SFTP with offset and length limits.',
+      'Read bounded UTF-8 text; a large result spills and names its spillPath.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote POSIX file path.' },
-        maxBytes: { type: 'integer', description: 'Max bytes to read (default 65536, max 262144).' },
-        offset: { type: 'integer', description: 'Byte offset to start reading from. Negative offsets read from tail.' }
+        path: { type: 'string' },
+        maxBytes: { type: 'integer' },
+        offset: { type: 'integer' }
       },
       required: ['path']
     },
@@ -814,15 +828,15 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 120000,
     description:
-      'Write UTF-8 text to a remote file after AT Terminal write authorization and confirmation checks.',
+      'Write UTF-8 text after confirmation; overwrite replaces it.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
         path: { type: 'string', description: 'Remote POSIX file path.' },
-        content: { type: 'string', description: 'UTF-8 file content to write.' },
-        overwrite: { type: 'boolean', description: 'Set true to replace an existing file.' }
+        content: { type: 'string' },
+        overwrite: { type: 'boolean' }
       },
       required: ['path', 'content']
     },
@@ -887,14 +901,14 @@ export function createSftpCreateFileTool({ resolveAgentService, runInContext, se
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 120000,
     description:
-      'Create an empty or initialized remote file via AT Terminal SFTP with authorization checks.',
+      'Create a remote file, empty or with content.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote POSIX file path to create.' },
-        content: { type: 'string', description: 'Optional initial UTF-8 content.' }
+        path: { type: 'string' },
+        content: { type: 'string' }
       },
       required: ['path']
     },
@@ -950,13 +964,13 @@ export function createSftpCreateDirectoryTool({ resolveAgentService, runInContex
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 120000,
     description:
-      'Create a new remote directory through AT Terminal SFTP after write authorization.',
+      'Create a remote directory via AT Terminal SFTP.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote POSIX directory path to create.' }
+        path: { type: 'string' }
       },
       required: ['path']
     },
@@ -1009,14 +1023,14 @@ export function createSftpRenameTool({ resolveAgentService, runInContext, setCur
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 120000,
     description:
-      'Rename or move a remote file or directory through AT Terminal SFTP with write authorization on both paths.',
+      'Rename or move a remote path; both paths are authorized.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Source remote POSIX path.' },
-        newPath: { type: 'string', description: 'Destination remote POSIX path.' }
+        path: { type: 'string' },
+        newPath: { type: 'string' }
       },
       required: ['path', 'newPath']
     },
@@ -1072,13 +1086,13 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 120000,
     description:
-      'Remove a single remote file via AT Terminal SFTP; the user always confirms. Directories are refused — for one, use at_terminal_run_remote_command with an explicit rm, which puts the command through the policy engine.',
+      'Delete one remote file after confirmation. Directories are refused; use at_terminal_run_remote_command.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote POSIX file path to delete.' }
+        path: { type: 'string' }
       },
       required: ['path']
     },
@@ -1133,7 +1147,7 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
     description:
-      'Open the AT Terminal monitoring HUD for asset hardware metrics or live agent execution status. Returns opened=false with reason="no-client" when no browser panel is connected, because nothing would appear.',
+      'Open the monitoring HUD; opened=false when no panel listens.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -1141,16 +1155,16 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
         target: {
           type: 'string',
           enum: ['hardware', 'agent_execution'],
-          description: 'Monitor target: "hardware" for CPU/memory/disk/network/processes, "agent_execution" for live commands, audits and SFTP transfers.'
+          description: '"hardware" for resources, "agent_execution" for agent activity.'
         },
         serverId: {
           type: 'string',
-          description: 'SSH server id to monitor (optional; defaults to the active server).'
+          description: 'Defaults to the active server.'
         },
         mode: {
           type: 'string',
           enum: ['hud'],
-          description: 'Display mode. Only "hud" (the global overlay) is implemented; the former "float" option never rendered in this host.'
+          description: 'Only "hud" exists.'
         }
       },
       required: ['target']
@@ -1216,15 +1230,12 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 8000,
-    description: 'Retrieve real-time hardware metrics (CPU, memory, disk, network throughput, top processes) for an SSH server. Its probe script is built in and bypasses the command policy engine; the call is still audited.',
+    description: 'Live CPU, memory, disk, network and top processes; the probe bypasses the command policy engine and the call is still audited.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        serverId: {
-          type: 'string',
-          description: 'Configured AT Terminal SSH server id (optional; defaults to the active server).'
-        }
+        serverId: { type: 'string' }
       }
     },
     output: {
@@ -1343,15 +1354,12 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 10000,
-    description: 'Retrieve current agent execution status snapshot, including live running action, recent audit entries, and active SFTP file transfers.',
+    description: 'Get the current agent activity: running action, recent audits, active transfers.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        limit: {
-          type: 'integer',
-          description: 'Maximum number of recent audit records to retrieve (default: 5).'
-        }
+        limit: { type: 'integer' }
       }
     },
     output: {
@@ -1454,14 +1462,14 @@ export function createJobOutputTool({ resolveJobs } = {}) {
     // into TOOL_TIMEOUT. Long enough to cover a `wait` and the read that follows it.
     timeoutMs: 90000,
     description:
-      'Read what a background AT Terminal command has printed since the last read. Pass wait to block until the job finishes or a timeout elapses. Returns the new text plus the job status. Each call consumes what it returns.',
+      'Read a job output since the last read; wait settles it or times out.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        jobId: { type: 'string', description: 'Job id returned by at_terminal_run_remote_command.' },
-        wait: { type: 'boolean', description: 'Block until the job settles or timeoutMs elapses. Default false.' },
-        timeoutMs: { type: 'integer', description: 'How long to wait when wait is true (default 30000).' }
+        jobId: { type: 'string' },
+        wait: { type: 'boolean' },
+        timeoutMs: { type: 'integer' }
       },
       required: ['jobId']
     },
@@ -1539,13 +1547,13 @@ export function createJobKillTool({ resolveJobs } = {}) {
     // into TOOL_TIMEOUT. The kill itself is one SSH round trip with its own 15 s budget.
     timeoutMs: 60000,
     description:
-      'Stop a background AT Terminal command. The remote process group is signalled and its disappearance waits up to a second, so a reported kill means the process is gone rather than that a signal was sent.',
+      'Stop a background job by signalling the remote process group; killed means it is gone.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         jobId: { type: 'string', description: 'Job id returned by at_terminal_run_remote_command.' },
-        reason: { type: 'string', description: 'Optional reason, recorded with the job.' }
+        reason: { type: 'string' }
       },
       required: ['jobId']
     },

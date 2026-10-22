@@ -36,6 +36,7 @@ import z from '@deepseek-ai/schemastery'
 
 import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
 import { classify, createGuard, createPreExecute } from './policy.js'
+import { TRUST_VARIABLE, promptSection, recordSectionRegistration, trustFact } from './prompt.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
@@ -260,6 +261,54 @@ export function apply(ctx, config = {}) {
       for (const dispose of disposers) dispose?.()
     }
   })
+
+  /**
+   * The prompt section: what the three tool families are for, what the trust tiers mean, and
+   * how to read a spilled result. Those rules used to sit in every tool description; stating
+   * them once is what let the definitions get small.
+   *
+   * The variable is registered before the section: interpolation is strict, and a `{{name}}
+   * with no registration throws during assembly — which fails every model request rather
+   * than one tool call.
+   */
+  // `systemPrompt` is reached through `ctx.inject`, not through the module-level `inject`
+  // list: that list is a **requirement**, and a composition without `dsh-system-prompt`
+  // would then refuse to load this plugin entirely. `ctx.inject` waits instead — the same
+  // arrangement the browser half uses below, so a missing service costs the guidance section
+  // and nothing else.
+  //
+  // This was wrong the first time in a way the real host made visible: the bundle declared
+  // only `['tools']`, so `ctx.systemPrompt` was simply absent, the registration was skipped,
+  // and everything still "worked". The unit harness said the same thing by throwing on the
+  // property, and a `try/catch` there turned that hard signal into a silent no-op.
+  ctx.inject(['systemPrompt'], (scoped) => {
+    const prompt = scoped.systemPrompt
+    if (typeof prompt?.section !== 'function' || typeof prompt?.variable !== 'function') {
+      recordSectionRegistration('not registered: systemPrompt lacks section()/variable()')
+      return
+    }
+    // `getSectionOrder` is the host's own placement table; a literal here would be a copy
+    // that drifts, and `section()` rejects a missing order with a TypeError that says nothing
+    // about which name was wrong.
+    const order = prompt.getSectionOrder?.('TOOL_BASH')
+    if (!Number.isFinite(order)) {
+      recordSectionRegistration('not registered: TOOL_BASH has no section order')
+      scoped.logger?.warn?.('at-terminal: TOOL_BASH has no section order; the tool guidance section is not registered')
+      return
+    }
+    scoped.effect(() => {
+      const disposers = [
+        prompt.variable(TRUST_VARIABLE, () => trustFact()),
+        prompt.section(promptSection({ order }))
+      ]
+      recordSectionRegistration(`registered (order ${order})`)
+      return () => {
+        recordSectionRegistration('not registered: disposed with the plugin')
+        for (const dispose of disposers) dispose?.()
+      }
+    }, 'at-terminal: prompt section')
+  })
+
 
   // Host↔Client channel (DSH-21) plus the asset services (M3) over the web carrier.
   //

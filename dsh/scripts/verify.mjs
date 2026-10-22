@@ -58,6 +58,9 @@ import {
 } from '../tools.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
+
+/** Ceiling for the serialized tool definitions; see the tools check. */
+const PROMPT_BUDGET_BYTES = 5400
 const BUNDLE_DIR = path.resolve(HERE, '..')
 const SANDBOX_DIR = path.join(BUNDLE_DIR, '.cache', 'dsh-sandbox')
 const SANDBOX_MODULES = path.join(SANDBOX_DIR, 'node_modules')
@@ -944,6 +947,20 @@ if (sandboxSkipReason !== null) {
       resolveJobs: () => loopJobs
     })
     assert.equal(definitions.length, 17, 'bundle must contribute exactly 17 tools')
+
+    // The prompt budget. These definitions are sent on every single request, so the total is
+    // a requirement rather than a nicety, and the guidance that used to be repeated inside
+    // them now lives once in `dsh/prompt.js` (see the `prompt-section` capability).
+    //
+    // Measured through the projection the host uses, with long keys on purpose: a
+    // `{n,d,p}` measurement comes out ~4% smaller and would hide a regression.
+    const promptBytes = JSON.stringify(
+      definitions.map(({ name, description, parameters }) => ({ name, description, parameters }))
+    ).length
+    assert.ok(
+      promptBytes <= PROMPT_BUDGET_BYTES,
+      `tool definitions are ${promptBytes} B, over the ${PROMPT_BUDGET_BYTES} B prompt budget`
+    )
 
     // `register()` accepts a missing `timeoutMs` (it only rejects a non-positive one), so a
     // tool that forgot to declare a bound hangs until the user cancels. Declaring it on every

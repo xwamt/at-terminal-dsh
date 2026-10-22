@@ -3,6 +3,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { createTools } from '../../dsh/tools.js';
 // @ts-expect-error plain-JS host module
 import { recordDecision } from '../../dsh/policy.js';
+// @ts-expect-error plain-JS host module
+import { trustFact } from '../../dsh/prompt.js';
 
 describe('dsh/tools.js createTools', () => {
   it('registers ping plus 11 AT Terminal operational tools', () => {
@@ -830,5 +832,51 @@ describe('job control', () => {
       outcome: 'already-finished',
       status: 'completed'
     });
+  });
+});
+
+/**
+ * The budget and the fact feed.
+ *
+ * The size ceiling is a requirement, not a preference (§0.6 of the plan): every byte here is
+ * paid on every request, and the guidance that used to be duplicated into these strings now
+ * lives once in `dsh/prompt.js`.
+ */
+describe('the tool definitions', () => {
+  it('fit the prompt budget, measured the way the host sends them', () => {
+    const tools = createTools({ version: '0.1.0' });
+    const serialized = JSON.stringify(
+      tools.map(({ name, description, parameters }: any) => ({ name, description, parameters }))
+    );
+
+    // Long keys on purpose: `{n,d,p}` measures ~4% smaller and would hide a regression.
+    expect(serialized.length).toBeLessThanOrEqual(5400);
+  });
+
+  it('refresh the prompt fact from the server list they just read', async () => {
+    const mockService = {
+      listServers: vi.fn().mockResolvedValue({
+        servers: [
+          {
+            id: 's1',
+            label: 'production',
+            host: '10.0.0.1',
+            port: 22,
+            username: 'ops',
+            authType: 'key',
+            connected: true,
+            agentCommandTrust: 'full'
+          }
+        ]
+      })
+    };
+    const tool = createTools({ version: '0.1.0', resolveAgentService: () => mockService }).find(
+      (t: any) => t.name === 'at_terminal_list_ssh_servers'
+    );
+
+    await tool.execute({}, { signal: undefined });
+
+    // This is what makes the section's dynamic fact true rather than decorative.
+    expect(trustFact()).toBe('production (full)');
   });
 });

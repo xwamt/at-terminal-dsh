@@ -27,6 +27,7 @@ variants.
 | `tools.js` | Tool definitions as plain data, already normalized for `ctx.tools.register()`. No `@deepseek-ai/*` import, so it loads without a dsh checkout |
 | `policy.js` | The classification table, the `ctx.tools.guard` and the `tools/pre-execute` stage. Every tool needs a row (an unclassified one is **denied**), sensitive-path deletes are refused outright, and command authorization is delegated to `authorizeCommand()` so the gate and the dialog cannot disagree. Imports nothing: the predicate and the authorizer are injected |
 | `settings.js` | Settings schema, constraints and defaults. Also free of `@deepseek-ai/*` imports; the schema factory takes the schemastery instance as an argument |
+| `prompt.js` | The guidance section and the one variable it interpolates. It says once what the tool descriptions used to repeat — the three tool families, what each trust tier means, the read-before-write order, and how to read a `spillPath`. `ctx.inject(['systemPrompt'])` rather than a required `inject` entry: a composition without `dsh-system-prompt` should lose the guidance, not the plugin |
 | `spill.js` | Puts a result too big to show into the Host's `ctx.spillStore` and keeps the head, the tail and the account of what fell between them inline. The store is read per call, so a preset that composes it later still works; its absence degrades to truncation, never to an error |
 | `jobs.js` | The job **producer** for `run_remote_command`: it hands `ctx.jobs.start()` a spec whose cancel signals the **remote** process group. `pidfileFor()` and `backgroundScript()` come from `host.bundle.js`, so the pidfile naming and the pid write have one definition each. The two `at_terminal_job_*` tools in `tools.js` are the matching consumers: the desktop composition ships `tool-jobs` **disabled** (`dsh-web-app/cordis.patch.yml`), which leaves the registry running and the model with no way to read or stop what it started |
 | `host.bundle.js` | **Built** (committed): the TypeScript domain services (`src/platform/dsh/entry.ts`) compiled for the Host half |
@@ -259,6 +260,8 @@ field table live in `settings.js`, which is the single source of truth. Check 5
 enforces both directions — the illegal values above must be rejected and the
 inclusive boundaries (`terminalFontSize` 8 and 200, `scrollback` 100,
 `idleDisconnectMinutes` 0) must stay accepted.
+
+Check 5 also holds the **prompt budget**: `JSON.stringify` of `{name, description, parameters}` over every tool must stay ≤ 5400 B, measured with long keys (a `{n,d,p}` measurement is ~4% smaller and would hide a regression). The rules those descriptions used to repeat live once in `prompt.js`, and `ping` reports whether that section reached the host — the assembled prompt is written nowhere readable, so otherwise that claim would be uncheckable.
 
 Check 5 also fails when a field is rendered but **nothing reads it** — and that rule is how
 `sessionLogDirectory` and `keepAliveInterval` were found: both sat in the form, looked

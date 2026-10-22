@@ -108,6 +108,11 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
   // Event listeners, so `tools/result` can be delivered the way the registry delivers it:
   // every observer is called, and whatever one throws is the registry's to swallow.
   const listeners = new Map<string, Set<(...args: any[]) => unknown>>();
+  // The prompt service. Modelled here because the host half registers into it, and a
+  // regression there is invisible until a model request fails: interpolation is strict, and
+  // an unknown `{{name}}` throws during assembly.
+  const promptSections: Array<{ name?: string; order?: number; text?: string }> = [];
+  const promptVariables: Array<{ name: string; provider: () => unknown }> = [];
 
   const webServer = {
     register(route: Route) {
@@ -119,6 +124,26 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
       if (upgrades.has(route.path)) throw new Error(`webserver: duplicate upgrade route "${route.path}"`);
       upgrades.set(route.path, route);
       return () => upgrades.delete(route.path);
+    }
+  };
+
+  const systemPrompt = {
+    getSectionOrder(name: string) {
+      return name === 'TOOL_BASH' ? 1000 : undefined;
+    },
+    section(spec: { name?: string; order?: number; text?: string }) {
+      promptSections.push(spec);
+      return () => {
+        const index = promptSections.indexOf(spec);
+        if (index !== -1) promptSections.splice(index, 1);
+      };
+    },
+    variable(name: string, provider: () => unknown) {
+      promptVariables.push({ name, provider });
+      return () => {
+        const index = promptVariables.findIndex((entry) => entry.name === name);
+        if (index !== -1) promptVariables.splice(index, 1);
+      };
     }
   };
 
@@ -134,8 +159,11 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
       },
       inject(names: string[], callback: (scoped: unknown) => unknown) {
         injections.push(names);
-        // The real container waits for these services; here they are all present, so the
-        // callback runs immediately with a context carrying them.
+        // The real container **waits**: a name it cannot satisfy means the callback never
+        // runs. Modelling that matters — a harness that always calls back cannot tell
+        // `ctx.inject(['systemPrompt'])` from a misspelled service name, which is exactly the
+        // bug that shipped a prompt section nobody registered.
+        if (!names.every((name) => Object.hasOwn(present, name))) return () => {};
         callback(makeCtx({ ...extra, ...present }));
         return () => {};
       },
@@ -172,9 +200,10 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
 
   // `storageDomain` and `credentials` stand in for the Harness's own services, which the
   // default composition mounts. `webServer` is what makes the channel reachable.
-  const present: Record<string, unknown> = { webServer, storageDomain, credentials };
+  const present: Record<string, unknown> = { webServer, storageDomain, credentials, systemPrompt };
 
   const ctx = makeCtx({
+    systemPrompt,
     tools: {
       register(definition: { name?: string; execute?: (...args: any[]) => Promise<any> }) {
         tools.push(definition);
@@ -196,7 +225,7 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     }
   });
 
-  return { ctx, routes, upgrades, tools, guards, logger, disposers, injections, listeners };
+  return { ctx, routes, upgrades, tools, guards, logger, disposers, injections, listeners, promptSections, promptVariables };
 }
 
 /** Drive the `/rpc` route the way the browser half does. */
@@ -744,6 +773,39 @@ describe('dsh Host half — wiring', () => {
     }
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.some((row) => row.sessionId === undefined)).toBe(true);
+  });
+
+  it("registers the guidance section, and its variable before the text that references it", async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    // Interpolation is strict: an unregistered `{{name}}` throws during assembly, which
+    // fails every model request rather than one tool call. So the variable must exist.
+    expect(harness.promptVariables.map((entry) => entry.name)).toEqual(["at_terminal_trust"]);
+    expect(harness.promptSections).toHaveLength(1);
+
+    const [section] = harness.promptSections;
+    expect(section.name).toBe("tool:at-terminal");
+    // The order is read from the host table, never written as a literal here.
+    expect(section.order).toBe(1000);
+    expect(section.text).toContain("{{at_terminal_trust}}");
+
+    // `assemble()` calls providers synchronously — a promise here would interpolate as
+    // "[object Promise]" rather than fail, which is the worse outcome.
+    const fact = harness.promptVariables[0].provider();
+    expect(typeof fact).toBe("string");
+
+    // The same fact, through the channel a caller actually has: `ping` reports whether the
+    // section reached the host, because the assembled prompt is written nowhere readable.
+    const ping = harness.tools.find((tool) => tool.name === "at_terminal_ping");
+    const status = await ping?.execute?.({}, {});
+    expect(status.promptSection).toBe("registered (order 1000)");
+
+    // A leaked section outlives a reload and would be joined into the next assembly twice.
+    for (const dispose of harness.disposers) dispose();
+    expect(harness.promptSections).toHaveLength(0);
+    expect(harness.promptVariables).toHaveLength(0);
   });
 
 });
