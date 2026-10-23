@@ -99,6 +99,12 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 外壳、导航与分页由 `ui-settings-plugins` 拥有。页面所有颜色都是 `--dsw-*` token，因此跟随明暗主题；
 文案走本插件的中英双字典，不写死在组件里。
 
+**审批弹窗跟随系统语言。** 弹窗是在 Host 侧拼出来的，所以语言取的是**操作系统**的（macOS 读
+`AppleLocale`，否则用 `Intl`，再否则 `LC_ALL`/`LANG`），而不是应用的界面语言——后者存在渲染进程里，
+Host 侧插件看不到。系统判断不准时，把设置项 **`dialogLanguage`** 钉成 `zh-CN` 或 `en` 即可；
+默认 `auto` 跟随系统。实际生效的选择可以从插件通道的 `state.get` 读到
+（`dialogLanguage: {setting, system, language, strings}`），所以语言不对时不用花一次模型回合去排查。
+
 | 分区 | 内容 |
 |---|---|
 | 决策统计 | 最近 50 条授权判定怎么分布——放行、弹窗后确认、拒绝。数据来自 Agent 读的同一批审计行，页面与 Agent 不会各说一套。 |

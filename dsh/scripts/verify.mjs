@@ -1194,6 +1194,7 @@ const ILLEGAL_SETTINGS = [
   { field: 'semanticHighlight', value: 1, why: 'not a boolean' },
   { field: 'idleDisconnectMinutes', value: -5, why: 'below the minimum of 0' },
   { field: 'zebraStripes', value: 'yes', why: 'not a boolean' },
+  { field: 'dialogLanguage', value: 'fr', why: 'not one of auto / zh-CN / en' },
 ]
 
 /** Inclusive boundaries and documented defaults must stay accepted. */
@@ -1214,8 +1215,12 @@ if (sandboxSkipReason !== null) {
     // form is addressed by must be the row this bundle inserts.
     assert.equal(SETTINGS_SECTION_ID, AT_TERMINAL_PLUGIN_ID, 'SETTINGS_SECTION_ID must match the patch row id')
     assert.ok(Object.isFrozen(SETTINGS_FIELDS), 'SETTINGS_FIELDS must be frozen')
-    assert.equal(SETTINGS_FIELDS.length, 6, 'the bundle documents six settings fields')
+    assert.equal(SETTINGS_FIELDS.length, 7, 'the bundle documents seven settings fields')
     for (const field of SETTINGS_FIELDS) {
+      // `null` marks a dsh-only field (the dialog language: dsh keeps the UI language in the
+      // renderer and has no `sshManager.<key>` to mirror). A string still has to mirror the
+      // manifest exactly, so the original drift this assertion caught stays caught.
+      if (field.vscodeKey === null) continue
       assert.equal(field.vscodeKey, `sshManager.${field.key}`, `${field.key}: vscodeKey must mirror the manifest`)
     }
 
@@ -1312,7 +1317,10 @@ if (sandboxSkipReason !== null) {
       scrollback: 250000,
       semanticHighlight: false,
       idleDisconnectMinutes: 0,
-      zebraStripes: true
+      zebraStripes: true,
+      // `en` rather than the `auto` default, so the round-trip proves the pinned value survives
+      // instead of coinciding with what the schema would have produced anyway.
+      dialogLanguage: 'en'
     }
     const custom = schema(overrides)
     assert.deepEqual(readSettings(custom), overrides, 'valid overrides must round-trip through readSettings')

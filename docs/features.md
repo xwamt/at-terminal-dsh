@@ -102,6 +102,14 @@ Settings → Plugins → **AT Terminal** is a tab this plugin contributes into t
 shell (`settings.plugins.tab`); the page follows the light/dark theme because every colour on it is
 a `--dsw-*` token, and its copy comes from this plugin's dictionary in both languages.
 
+**Approval dialogs follow the system language.** They are composed on the Host side, so the
+language is resolved from the operating system (macOS `AppleLocale`, otherwise `Intl`, then
+`LC_ALL`/`LANG`) rather than from the app's UI language — that one lives in the renderer, where a
+Host plugin cannot see it. Setting **`dialogLanguage`** to `zh-CN` or `en` pins the dialogs when
+the system guess is wrong; `auto` (the default) follows the system. The effective choice is
+readable from `state.get` on the plugin's channel (`dialogLanguage: {setting, system, language,
+strings}`), so a wrong language can be diagnosed without spending a model turn.
+
 | Section | What it shows |
 |---|---|
 | Decisions | How the last 50 authorization decisions broke down — allowed, confirmed after a prompt, denied. Read from the same audit rows the agent reads, so the page and the agent cannot disagree. |

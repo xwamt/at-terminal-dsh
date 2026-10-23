@@ -536,7 +536,15 @@ export function registerChannel(ctx, options) {
         rejected,
         // Did the browser half ever run? See `clientHellos`.
         clientHellos: clientHellos.length,
-        lastClientHello: clientHellos.at(-1) ?? null
+        lastClientHello: clientHellos.at(-1) ?? null,
+        /**
+         * What language the approval dialogs will be written in, and why.
+         *
+         * Exposed here rather than only in the log because the interesting failure — a Chinese
+         * system showing English cards — has to be diagnosable without spending a model turn on
+         * a tool call that would show the card.
+         */
+        dialogLanguage: typeof options.dialogLanguage === 'function' ? options.dialogLanguage() : null
       }
     },
     /**

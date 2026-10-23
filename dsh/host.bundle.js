@@ -18851,23 +18851,42 @@ var TerminalContextRegistry = class {
   }
 };
 
+// src/i18n/copy.ts
+function copy(message, args2) {
+  try {
+    return args2 === void 0 ? t(message) : t(message, args2);
+  } catch {
+    return args2 === void 0 ? message : message.replace(
+      /\{(\w+)\}/g,
+      (placeholder, key) => Object.prototype.hasOwnProperty.call(args2, key) ? String(args2[key]) : placeholder
+    );
+  }
+}
+
 // src/utils/commandPreview.ts
-function truncateCommandPreview(command, maxLines = 20, maxChars = 800) {
+var COMMAND_PREVIEW_MAX_LINES = 20, COMMAND_PREVIEW_MAX_CHARS = 800;
+function truncateCommandPreview(command, maxLines = COMMAND_PREVIEW_MAX_LINES, maxChars = COMMAND_PREVIEW_MAX_CHARS) {
   let totalChars = command.length, totalLines = command.length === 0 ? 0 : command.split(`
 `).length, preview = command, lines = command.split(`
 `);
   return lines.length > maxLines && (preview = lines.slice(0, maxLines).join(`
 `)), preview.length > maxChars && (preview = preview.slice(0, maxChars)), preview !== command ? `${preview}
-\u2026 (truncated, ${totalChars} chars, ${totalLines} lines)` : command;
+${copy("\u2026 (truncated, {chars} chars, {lines} lines)", {
+    chars: totalChars,
+    lines: totalLines
+  })}` : command;
 }
 function formatRemoteCommandConfirmMessage(options) {
   let preview = truncateCommandPreview(options.command), warning = options.destructive ? `
 
-Warning: this command appears destructive.` : "", uniqueSummaries = [...new Set((options.riskSummaries ?? []).filter((summary) => summary.length > 0))], risks = uniqueSummaries.length === 0 ? "" : `
+${copy("Warning: this command appears destructive.")}` : "", uniqueSummaries = [...new Set((options.riskSummaries ?? []).filter((summary) => summary.length > 0))], risks = uniqueSummaries.length === 0 ? "" : `
 
 ${uniqueSummaries.map((summary) => `- ${summary}`).join(`
 `)}`;
-  return `Run remote command on ${options.serverLabel} (${options.host})?
+  return `${copy("Run remote command on {server} ({host})?", {
+    server: options.serverLabel,
+    host: options.host
+  })}
 
 ${preview}${warning}${risks}`;
 }
@@ -18883,18 +18902,22 @@ function describeAskFailure(error) {
 var SCOPE_QUESTION_ID = "at-terminal-sftp-write-scope", SCOPE_CHOICES = [
   {
     scope: "once",
-    label: "Allow Once",
-    describe: () => "Ask again before the next write."
+    label: copy("Allow Once"),
+    describe: () => copy("Ask again before the next write.")
   },
   {
     scope: "directory",
-    label: "Allow This Folder For 15 Minutes",
-    describe: (confirmation) => `Any write in ${confirmation.parentDirectory} without asking, for 15 minutes.`
+    label: copy("Allow This Folder For 15 Minutes"),
+    describe: (confirmation) => copy("Any write in {directory} without asking, for 15 minutes.", {
+      directory: confirmation.parentDirectory
+    })
   },
   {
     scope: "session",
-    label: "Allow This Folder For The Session",
-    describe: (confirmation) => `Any write in ${confirmation.parentDirectory} without asking until the session ends.`
+    label: copy("Allow This Folder For The Session"),
+    describe: (confirmation) => copy("Any write in {directory} without asking until the session ends.", {
+      directory: confirmation.parentDirectory
+    })
   }
 ], DshAgentConfirmation = class {
   constructor(options) {
@@ -18942,7 +18965,9 @@ var SCOPE_QUESTION_ID = "at-terminal-sftp-write-scope", SCOPE_CHOICES = [
       if (asked.asked)
         return asked.scope;
     }
-    let reason = confirmation.stage === "sensitive-double-check" ? `Double confirmation required for sensitive path: ${confirmation.request.path}` : `SFTP write requested: ${confirmation.request.path}`, displayReason = formatSftpWriteConfirmMessage(confirmation);
+    let reason = confirmation.stage === "sensitive-double-check" ? copy("Double confirmation required for sensitive path: {path}", {
+      path: confirmation.request.path
+    }) : copy("SFTP write requested: {path}", { path: confirmation.request.path }), displayReason = formatSftpWriteConfirmMessage(confirmation);
     return await approval.request({
       agent: callCtx.agent,
       toolName: confirmation.request.operation,
@@ -18995,13 +19020,13 @@ var SCOPE_QUESTION_ID = "at-terminal-sftp-write-scope", SCOPE_CHOICES = [
   }
 };
 function buildCommandApprovalCopy(request) {
-  let reason = request.destructive ? `\u26A0\uFE0F Destructive command warning: ${request.command}` : `Remote command requires confirmation: ${request.command}`, baseMessage = formatRemoteCommandConfirmMessage({
+  let reason = request.destructive ? copy("\u26A0\uFE0F Destructive command warning: {command}", { command: request.command }) : copy("Remote command requires confirmation: {command}", { command: request.command }), baseMessage = formatRemoteCommandConfirmMessage({
     serverLabel: request.serverLabel,
     host: request.host,
     command: request.command,
     destructive: request.destructive,
     riskSummaries: request.riskSummaries
-  }), displayReason = request.destructive ? `\u26A0\uFE0F Destructive command warning: this command appears destructive!
+  }), displayReason = request.destructive ? `${copy("\u26A0\uFE0F Destructive command warning: this command appears destructive!")}
 
 ${baseMessage}` : baseMessage;
   return { reason, displayReason };
@@ -19009,21 +19034,37 @@ ${baseMessage}` : baseMessage;
 function formatSftpWriteConfirmMessage(confirmation) {
   let { server, request } = confirmation, isDelete = request.operation === "delete_file", warnings = [];
   return confirmation.outsideWorkspace && warnings.push(
-    `WARNING: outside the working directory ${confirmation.workspaceRoot} that this session was opened in.`
-  ), confirmation.sensitive && warnings.push("WARNING: sensitive system path (SSH keys, service units, cron, or system configuration)."), confirmation.stage === "sensitive-double-check" ? [
-    `Double confirmation required: ${request.path} is a sensitive system path on ${server.label} (${server.host}).`,
+    copy("WARNING: outside the working directory {root} that this session was opened in.", {
+      root: confirmation.workspaceRoot
+    })
+  ), confirmation.sensitive && warnings.push(
+    copy("WARNING: sensitive system path (SSH keys, service units, cron, or system configuration).")
+  ), confirmation.stage === "sensitive-double-check" ? [
+    copy("Double confirmation required: {path} is a sensitive system path on {server} ({host}).", {
+      path: request.path,
+      server: server.label,
+      host: server.host
+    }),
     "",
-    isDelete ? "Deleting here can break logins, services, or scheduled jobs on the server." : "Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you.",
+    isDelete ? copy("Deleting here can break logins, services, or scheduled jobs on the server.") : copy(
+      "Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you."
+    ),
     "",
-    "Confirm to allow this single operation."
+    copy("Confirm to allow this single operation.")
   ].join(`
 `) : [
-    `Allow AT Terminal agent SFTP ${isDelete ? "deletion" : "write"} on ${server.label} (${server.host})?`,
+    isDelete ? copy("Allow AT Terminal agent SFTP deletion on {server} ({host})?", {
+      server: server.label,
+      host: server.host
+    }) : copy("Allow AT Terminal agent SFTP write on {server} ({host})?", {
+      server: server.label,
+      host: server.host
+    }),
     "",
-    `Operation: ${request.operation}`,
-    `Path: ${request.path}`,
-    `Folder: ${confirmation.parentDirectory}`,
-    ...request.overwrite !== void 0 ? [`Overwrite: ${request.overwrite ? "yes" : "no"}`] : [],
+    copy("Operation: {operation}", { operation: request.operation }),
+    copy("Path: {path}", { path: request.path }),
+    copy("Folder: {folder}", { folder: confirmation.parentDirectory }),
+    ...request.overwrite !== void 0 ? [copy("Overwrite: {value}", { value: request.overwrite ? copy("yes") : copy("no") })] : [],
     ...warnings.length > 0 ? ["", ...warnings] : []
   ].join(`
 `);
@@ -19329,6 +19370,7 @@ export {
   createDshAgentToolService,
   createDshAssetApi,
   createDshAuditLog,
+  createDshConfigReader,
   createDshPlatform,
   createDshPolicyEvaluator,
   createDshServerApi,

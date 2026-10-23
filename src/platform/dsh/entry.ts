@@ -18,6 +18,14 @@ import { ConfigManager } from '../../config/ConfigManager';
 import type { Platform } from '../../core/ports';
 
 export { createDshPlatform, type DshPlatformHandle } from './index';
+/**
+ * The config reader is exported for `dsh/index.js`, which resolves the dialog language before
+ * it builds the platform (the dictionary has to exist before the first approval card, and the
+ * language is a settings field). Going through this reader rather than reaching into the raw
+ * accessor map keeps the one documented read path — `getSection('sshManager').get(key, default)`
+ * — as the only way a setting is read on this platform.
+ */
+export { createDshConfigReader } from './config';
 export {
   SFTP_ERROR_BAD_PARAMS,
   SFTP_ERROR_BINARY_FILE,

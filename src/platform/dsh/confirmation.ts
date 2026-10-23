@@ -1,5 +1,6 @@
 import type { AgentConfirmationPort, CommandConfirmationRequest } from '../../agent/AgentConfirmationPort';
 import type { SftpWriteConfirmation, SftpWriteScope } from '../../agent/SftpWriteAuthorizer';
+import { copy } from '../../i18n/copy';
 import { formatRemoteCommandConfirmMessage } from '../../utils/commandPreview';
 
 export interface DshApprovalRequest {
@@ -94,20 +95,24 @@ const SCOPE_CHOICES: ReadonlyArray<{
 }> = [
   {
     scope: 'once',
-    label: 'Allow Once',
-    describe: () => 'Ask again before the next write.'
+    label: copy('Allow Once'),
+    describe: () => copy('Ask again before the next write.')
   },
   {
     scope: 'directory',
-    label: 'Allow This Folder For 15 Minutes',
+    label: copy('Allow This Folder For 15 Minutes'),
     describe: (confirmation) =>
-      `Any write in ${confirmation.parentDirectory} without asking, for 15 minutes.`
+      copy('Any write in {directory} without asking, for 15 minutes.', {
+        directory: confirmation.parentDirectory
+      })
   },
   {
     scope: 'session',
-    label: 'Allow This Folder For The Session',
+    label: copy('Allow This Folder For The Session'),
     describe: (confirmation) =>
-      `Any write in ${confirmation.parentDirectory} without asking until the session ends.`
+      copy('Any write in {directory} without asking until the session ends.', {
+        directory: confirmation.parentDirectory
+      })
   }
 ];
 
@@ -195,8 +200,10 @@ export class DshAgentConfirmation implements AgentConfirmationPort {
 
     const reason =
       confirmation.stage === 'sensitive-double-check'
-        ? `Double confirmation required for sensitive path: ${confirmation.request.path}`
-        : `SFTP write requested: ${confirmation.request.path}`;
+        ? copy('Double confirmation required for sensitive path: {path}', {
+            path: confirmation.request.path
+          })
+        : copy('SFTP write requested: {path}', { path: confirmation.request.path });
 
     const displayReason = formatSftpWriteConfirmMessage(confirmation);
 
@@ -285,8 +292,8 @@ export function buildCommandApprovalCopy(request: {
   riskSummaries?: readonly string[];
 }): { reason: string; displayReason: string } {
   const reason = request.destructive
-    ? `⚠️ Destructive command warning: ${request.command}`
-    : `Remote command requires confirmation: ${request.command}`;
+    ? copy('⚠️ Destructive command warning: {command}', { command: request.command })
+    : copy('Remote command requires confirmation: {command}', { command: request.command });
 
   const baseMessage = formatRemoteCommandConfirmMessage({
     serverLabel: request.serverLabel,
@@ -297,7 +304,7 @@ export function buildCommandApprovalCopy(request: {
   });
 
   const displayReason = request.destructive
-    ? `⚠️ Destructive command warning: this command appears destructive!\n\n${baseMessage}`
+    ? `${copy('⚠️ Destructive command warning: this command appears destructive!')}\n\n${baseMessage}`
     : baseMessage;
 
   return { reason, displayReason };
@@ -310,32 +317,52 @@ export function formatSftpWriteConfirmMessage(confirmation: SftpWriteConfirmatio
 
   if (confirmation.outsideWorkspace) {
     warnings.push(
-      `WARNING: outside the working directory ${confirmation.workspaceRoot} that this session was opened in.`
+      copy('WARNING: outside the working directory {root} that this session was opened in.', {
+        root: confirmation.workspaceRoot
+      })
     );
   }
   if (confirmation.sensitive) {
-    warnings.push('WARNING: sensitive system path (SSH keys, service units, cron, or system configuration).');
+    warnings.push(
+      copy('WARNING: sensitive system path (SSH keys, service units, cron, or system configuration).')
+    );
   }
 
   if (confirmation.stage === 'sensitive-double-check') {
     return [
-      `Double confirmation required: ${request.path} is a sensitive system path on ${server.label} (${server.host}).`,
+      copy('Double confirmation required: {path} is a sensitive system path on {server} ({host}).', {
+        path: request.path,
+        server: server.label,
+        host: server.host
+      }),
       '',
       isDelete
-        ? 'Deleting here can break logins, services, or scheduled jobs on the server.'
-        : 'Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you.',
+        ? copy('Deleting here can break logins, services, or scheduled jobs on the server.')
+        : copy(
+            'Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you.'
+          ),
       '',
-      'Confirm to allow this single operation.'
+      copy('Confirm to allow this single operation.')
     ].join('\n');
   }
 
   return [
-    `Allow AT Terminal agent SFTP ${isDelete ? 'deletion' : 'write'} on ${server.label} (${server.host})?`,
+    isDelete
+      ? copy('Allow AT Terminal agent SFTP deletion on {server} ({host})?', {
+          server: server.label,
+          host: server.host
+        })
+      : copy('Allow AT Terminal agent SFTP write on {server} ({host})?', {
+          server: server.label,
+          host: server.host
+        }),
     '',
-    `Operation: ${request.operation}`,
-    `Path: ${request.path}`,
-    `Folder: ${confirmation.parentDirectory}`,
-    ...(request.overwrite !== undefined ? [`Overwrite: ${request.overwrite ? 'yes' : 'no'}`] : []),
+    copy('Operation: {operation}', { operation: request.operation }),
+    copy('Path: {path}', { path: request.path }),
+    copy('Folder: {folder}', { folder: confirmation.parentDirectory }),
+    ...(request.overwrite !== undefined
+      ? [copy('Overwrite: {value}', { value: request.overwrite ? copy('yes') : copy('no') })]
+      : []),
     ...(warnings.length > 0 ? ['', ...warnings] : [])
   ].join('\n');
 }

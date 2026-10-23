@@ -100,6 +100,24 @@ export const SETTINGS_FIELDS = Object.freeze([
     type: 'boolean',
     default: false,
     description: 'Alternate row backgrounds in asset and SFTP lists.'
+  }),
+
+  Object.freeze({
+    key: 'dialogLanguage',
+    /**
+     * No VS Code counterpart, and `null` says so.
+     *
+     * The extension inherits the editor's display language; dsh keeps the UI language in the
+     * renderer, where a Host plugin cannot see it, so this bundle reads the **system** language
+     * instead and offers this field to override it. Recording a fabricated `sshManager.` key
+     * here would claim the two surfaces have a field in common when they do not.
+     */
+    vscodeKey: null,
+    type: 'string',
+    pattern: '^(auto|zh-CN|en)$',
+    default: 'auto',
+    description:
+      'Language for approval dialogs. "auto" follows the operating system; "zh-CN" and "en" pin it.'
   })
 ])
 
@@ -130,6 +148,11 @@ function buildFieldSchema(z, field) {
     case 'string':
       schema = z.string()
       if (field.minLength !== undefined) schema = schema.min(field.minLength)
+      // A closed set of strings is expressed as a pattern: schemastery here has no `const`, so
+      // `z.union` of string schemas would validate the type and accept every value. The pattern
+      // is what makes the write guard real — an unsupported value is rejected at `edit()` time
+      // rather than silently normalised to `auto` at read time.
+      if (field.pattern !== undefined) schema = schema.pattern(new RegExp(field.pattern))
       break
     case 'boolean':
       schema = z.boolean()

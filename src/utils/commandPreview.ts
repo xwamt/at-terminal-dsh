@@ -1,3 +1,5 @@
+import { copy } from '../i18n/copy';
+
 export const COMMAND_PREVIEW_MAX_LINES = 20;
 export const COMMAND_PREVIEW_MAX_CHARS = 800;
 
@@ -17,7 +19,10 @@ export function truncateCommandPreview(
     preview = preview.slice(0, maxChars);
   }
   if (preview !== command) {
-    return `${preview}\n… (truncated, ${totalChars} chars, ${totalLines} lines)`;
+    return `${preview}\n${copy('… (truncated, {chars} chars, {lines} lines)', {
+      chars: totalChars,
+      lines: totalLines
+    })}`;
   }
   return command;
 }
@@ -30,8 +35,12 @@ export function formatRemoteCommandConfirmMessage(options: {
   riskSummaries?: readonly string[];
 }): string {
   const preview = truncateCommandPreview(options.command);
-  const warning = options.destructive ? '\n\nWarning: this command appears destructive.' : '';
+  const warning = options.destructive ? `\n\n${copy('Warning: this command appears destructive.')}` : '';
   const uniqueSummaries = [...new Set((options.riskSummaries ?? []).filter((summary) => summary.length > 0))];
   const risks = uniqueSummaries.length === 0 ? '' : `\n\n${uniqueSummaries.map((summary) => `- ${summary}`).join('\n')}`;
-  return `Run remote command on ${options.serverLabel} (${options.host})?\n\n${preview}${warning}${risks}`;
+  const heading = copy('Run remote command on {server} ({host})?', {
+    server: options.serverLabel,
+    host: options.host
+  });
+  return `${heading}\n\n${preview}${warning}${risks}`;
 }

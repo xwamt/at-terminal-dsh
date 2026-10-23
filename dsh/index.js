@@ -40,6 +40,7 @@ import { classify, createGuard, createPreExecute } from './policy.js'
 import { TRUST_VARIABLE, promptSection, recordSectionRegistration, trustFact } from './prompt.js'
 import { RUNTIME_SKILLS, recordSkillStatus, registerRuntimeSkills, verifyRegisteredSkills } from './skills.js'
 import { createConfigSchema, readSettings } from './settings.js'
+import { loadDialogMessages, resolveDialogLanguage, systemLanguageTag } from './locale.js'
 import { createTools } from './tools.js'
 // Compiled from src/platform/dsh/entry.ts by `node dsh/esbuild.dsh.mjs`. The domain
 // layer is TypeScript and this file is not, so the bundle is the seam — and it exists as
@@ -49,6 +50,7 @@ import {
   buildCommandApprovalCopy,
   createDshAgentToolService,
   createDshAssetApi,
+  createDshConfigReader,
   createDshAuditLog,
   createDshPlatform,
   createDshServerApi,
@@ -381,6 +383,30 @@ export function apply(ctx, config = {}) {
   // runs and the plugin stays fully functional without its browser half, which is what
   // makes it installable into a profile that composes differently.
   ctx.inject(['webServer', 'storageDomain', 'credentials'], (scoped) => {
+    /**
+     * Settings are read through the documented port, not off the raw accessor map:
+     * `getSection('sshManager').get(key, default)` is the one section this platform serves, and
+     * the gate that rejects an unsupported section is what keeps a typo from silently reading
+     * defaults.
+     */
+    const settingsSection = createDshConfigReader(config).getSection('sshManager')
+
+    /**
+     * The language the approval dialogs are written in.
+     *
+     * Resolved once per activation: the dictionary has to exist before the first card is drawn,
+     * and the language only changes through a settings edit that reloads the plugin. `auto`
+     * follows the **operating system** — see `locale.js` for why not the app's UI language (that
+     * one lives in the renderer, where a Host plugin cannot see it).
+     */
+    const dialogLanguageSetting = settingsSection.get('dialogLanguage', 'auto')
+    const languageTag = systemLanguageTag()
+    const dialogLanguage = resolveDialogLanguage(dialogLanguageSetting, languageTag)
+    const dialogMessages = loadDialogMessages(bundlePath, dialogLanguage)
+    scoped.logger?.info?.(
+      `at-terminal: approval dialogs in ${dialogLanguage} ` +
+        `(setting ${dialogLanguageSetting}, system ${languageTag}, ${Object.keys(dialogMessages).length} strings)`
+    )
     let assets
     let servers
     let terminal
@@ -393,6 +419,15 @@ export function apply(ctx, config = {}) {
       // The resolved row config: `apply` receives `resolveConfig()`'s output, where each
       // `.volatile()` field is a per-call accessor.
       settings: config,
+      /**
+       * The dictionary the approval dialogs are rendered through.
+       *
+       * Read here, once per activation, because the language is a settings field and the
+       * dictionary has to exist before the first card is drawn. `auto` follows the operating
+       * system (see `locale.js` for why the system and not the app's UI language: the UI
+       * language lives in the renderer and a Host plugin cannot see it).
+       */
+      messages: dialogMessages,
       facts: {
         pluginName: pkg.name,
         pluginVersion: pkg.version,
@@ -526,7 +561,15 @@ export function apply(ctx, config = {}) {
         // Synchronous and always available: `config` is the resolved row itself, so the
         // terminal page can read the user's font/scrollback/highlight settings (DSH-31)
         // without waiting on — or depending on — the platform assembly.
-        resolveSettings: () => readSettings(config)
+        resolveSettings: () => readSettings(config),
+        // Readable through `state.get` without spending a model turn: the language the dialogs
+        // will use, why, and how many strings the dictionary carries.
+        dialogLanguage: () => ({
+          setting: dialogLanguageSetting,
+          system: languageTag,
+          language: dialogLanguage,
+          strings: Object.keys(dialogMessages).length
+        })
       })
     )
 
