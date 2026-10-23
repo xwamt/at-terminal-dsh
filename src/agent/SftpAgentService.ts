@@ -4,6 +4,12 @@ import { dirname, joinRemotePath } from '../sftp/RemotePath';
 import type { TerminalContext, TerminalContextRegistry } from '../terminal/TerminalContext';
 import type { AgentAuditRecorder } from './AgentAuditLog';
 import type { SftpWriteAuthorizer } from './SftpWriteAuthorizer';
+import {
+  implicitTarget,
+  type ResolvedBy,
+  type ServerCandidate,
+  type ServerTargetIntent
+} from './serverTarget';
 
 export interface AgentSftpSession {
   connect(): Promise<void>;
@@ -47,6 +53,10 @@ interface SftpTarget {
   terminalId?: string;
   server: ServerConfig;
   context?: TerminalContext;
+  /** How this target was decided — recorded on the read results, see `serverTarget.ts`. */
+  resolvedBy: ResolvedBy;
+  /** Present only when the choice was ambiguous and therefore had to be stated. */
+  candidates?: ServerCandidate[];
 }
 
 interface SessionLease {
@@ -114,7 +124,7 @@ export class SftpAgentService {
 
   async listDirectory(input: SftpTargetInput & { path?: string; maxEntries?: number; offset?: number }) {
     return await this.withAudit('sftp_list_directory', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'read');
       const lease = await this.leaseFor(target);
       try {
         const path = await this.resolvePath(lease, input.path);
@@ -129,6 +139,10 @@ export class SftpAgentService {
         return {
           terminalId: target.terminalId,
           serverId: target.server.id,
+          // Said out loud, not implied: with several servers connected this call picked one,
+          // and the caller has to be able to tell which — and on what grounds.
+          resolvedBy: target.resolvedBy,
+          ...(target.candidates === undefined ? {} : { candidates: target.candidates }),
           path,
           entries: page,
           truncated: offset + page.length < entries.length,
@@ -143,13 +157,15 @@ export class SftpAgentService {
 
   async statPath(input: SftpTargetInput & { path: string }) {
     return await this.withAudit('sftp_stat_path', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'read');
       const lease = await this.leaseFor(target);
       try {
         const path = await this.resolvePath(lease, input.path);
         return {
           terminalId: target.terminalId,
           serverId: target.server.id,
+          resolvedBy: target.resolvedBy,
+          ...(target.candidates === undefined ? {} : { candidates: target.candidates }),
           path,
           ...(await withTimeout(
             lease.session.stat(path),
@@ -165,7 +181,7 @@ export class SftpAgentService {
 
   async readFile(input: SftpTargetInput & { path: string; maxBytes?: number; offset?: number }) {
     return await this.withAudit('sftp_read_file', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'read');
       const lease = await this.leaseFor(target);
       try {
         const path = await this.resolvePath(lease, input.path);
@@ -193,6 +209,8 @@ export class SftpAgentService {
         return {
           terminalId: target.terminalId,
           serverId: target.server.id,
+          resolvedBy: target.resolvedBy,
+          ...(target.candidates === undefined ? {} : { candidates: target.candidates }),
           path,
           content: buffer.toString('utf8'),
           truncated: start + buffer.length < stat.size,
@@ -208,7 +226,7 @@ export class SftpAgentService {
 
   async writeFile(input: SftpTargetInput & { path: string; content: string; overwrite?: boolean }) {
     return await this.withAudit('sftp_write_file', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'write');
       const lease = await this.leaseFor(target);
       try {
         const { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
@@ -247,7 +265,7 @@ export class SftpAgentService {
 
   async createFile(input: SftpTargetInput & { path: string; content?: string }) {
     return await this.withAudit('sftp_create_file', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'write');
       const lease = await this.leaseFor(target);
       try {
         const { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
@@ -286,7 +304,7 @@ export class SftpAgentService {
 
   async createDirectory(input: SftpTargetInput & { path: string }) {
     return await this.withAudit('sftp_create_directory', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'write');
       const lease = await this.leaseFor(target);
       try {
         const { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
@@ -314,7 +332,7 @@ export class SftpAgentService {
 
   async rename(input: SftpTargetInput & { path: string; newPath: string }) {
     return await this.withAudit('sftp_rename', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'write');
       const lease = await this.leaseFor(target);
       try {
         const source = await this.resolveWritablePath(lease, input.path);
@@ -366,7 +384,7 @@ export class SftpAgentService {
 
   async deleteFile(input: SftpTargetInput & { path: string }) {
     return await this.withAudit('sftp_delete', input, async () => {
-      const target = await this.resolveTarget(input);
+      const target = await this.resolveTarget(input, 'write');
       const lease = await this.leaseFor(target);
       try {
         const { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
@@ -447,13 +465,32 @@ export class SftpAgentService {
     this.roots.clear();
   }
 
-  private async resolveTarget(input: SftpTargetInput): Promise<SftpTarget> {
+  /**
+   * Resolve the server and session a call acts on.
+   *
+   * `intent` is what makes the no-`serverId` case safe: a read with several servers connected
+   * is allowed and says how it chose, a write throws instead of picking one. See
+   * `serverTarget.ts` for why the difference is not a nicety — a write that lands on the wrong
+   * host is indistinguishable from a successful one.
+   */
+  private async resolveTarget(input: SftpTargetInput, intent: ServerTargetIntent): Promise<SftpTarget> {
+    if (!input.terminalId && !input.serverId) {
+      const choice = implicitTarget(this.options.terminalContext, intent);
+      if (choice.context) {
+        return {
+          terminalId: choice.context.terminalId,
+          server: choice.context.server,
+          context: choice.context,
+          resolvedBy: choice.resolvedBy,
+          ...(choice.candidates === undefined ? {} : { candidates: choice.candidates })
+        };
+      }
+    }
     const context =
       this.options.terminalContext.getConnectedTerminalById(input.terminalId) ??
-      this.options.terminalContext.getConnectedTerminalByServerId(input.serverId) ??
-      (!input.terminalId && !input.serverId ? this.options.terminalContext.getConnectedTerminal() : undefined);
+      this.options.terminalContext.getConnectedTerminalByServerId(input.serverId);
     if (context) {
-      return { terminalId: context.terminalId, server: context.server, context };
+      return { terminalId: context.terminalId, server: context.server, context, resolvedBy: 'explicit' };
     }
     if (input.serverId && this.options.resolveBackgroundServer) {
       const server = await this.options.resolveBackgroundServer(input.serverId);
@@ -467,7 +504,7 @@ export class SftpAgentService {
             'or connect an AT Terminal session to that server.'
         );
       }
-      return { server };
+      return { server, resolvedBy: 'explicit' };
     }
     throw new Error(
       'No matching connected AT Terminal SSH session is available. Connect an AT Terminal session first.'

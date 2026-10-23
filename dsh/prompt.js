@@ -49,6 +49,8 @@ Trust decides who answers: "none" asks before every command, "policy" asks unles
 
 A result larger than the inline budget is written to a file and its spillPath is returned: read that path with offset/limit instead of re-running the command. Truncated or spilled is not the same as failed. A background command returns a job id: collect it with at_terminal_job_output, end it with at_terminal_job_kill, and a killed job means the remote process is gone.
 
+When several servers are connected, name serverId on every write or execute call (sftp_write_file, sftp_create_file, sftp_create_directory, sftp_rename, sftp_delete, run_remote_command). Those calls refuse to guess rather than act on the wrong host. Read calls may omit it: they use the active terminal and report resolvedBy as "implicit" with the candidate list, or "single-connected" when only one server was connected.
+
 Servers and trust right now: {{${TRUST_VARIABLE}}}`;
 
 /** One line naming each server and its trust, bounded so a big inventory stays one line. */

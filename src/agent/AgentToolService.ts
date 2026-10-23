@@ -1,6 +1,6 @@
 import type { ConfigManager } from '../config/ConfigManager';
 import type { ServerConfig } from '../config/schema';
-import type { TerminalContextRegistry, TerminalContextSnapshot } from '../terminal/TerminalContext';
+import type { TerminalContext, TerminalContextRegistry, TerminalContextSnapshot } from '../terminal/TerminalContext';
 import type { AgentAuditRecorder } from './AgentAuditLog';
 import type { AgentConfirmationPort } from './AgentConfirmationPort';
 import type {
@@ -13,6 +13,7 @@ import { readTerminateReport, terminateScript } from './remoteCommandShell';
 import type { RemoteCommandAuthorization } from './remoteCommandAuthorization';
 import type { RemoteCommandPolicyEvaluator } from './loadRemoteCommandPolicy';
 import type { SftpAgentService } from './SftpAgentService';
+import { implicitTarget, type ResolvedBy, type ServerCandidate, type ServerTargetIntent } from './serverTarget';
 import type { HardwareMetricsCollector } from './HardwareMetricsCollector';
 import type { AgentExecutionBridge } from './AgentExecutionBridge';
 import type {
@@ -21,6 +22,17 @@ import type {
   HardwareMetrics,
   MonitorControlMessage
 } from '../platform/dsh/client/models';
+
+/**
+ * The "how was this host chosen" half of a read result.
+ *
+ * Carried separately from `HardwareMetrics` because the collector knows nothing about target
+ * resolution and should not have to: the service is the layer that decided.
+ */
+export interface MetricsResolution {
+  resolvedBy: ResolvedBy;
+  candidates?: ServerCandidate[];
+}
 
 /**
  * The audit trail as a *reader*: newest `limit` rows, or `undefined` when the evidence is
@@ -148,15 +160,28 @@ export class AgentToolService {
    */
   async authorizeCommand(
     input: RemoteCommandAuthorizationInput
-  ): Promise<{ server: ServerConfig; authorization: RemoteCommandAuthorization }> {
-    const server = await this.resolveServer(input.serverId);
+  ): Promise<{
+    server: ServerConfig;
+    authorization: RemoteCommandAuthorization;
+    resolvedBy: ResolvedBy;
+    candidates?: ServerCandidate[];
+  }> {
+    // Write intent: a command can change the host, so an unnamed target with several servers
+    // connected must fail rather than pick the most recent one. This is also the path
+    // `dsh/policy.js` calls from `tools/pre-execute`, so the gate and the body agree on it.
+    const target = await this.resolveTarget(input.serverId, 'write');
     const authorization = await authorizeRemoteCommand({
-      server,
+      server: target.server,
       command: input.command,
       cwd: input.cwd,
       evaluator: this.dependencies.policyEvaluator
     });
-    return { server, authorization };
+    return {
+      server: target.server,
+      authorization,
+      resolvedBy: target.resolvedBy,
+      ...(target.candidates === undefined ? {} : { candidates: target.candidates })
+    };
   }
 
   async runRemoteCommand(input: RunRemoteCommandInput): Promise<RemoteCommandResult> {
@@ -174,7 +199,7 @@ export class AgentToolService {
       status: 'running'
     });
     try {
-      const { server, authorization } = await this.authorizeCommand({
+      const { server, authorization, resolvedBy } = await this.authorizeCommand({
         serverId: input.serverId,
         command,
         cwd: input.cwd
@@ -225,7 +250,10 @@ export class AgentToolService {
         reasonCode: result.timedOut ? 'command_timeout' : reasonCode,
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        truncated: result.truncated
+        truncated: result.truncated,
+        // How this host was chosen. `single-connected` is the useful one to have in writing:
+        // it says the caller named nothing and there was only one answer at the time.
+        resolvedBy
       });
       this.dependencies.executionBridge?.recordAudit({
         tool: 'run_remote_command',
@@ -278,7 +306,7 @@ export class AgentToolService {
    */
   async terminateRemoteCommand(serverId: string | undefined, pidfile: string): Promise<RemoteCommandTermination> {
     try {
-      const server = await this.resolveServer(serverId);
+      const server = await this.resolveServer(serverId, 'write');
       const result = await this.dependencies.executor.execute(server, {
         command: terminateScript(pidfile),
         // Bounded and short: this runs while a job is already settling, and a kill that hangs
@@ -332,10 +360,17 @@ export class AgentToolService {
     }
   }
 
-  async getHardwareMetrics(serverId?: string): Promise<HardwareMetrics> {
-    const server = await this.resolveServer(serverId);
+  async getHardwareMetrics(serverId?: string): Promise<HardwareMetrics & MetricsResolution> {
+    // Read intent: metrics can be inferred when only one server is connected, and when several
+    // are, the numbers are still worth having as long as they say which host they describe.
+    const target = await this.resolveTarget(serverId, 'read');
+    const resolution: MetricsResolution = {
+      resolvedBy: target.resolvedBy,
+      ...(target.candidates === undefined ? {} : { candidates: target.candidates })
+    };
+    const server = target.server;
     if (this.dependencies.metricsCollector) {
-      return await this.dependencies.metricsCollector.getMetrics(server);
+      return { ...(await this.dependencies.metricsCollector.getMetrics(server)), ...resolution };
     }
     return {
       serverId: server.id,
@@ -358,7 +393,8 @@ export class AgentToolService {
         ]
       },
       network: { rxBytesPerSec: 1024 * 20, txBytesPerSec: 1024 * 5 },
-      processes: []
+      processes: [],
+      ...resolution
     };
   }
 
@@ -415,7 +451,13 @@ export class AgentToolService {
     let targetServerId = input.serverId;
     if (!targetServerId && input.target === 'hardware') {
       try {
-        const srv = await this.resolveServer(undefined);
+        // Read intent, on purpose, and this is the one place the plan and the code disagree.
+        // §S5-04 groups `open_monitor` with the write/execute tools, but opening a monitor
+        // changes nothing on the remote host — and with several servers connected the useful
+        // answer is "show me the one I am looking at", which is what the HUD and the pane both
+        // already do when no server is named. Throwing here would turn a UI pivot into an error
+        // the model has to retry, for a call that cannot harm anything.
+        const srv = await this.resolveServer(undefined, 'read');
         targetServerId = srv.id;
       } catch {}
     }
@@ -622,44 +664,61 @@ export class AgentToolService {
     }
   }
 
-  private async resolveServer(serverId: string | undefined): Promise<ServerConfig> {
-    if (serverId === 'active' || !serverId) {
+  /**
+   * Resolve the target **and say how**, because "which host answered" is part of the answer.
+   *
+   * The old version returned a `ServerConfig` and nothing else, which made the implicit
+   * branch indistinguishable from an explicit one: with three servers connected, a call that
+   * named none silently used the most recent terminal and looked identical to a call that
+   * named it. `intent` decides what may be inferred — see `serverTarget.ts`.
+   */
+  private async resolveTarget(
+    serverId: string | undefined,
+    intent: ServerTargetIntent
+  ): Promise<{ server: ServerConfig; resolvedBy: ResolvedBy; candidates?: ServerCandidate[] }> {
+    if (serverId === 'active') {
       const connected = this.dependencies.terminalContext.getConnectedTerminal();
-      if (connected) {
-        // Live UI terminal connection is enough; background auth is only for no-UI paths.
-        const latest = await this.dependencies.configManager.getServer(connected.server.id);
-        if (latest) {
-          this.dependencies.terminalContext.updateServer(latest);
-          return latest;
-        }
-        return connected.server;
-      }
-      if (serverId === 'active') {
+      if (!connected) {
         throw new Error('No connected active SSH terminal is available.');
       }
+      return { server: await this.refreshConnected(connected), resolvedBy: 'explicit' };
     }
 
-    if (serverId && serverId !== 'active') {
+    if (serverId) {
       const connectedByServer = this.dependencies.terminalContext.getConnectedTerminalByServerId(serverId);
       if (connectedByServer) {
-        const latest = await this.dependencies.configManager.getServer(connectedByServer.server.id);
-        if (latest) {
-          this.dependencies.terminalContext.updateServer(latest);
-          return latest;
-        }
-        return connectedByServer.server;
+        return { server: await this.refreshConnected(connectedByServer), resolvedBy: 'explicit' };
       }
+      const server = await this.dependencies.configManager.getServer(serverId);
+      if (!server) {
+        throw new Error(`SSH server "${serverId}" was not found.`);
+      }
+      return { server: this.requireBackgroundConnectionAllowed(server), resolvedBy: 'explicit' };
     }
 
-    if (!serverId) {
+    const choice = implicitTarget(this.dependencies.terminalContext, intent);
+    if (!choice.context) {
       throw new Error('serverId is required when there is no connected active SSH terminal.');
     }
+    return {
+      server: await this.refreshConnected(choice.context),
+      resolvedBy: choice.resolvedBy,
+      ...(choice.candidates === undefined ? {} : { candidates: choice.candidates })
+    };
+  }
 
-    const server = await this.dependencies.configManager.getServer(serverId);
-    if (!server) {
-      throw new Error(`SSH server "${serverId}" was not found.`);
+  /** Re-read the config so an edit made after connect is not lost, then hand back the server. */
+  private async refreshConnected(context: TerminalContext): Promise<ServerConfig> {
+    const latest = await this.dependencies.configManager.getServer(context.server.id);
+    if (latest) {
+      this.dependencies.terminalContext.updateServer(latest);
+      return latest;
     }
-    return this.requireBackgroundConnectionAllowed(server);
+    return context.server;
+  }
+
+  private async resolveServer(serverId: string | undefined, intent: ServerTargetIntent = 'read'): Promise<ServerConfig> {
+    return (await this.resolveTarget(serverId, intent)).server;
   }
 
   private requireBackgroundConnectionAllowed(server: ServerConfig): ServerConfig {

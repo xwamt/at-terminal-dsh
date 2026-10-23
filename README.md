@@ -136,6 +136,7 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 传统的 AI IDE 往往依赖独立的 stdio/HTTP MCP Server 进程进行中转，存在进程通信开销大、状态同步复杂、生命周期脱节的问题。
 - **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 17 个直连工具，覆盖 SSH 服务器、远程命令（含后台作业与作业控制）、终端上下文、8 个 SFTP 操作、硬件指标、Agent 执行状态与监控面板，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
 - **运行期技能与提示词**：通过 `ctx.inject(['skills'])` 注册三个运行期技能（巡检 / 远端编辑 / 故障记录），工具规则集中在一个提示词段里，工具定义体积比逐条描述小 45%。
+- **多服务器不猜目标**：同时连着多台服务器时，写类 / 执行类工具没拿到 `serverId` 会直接报错并列出候选（打错机器的写入会返回看起来成功的 `exitCode: 0`）；读类工具仍跟随活动终端，但结果里带 `resolvedBy` 与 `candidates`，事后能查「这次打到哪台、怎么定的」。
 - **全生命周期协同**：
   - **动态取消响应**：完全感知 `exec.signal`，当用户在 DSH 界面点击停止生成或取消任务时，远端 SSH 命令与传输流立即被精确中断。
   - **原生审批通道**：无缝对接 DSH 的 `ctx.approval` 交互机制。

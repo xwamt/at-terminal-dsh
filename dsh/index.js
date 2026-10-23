@@ -134,6 +134,12 @@ function auditEntryFrom(exec, result) {
   if (typeof value?.exitCode === 'number') entry.exitCode = value.exitCode
   if (typeof value?.durationMs === 'number') entry.durationMs = value.durationMs
   if (typeof value?.truncated === 'boolean') entry.truncated = value.truncated
+  // How the host was decided, when the call named none. `serverId` says *which*; this says
+  // *on what grounds*, which is the question that matters once several servers are connected
+  // — and the one a later reader cannot reconstruct from the row alone.
+  if (value?.resolvedBy === 'explicit' || value?.resolvedBy === 'single-connected' || value?.resolvedBy === 'implicit') {
+    entry.resolvedBy = value.resolvedBy
+  }
   return entry
 }
 

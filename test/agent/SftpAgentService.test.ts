@@ -76,6 +76,7 @@ describe('SftpAgentService', () => {
     await expect(service.listDirectory({ path: '.' })).resolves.toEqual({
       terminalId: 'terminal-1',
       serverId: 'server-1',
+      resolvedBy: 'single-connected',
       path: '/home/deploy',
       entries: [{ name: 'app.js', path: '/home/deploy/app.js', type: 'file', size: 10, modifiedAt: 1 }],
       truncated: false,
@@ -105,6 +106,7 @@ describe('SftpAgentService', () => {
     await expect(service.listDirectory({ path: '/tmp', maxEntries: 5 })).resolves.toEqual({
       terminalId: 'terminal-1',
       serverId: 'server-1',
+      resolvedBy: 'single-connected',
       path: '/tmp',
       entries: entries.slice(0, 5),
       truncated: true,
@@ -193,6 +195,7 @@ describe('SftpAgentService', () => {
     await expect(service.readFile({ path: '/home/deploy/app.txt', maxBytes: 5 })).resolves.toEqual({
       terminalId: 'terminal-1',
       serverId: 'server-1',
+      resolvedBy: 'single-connected',
       path: '/home/deploy/app.txt',
       content: 'hello',
       truncated: true,
@@ -651,6 +654,7 @@ describe('SftpAgentService background sessions', () => {
     await expect(service.listDirectory({ serverId: 'server-9', path: '.' })).resolves.toEqual({
       terminalId: undefined,
       serverId: 'server-9',
+      resolvedBy: 'explicit',
       path: '/srv/app',
       entries: [{ name: 'app.js', path: '/srv/app/app.js', type: 'file', size: 10, modifiedAt: 1 }],
       truncated: false,
@@ -934,5 +938,89 @@ describe('SftpAgentService read deadlines', () => {
       'Timed out reading metadata for /home/deploy/app.js.',
       'sftp_stat_path'
     );
+  });
+});
+
+/**
+ * S5-04 — the same split on the file side.
+ *
+ * `SftpAgentService` resolved its target independently of `AgentToolService`, so the rule had to
+ * be applied twice; these cases prove the second application is real rather than assumed. The
+ * write case also asserts the **session was never created**: a refusal that has already opened an
+ * SSH connection to the guessed host is not a refusal.
+ */
+describe('SftpAgentService — an unnamed target with several servers connected (S5-04)', () => {
+  function multiServerRegistry(): TerminalContextRegistry {
+    const registry = new TerminalContextRegistry();
+    for (const id of ['server-1', 'server-2', 'server-3']) {
+      registry.setActive({
+        terminalId: `terminal-${id}`,
+        server: server(id),
+        connected: true,
+        write: vi.fn()
+      });
+    }
+    return registry;
+  }
+
+  it('refuses a write that names no server, before touching any host', async () => {
+    const session = makeSession();
+    const createSession = vi.fn(() => session as never);
+    const service = new SftpAgentService({
+      terminalContext: multiServerRegistry(),
+      createSession,
+      authorizer: authorizer()
+    });
+
+    await expect(service.writeFile({ path: 'app.conf', content: 'x' })).rejects.toThrow(
+      /3 SSH servers are connected.*Call again with serverId.*server-1 \(server-1\).*server-3 \(server-3\)/s
+    );
+    expect(createSession).not.toHaveBeenCalled();
+    expect(session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a delete that names no server too — the whole write family, not just the writes', async () => {
+    const service = new SftpAgentService({
+      terminalContext: multiServerRegistry(),
+      createSession: () => makeSession() as never,
+      authorizer: authorizer()
+    });
+
+    await expect(service.deleteFile({ path: 'app.log' })).rejects.toThrow(/3 SSH servers are connected/);
+  });
+
+  it('lets a read infer, and reports the host plus every candidate', async () => {
+    const session = makeSession({
+      listDirectory: vi.fn(async () => [
+        { name: 'app.js', path: '/home/deploy/app.js', type: 'file', size: 1, modifiedAt: 1 }
+      ])
+    });
+    const service = new SftpAgentService({
+      terminalContext: multiServerRegistry(),
+      createSession: () => session as never,
+      authorizer: authorizer()
+    });
+
+    const listing = await service.listDirectory({ path: '.' });
+
+    expect(listing).toMatchObject({
+      serverId: 'server-3',
+      resolvedBy: 'implicit',
+      total: 1
+    });
+    expect(listing.candidates?.map((candidate) => candidate.id)).toEqual(['server-1', 'server-2', 'server-3']);
+  });
+
+  it('still takes an explicit serverId with three connected', async () => {
+    const service = new SftpAgentService({
+      terminalContext: multiServerRegistry(),
+      createSession: () => makeSession() as never,
+      authorizer: authorizer()
+    });
+
+    const listing = await service.listDirectory({ serverId: 'server-1', path: '.' });
+
+    expect(listing).toMatchObject({ serverId: 'server-1', resolvedBy: 'explicit' });
+    expect(listing.candidates).toBeUndefined();
   });
 });

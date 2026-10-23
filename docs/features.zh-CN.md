@@ -118,6 +118,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 - 只读工具不会返回密码、私钥或 SecretStorage 内容。
 - 后台命令的确认在**作业启动之前**完成，绝不在作业内部发起：作业已脱离这次调用，此时弹窗会出现在没有工具调用在飞的状态下，用户无处回答。若当前组合没有作业注册表，该调用会降级为前台执行，并在 `notice` 里说明原因。
 - 取消后台命令会向远端**进程组**发 `SIGTERM`，并等到它真正消失才把作业结算为 killed——只关闭本地 SSH 通道会让进程继续跑。被信号的 pid 来自作业在远端写下的文件（以 job id 命名），发送信号前先删除该文件。
+- 同时连着多台服务器时，「没有指定 serverId」的调用按它能不能改远端来区别对待。**写类与执行类**（`sftp_write_file`、`sftp_create_file`、`sftp_create_directory`、`sftp_rename`、`sftp_delete`、`run_remote_command`）直接报错并列出所有已连接服务器，**一个字都不会发到任何主机**——打错机器的写入会返回一个看起来像成功的 `exitCode: 0`，比失败更危险。**读类**（`sftp_list_directory`、`sftp_stat_path`、`sftp_read_file`、`get_hardware_metrics`）仍跟随当前活动终端，但结果里写 `resolvedBy: "implicit"` 并附候选列表；只连一台时写 `"single-connected"`。`open_monitor` 按读类处理：它只切换面板，不改远端。
 - SFTP 读取有大小限制，避免把大文件直接灌入 Agent 上下文。
 - SFTP 的读取、列目录与 stat 有 30 秒上限：通道卡住时会以带路径的超时失败，而不是返回一个看起来像空文件的结果；写入与删除的确认另有 60 秒预算。
 - 写入工具会解析远程路径，不允许修改远程根路径。

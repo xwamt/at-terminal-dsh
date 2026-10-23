@@ -372,7 +372,9 @@ describe('AgentToolService', () => {
       reasonCode: 'auto_approved',
       exitCode: 0,
       durationMs: 7,
-      truncated: false
+      truncated: false,
+      // Said out loud now: the call named server-1, so the row records how it was chosen.
+      resolvedBy: 'explicit'
     });
   });
 
@@ -1045,3 +1047,89 @@ describe('AgentToolService', () => {
   });
 });
 
+
+/**
+ * S5-04 — several servers connected, and the call named none.
+ *
+ * The old fallback was "the most recently connected terminal", applied identically to reads and
+ * writes. With one server up that is the whole answer; with three it is a guess, and a write that
+ * lands on the wrong host returns `exitCode: 0` like any other success. These cases pin the split:
+ * a read may infer and must say so, a write refuses and lists what it could have meant.
+ */
+describe('AgentToolService — an unnamed target with several servers connected (S5-04)', () => {
+  function multiServerRegistry(): TerminalContextRegistry {
+    const registry = new TerminalContextRegistry();
+    for (const id of ['server-1', 'server-2', 'server-3']) {
+      registry.setActive({ terminalId: `terminal-${id}`, server: server(id), connected: true, write: vi.fn() });
+    }
+    return registry;
+  }
+
+  const configManager = {
+    getServer: async (id: string) => [server('server-1'), server('server-2'), server('server-3')].find((s) => s.id === id),
+    listServers: async () => [server('server-1'), server('server-2'), server('server-3')]
+  };
+
+  it('refuses to execute a command that did not name one of three servers', async () => {
+    const execute = vi.fn();
+    const service = createService({
+      configManager: configManager as never,
+      terminalContext: multiServerRegistry(),
+      executor: { execute } as unknown as RemoteCommandExecutor
+    });
+
+    await expect(service.runRemoteCommand({ command: 'systemctl restart api' })).rejects.toThrow(
+      // The message has to carry the ids a retry can use *and* the labels a person recognises.
+      /3 SSH servers are connected.*Call again with serverId.*server-1 \(Production\).*server-3 \(Staging\)/s
+    );
+    // The failure is the point: nothing reached a host, and no dialog was raised for a command
+    // that could not have been authorized against a known target anyway.
+    expect(execute).not.toHaveBeenCalled();
+    expect(mockConfirmation.confirmCommand).not.toHaveBeenCalled();
+  });
+
+  it('lets a read infer, and reports which host answered and what else it could have been', async () => {
+    const service = createService({
+      configManager: configManager as never,
+      terminalContext: multiServerRegistry(),
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor
+    });
+
+    const metrics = await service.getHardwareMetrics();
+
+    expect(metrics.resolvedBy).toBe('implicit');
+    // `server-3` is the most recently connected terminal, and it still wins — the convenience is
+    // unchanged; what changed is that the answer now says so.
+    expect(metrics.serverId).toBe('server-3');
+    expect(metrics.candidates?.map((candidate) => candidate.id)).toEqual(['server-1', 'server-2', 'server-3']);
+  });
+
+  it('says single-connected for a read when only one server is up', async () => {
+    const registry = new TerminalContextRegistry();
+    registry.setActive({ terminalId: 'terminal-1', server: server('server-1'), connected: true, write: vi.fn() });
+    const service = createService({
+      configManager: { getServer: async () => server('server-1'), listServers: async () => [server('server-1')] } as never,
+      terminalContext: registry,
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor
+    });
+
+    const metrics = await service.getHardwareMetrics();
+
+    expect(metrics.resolvedBy).toBe('single-connected');
+    expect(metrics.serverId).toBe('server-1');
+    expect(metrics.candidates).toBeUndefined();
+  });
+
+  it('leaves an explicit serverId alone, even with three connected', async () => {
+    const service = createService({
+      configManager: configManager as never,
+      terminalContext: multiServerRegistry(),
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor
+    });
+
+    const metrics = await service.getHardwareMetrics('server-1');
+
+    expect(metrics).toMatchObject({ serverId: 'server-1', resolvedBy: 'explicit' });
+    expect(metrics.candidates).toBeUndefined();
+  });
+});

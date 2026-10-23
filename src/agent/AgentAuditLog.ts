@@ -22,6 +22,14 @@ export interface AgentAuditEntry {
   exitCode?: number | null;
   durationMs?: number;
   truncated?: boolean;
+  /**
+   * How the target host was decided, when the call named no server.
+   *
+   * `serverId` alone answers "which host"; this answers "on what grounds", and the two are
+   * different questions the moment more than one server is connected. `implicit` in a row is
+   * the flag that says "this row's host was inferred from the most recent terminal".
+   */
+  resolvedBy?: 'explicit' | 'single-connected' | 'implicit';
 }
 
 export interface AgentAuditChannel {

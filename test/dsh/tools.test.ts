@@ -880,3 +880,86 @@ describe('the tool definitions', () => {
     expect(trustFact()).toBe('production (full)');
   });
 });
+
+/**
+ * S5-04 — the read tools' half of the target-resolution contract.
+ *
+ * The service decides (see `src/agent/serverTarget.ts`); the tool is where that decision either
+ * reaches the model or is lost. Two things have to survive the trip: the machine-readable
+ * `resolvedBy`/`candidates` in the result, and one readable line in `render` — because a model
+ * that only reads the rendered text would otherwise never learn the host was inferred.
+ */
+describe('dsh/tools.js — read tools report how the host was chosen (S5-04)', () => {
+  const READ_TOOLS = [
+    'at_terminal_sftp_list_directory',
+    'at_terminal_sftp_stat_path',
+    'at_terminal_sftp_read_file',
+    'at_terminal_get_hardware_metrics'
+  ];
+
+  it('declares resolvedBy and candidates on every read tool, and on no write tool', () => {
+    const tools = createTools({ version: '0.0.0' });
+    for (const name of READ_TOOLS) {
+      const tool = tools.find((t: any) => t.name === name)!;
+      const properties = tool.output.schema.properties;
+      expect(Object.keys(properties), name).toEqual(expect.arrayContaining(['resolvedBy', 'candidates']));
+    }
+    // A write tool that inferred its host would be the bug this whole card is about, so it must
+    // not advertise the field: the absence is the assertion.
+    const write = tools.find((t: any) => t.name === 'at_terminal_sftp_write_file')!;
+    expect(write.output.schema.properties.resolvedBy).toBeUndefined();
+  });
+
+  it('passes resolvedBy and candidates through from the service', async () => {
+    const candidates = [
+      { id: 'server-1', label: 'Production' },
+      { id: 'server-2', label: 'Staging' }
+    ];
+    const mockService = {
+      sftpListDirectory: vi.fn().mockResolvedValue({
+        terminalId: 'terminal-2',
+        serverId: 'server-2',
+        resolvedBy: 'implicit',
+        candidates,
+        path: '/srv',
+        entries: [],
+        truncated: false,
+        offset: 0,
+        total: 0
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const tool = tools.find((t: any) => t.name === 'at_terminal_sftp_list_directory')!;
+
+    const result = await tool.execute({ path: '/srv' }, {});
+    expect(result).toMatchObject({ resolvedBy: 'implicit', candidates });
+
+    const rendered = tool.output.render({ path: '/srv' }, result);
+    expect(rendered[0].text).toContain('Resolved implicitly to server-2');
+    expect(rendered[0].text).toContain('server-1 (Production)');
+    expect(rendered[0].text).toContain('Pass serverId to name one.');
+  });
+
+  it('says nothing extra when the call named its server', async () => {
+    const mockService = {
+      sftpListDirectory: vi.fn().mockResolvedValue({
+        terminalId: 'terminal-1',
+        serverId: 'server-1',
+        resolvedBy: 'explicit',
+        path: '/srv',
+        entries: [],
+        truncated: false,
+        offset: 0,
+        total: 0
+      })
+    };
+    const tools = createTools({ version: '0.1.0', resolveAgentService: () => mockService });
+    const tool = tools.find((t: any) => t.name === 'at_terminal_sftp_list_directory')!;
+
+    const result = await tool.execute({ serverId: 'server-1', path: '/srv' }, {});
+    // No note, no candidate list: there was nothing to explain, and an "explicit" note on every
+    // listing is noise the model pays for with every call.
+    expect(tool.output.render({ path: '/srv' }, result)[0].text).not.toContain('Resolved implicitly');
+    expect(result.candidates).toBeUndefined();
+  });
+});

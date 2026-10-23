@@ -16286,6 +16286,37 @@ function readTerminateReport(stdout) {
   return killed ? { killed: !0, pid: killed[1] } : { killed: !1 };
 }
 
+// src/agent/serverTarget.ts
+var ServerTargetError = class extends Error {
+  code = "server-required";
+  candidates;
+  constructor(candidates, intent) {
+    let verb = intent === "write" ? "This call can modify the remote host" : "This call could not pick a server";
+    super(
+      `${verb}, and ${candidates.length} SSH servers are connected, so the target is ambiguous. Call again with serverId. Connected servers: ` + candidates.map((candidate) => `${candidate.id} (${candidate.label})`).join(", ") + "."
+    ), this.name = "ServerTargetError", this.candidates = candidates;
+  }
+};
+function connectedServerCandidates(registry) {
+  let seen = /* @__PURE__ */ new Map();
+  for (let terminal of registry.getSnapshot().connectedTerminals)
+    seen.has(terminal.serverId) || seen.set(terminal.serverId, { id: terminal.serverId, label: terminal.label });
+  return [...seen.values()];
+}
+function implicitTarget(registry, intent) {
+  let candidates = connectedServerCandidates(registry);
+  if (candidates.length > 1) {
+    if (intent === "write")
+      throw new ServerTargetError(candidates, intent);
+    return {
+      context: registry.getConnectedTerminal(),
+      resolvedBy: "implicit",
+      candidates
+    };
+  }
+  return { context: registry.getConnectedTerminal(), resolvedBy: "single-connected" };
+}
+
 // src/agent/AgentToolService.ts
 var AgentToolService = class {
   constructor(dependencies) {
@@ -16324,13 +16355,18 @@ var AgentToolService = class {
    * one answer.
    */
   async authorizeCommand(input) {
-    let server = await this.resolveServer(input.serverId), authorization = await authorizeRemoteCommand({
-      server,
+    let target2 = await this.resolveTarget(input.serverId, "write"), authorization = await authorizeRemoteCommand({
+      server: target2.server,
       command: input.command,
       cwd: input.cwd,
       evaluator: this.dependencies.policyEvaluator
     });
-    return { server, authorization };
+    return {
+      server: target2.server,
+      authorization,
+      resolvedBy: target2.resolvedBy,
+      ...target2.candidates === void 0 ? {} : { candidates: target2.candidates }
+    };
   }
   async runRemoteCommand(input) {
     let command = input.command?.trim();
@@ -16344,7 +16380,7 @@ var AgentToolService = class {
       status: "running"
     });
     try {
-      let { server, authorization } = await this.authorizeCommand({
+      let { server, authorization, resolvedBy } = await this.authorizeCommand({
         serverId: input.serverId,
         command,
         cwd: input.cwd
@@ -16381,7 +16417,10 @@ var AgentToolService = class {
         reasonCode: result.timedOut ? "command_timeout" : reasonCode,
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        truncated: result.truncated
+        truncated: result.truncated,
+        // How this host was chosen. `single-connected` is the useful one to have in writing:
+        // it says the caller named nothing and there was only one answer at the time.
+        resolvedBy
       }), this.dependencies.executionBridge?.recordAudit({
         tool: "run_remote_command",
         serverId: result.serverId,
@@ -16427,7 +16466,7 @@ var AgentToolService = class {
    */
   async terminateRemoteCommand(serverId, pidfile) {
     try {
-      let server = await this.resolveServer(serverId), result = await this.dependencies.executor.execute(server, {
+      let server = await this.resolveServer(serverId, "write"), result = await this.dependencies.executor.execute(server, {
         command: terminateScript(pidfile),
         // Bounded and short: this runs while a job is already settling, and a kill that hangs
         // must not outlive the thing it was meant to end.
@@ -16467,8 +16506,11 @@ var AgentToolService = class {
     }
   }
   async getHardwareMetrics(serverId) {
-    let server = await this.resolveServer(serverId);
-    return this.dependencies.metricsCollector ? await this.dependencies.metricsCollector.getMetrics(server) : {
+    let target2 = await this.resolveTarget(serverId, "read"), resolution = {
+      resolvedBy: target2.resolvedBy,
+      ...target2.candidates === void 0 ? {} : { candidates: target2.candidates }
+    }, server = target2.server;
+    return this.dependencies.metricsCollector ? { ...await this.dependencies.metricsCollector.getMetrics(server), ...resolution } : {
       serverId: server.id,
       timestamp: Date.now(),
       cpu: { usagePercent: 12, cores: [12], loadAvg: [0.4, 0.5, 0.45] },
@@ -16489,7 +16531,8 @@ var AgentToolService = class {
         ]
       },
       network: { rxBytesPerSec: 1024 * 20, txBytesPerSec: 1024 * 5 },
-      processes: []
+      processes: [],
+      ...resolution
     };
   }
   async getAgentExecutionStatus(limit) {
@@ -16520,7 +16563,7 @@ var AgentToolService = class {
     let mode = input.mode ?? "hud", targetServerId = input.serverId;
     if (!targetServerId && input.target === "hardware")
       try {
-        targetServerId = (await this.resolveServer(void 0)).id;
+        targetServerId = (await this.resolveServer(void 0, "read")).id;
       } catch {
       }
     let presence = this.dependencies.resolveClientPresence?.();
@@ -16672,29 +16715,46 @@ var AgentToolService = class {
       }), error;
     }
   }
-  async resolveServer(serverId) {
-    if (serverId === "active" || !serverId) {
+  /**
+   * Resolve the target **and say how**, because "which host answered" is part of the answer.
+   *
+   * The old version returned a `ServerConfig` and nothing else, which made the implicit
+   * branch indistinguishable from an explicit one: with three servers connected, a call that
+   * named none silently used the most recent terminal and looked identical to a call that
+   * named it. `intent` decides what may be inferred — see `serverTarget.ts`.
+   */
+  async resolveTarget(serverId, intent) {
+    if (serverId === "active") {
       let connected = this.dependencies.terminalContext.getConnectedTerminal();
-      if (connected) {
-        let latest = await this.dependencies.configManager.getServer(connected.server.id);
-        return latest ? (this.dependencies.terminalContext.updateServer(latest), latest) : connected.server;
-      }
-      if (serverId === "active")
+      if (!connected)
         throw new Error("No connected active SSH terminal is available.");
+      return { server: await this.refreshConnected(connected), resolvedBy: "explicit" };
     }
-    if (serverId && serverId !== "active") {
+    if (serverId) {
       let connectedByServer = this.dependencies.terminalContext.getConnectedTerminalByServerId(serverId);
-      if (connectedByServer) {
-        let latest = await this.dependencies.configManager.getServer(connectedByServer.server.id);
-        return latest ? (this.dependencies.terminalContext.updateServer(latest), latest) : connectedByServer.server;
-      }
+      if (connectedByServer)
+        return { server: await this.refreshConnected(connectedByServer), resolvedBy: "explicit" };
+      let server = await this.dependencies.configManager.getServer(serverId);
+      if (!server)
+        throw new Error(`SSH server "${serverId}" was not found.`);
+      return { server: this.requireBackgroundConnectionAllowed(server), resolvedBy: "explicit" };
     }
-    if (!serverId)
+    let choice = implicitTarget(this.dependencies.terminalContext, intent);
+    if (!choice.context)
       throw new Error("serverId is required when there is no connected active SSH terminal.");
-    let server = await this.dependencies.configManager.getServer(serverId);
-    if (!server)
-      throw new Error(`SSH server "${serverId}" was not found.`);
-    return this.requireBackgroundConnectionAllowed(server);
+    return {
+      server: await this.refreshConnected(choice.context),
+      resolvedBy: choice.resolvedBy,
+      ...choice.candidates === void 0 ? {} : { candidates: choice.candidates }
+    };
+  }
+  /** Re-read the config so an edit made after connect is not lost, then hand back the server. */
+  async refreshConnected(context) {
+    let latest = await this.dependencies.configManager.getServer(context.server.id);
+    return latest ? (this.dependencies.terminalContext.updateServer(latest), latest) : context.server;
+  }
+  async resolveServer(serverId, intent = "read") {
+    return (await this.resolveTarget(serverId, intent)).server;
   }
   requireBackgroundConnectionAllowed(server) {
     if (server.backgroundConnectionAllowed !== !0)
@@ -17242,7 +17302,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   roots = /* @__PURE__ */ new Map();
   async listDirectory(input) {
     return await this.withAudit("sftp_list_directory", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
       try {
         let path = await this.resolvePath(lease, input.path), entries = await withTimeout2(
           lease.session.listDirectory(path),
@@ -17252,6 +17312,10 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         return {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
+          // Said out loud, not implied: with several servers connected this call picked one,
+          // and the caller has to be able to tell which — and on what grounds.
+          resolvedBy: target2.resolvedBy,
+          ...target2.candidates === void 0 ? {} : { candidates: target2.candidates },
           path,
           entries: page,
           truncated: offset + page.length < entries.length,
@@ -17265,12 +17329,14 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async statPath(input) {
     return await this.withAudit("sftp_stat_path", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
       try {
         let path = await this.resolvePath(lease, input.path);
         return {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
+          resolvedBy: target2.resolvedBy,
+          ...target2.candidates === void 0 ? {} : { candidates: target2.candidates },
           path,
           ...await withTimeout2(
             lease.session.stat(path),
@@ -17285,7 +17351,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async readFile(input) {
     return await this.withAudit("sftp_read_file", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
       try {
         let path = await this.resolvePath(lease, input.path), stat = await withTimeout2(
           lease.session.stat(path),
@@ -17301,6 +17367,8 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         return {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
+          resolvedBy: target2.resolvedBy,
+          ...target2.candidates === void 0 ? {} : { candidates: target2.candidates },
           path,
           content: buffer.toString("utf8"),
           truncated: start2 + buffer.length < stat.size,
@@ -17315,7 +17383,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async writeFile(input) {
     return await this.withAudit("sftp_write_file", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
       try {
         let { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path), exists = await pathExists(lease.session, path);
         if (exists && !input.overwrite)
@@ -17349,7 +17417,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async createFile(input) {
     return await this.withAudit("sftp_create_file", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
       try {
         let { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
         if (await pathExists(lease.session, path))
@@ -17379,7 +17447,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async createDirectory(input) {
     return await this.withAudit("sftp_create_directory", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
       try {
         let { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
         return await withTimeout2(
@@ -17403,7 +17471,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async rename(input) {
     return await this.withAudit("sftp_rename", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
       try {
         let source = await this.resolveWritablePath(lease, input.path), destination = await this.resolveWritablePath(lease, input.newPath);
         if (!await pathExists(lease.session, source.path))
@@ -17445,7 +17513,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async deleteFile(input) {
     return await this.withAudit("sftp_delete", input, async () => {
-      let target2 = await this.resolveTarget(input), lease = await this.leaseFor(target2);
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
       try {
         let { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path), entryType2 = await remoteEntryType(lease.session, path);
         if (entryType2 === void 0)
@@ -17502,10 +17570,29 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
       );
     this.terminalSessions.clear(), this.roots.clear();
   }
-  async resolveTarget(input) {
-    let context = this.options.terminalContext.getConnectedTerminalById(input.terminalId) ?? this.options.terminalContext.getConnectedTerminalByServerId(input.serverId) ?? (!input.terminalId && !input.serverId ? this.options.terminalContext.getConnectedTerminal() : void 0);
+  /**
+   * Resolve the server and session a call acts on.
+   *
+   * `intent` is what makes the no-`serverId` case safe: a read with several servers connected
+   * is allowed and says how it chose, a write throws instead of picking one. See
+   * `serverTarget.ts` for why the difference is not a nicety — a write that lands on the wrong
+   * host is indistinguishable from a successful one.
+   */
+  async resolveTarget(input, intent) {
+    if (!input.terminalId && !input.serverId) {
+      let choice = implicitTarget(this.options.terminalContext, intent);
+      if (choice.context)
+        return {
+          terminalId: choice.context.terminalId,
+          server: choice.context.server,
+          context: choice.context,
+          resolvedBy: choice.resolvedBy,
+          ...choice.candidates === void 0 ? {} : { candidates: choice.candidates }
+        };
+    }
+    let context = this.options.terminalContext.getConnectedTerminalById(input.terminalId) ?? this.options.terminalContext.getConnectedTerminalByServerId(input.serverId);
     if (context)
-      return { terminalId: context.terminalId, server: context.server, context };
+      return { terminalId: context.terminalId, server: context.server, context, resolvedBy: "explicit" };
     if (input.serverId && this.options.resolveBackgroundServer) {
       let server = await this.options.resolveBackgroundServer(input.serverId);
       if (!server)
@@ -17514,7 +17601,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         throw new Error(
           `SSH server "${server.id}" does not allow background connections. Ask the user to enable "Allow background connections" on the AT Terminal server edit form, or connect an AT Terminal session to that server.`
         );
-      return { server };
+      return { server, resolvedBy: "explicit" };
     }
     throw new Error(
       "No matching connected AT Terminal SSH session is available. Connect an AT Terminal session first."

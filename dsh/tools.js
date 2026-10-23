@@ -119,6 +119,49 @@ const SFTP_TARGET_PROPERTIES = Object.freeze({
 })
 
 /**
+ * The "how was the target decided" half of a **read** result.
+ *
+ * Read tools may infer a host when the caller names none (see `src/agent/serverTarget.ts`), so
+ * they have to say so — otherwise a call that used the most recently connected terminal is
+ * byte-identical to one that named it, and the model's evidence about a host becomes a guess it
+ * cannot see. Write tools do not carry these: they refuse to infer, so there is nothing to report.
+ */
+const RESOLUTION_PROPERTIES = Object.freeze({
+  resolvedBy: { type: 'string' },
+  candidates: {
+    type: 'array',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { id: { type: 'string' }, label: { type: 'string' } }
+    }
+  }
+})
+
+/** Project a service result's resolution fields into the tool result, if it reported any. */
+function resolutionOf(result) {
+  return {
+    ...(typeof result?.resolvedBy === 'string' ? { resolvedBy: result.resolvedBy } : {}),
+    ...(Array.isArray(result?.candidates)
+      ? { candidates: result.candidates.map((c) => ({ id: String(c.id), label: String(c.label) })) }
+      : {})
+  }
+}
+
+/**
+ * The sentence a read tool appends when it had to infer the host.
+ *
+ * Empty in the ordinary case, so it costs nothing on the call that named its server or ran with
+ * one connected — and it names every candidate plus the fix, because "ambiguous" without the list
+ * leaves the model with a retry it cannot compose.
+ */
+function implicitNote(val) {
+  if (val?.resolvedBy !== 'implicit' || !Array.isArray(val.candidates)) return ''
+  const list = val.candidates.map((c) => `${c.id} (${c.label})`).join(', ')
+  return `\nResolved implicitly to ${val.serverId}: ${val.candidates.length} servers are connected (${list}). Pass serverId to name one.`
+}
+
+/**
  * Validate the argument object before it reaches a service.
  *
  * The Harness does not enforce a tool's `parameters` schema itself, so a call with a missing
@@ -652,14 +695,15 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
           },
           truncated: { type: 'boolean' },
           offset: { type: 'integer' },
-          total: { type: 'integer' }
+          total: { type: 'integer' },
+          ...RESOLUTION_PROPERTIES
         }
       },
       render(_args, val) {
         return [
           {
             type: 'text',
-            text: `SFTP listing for ${val.path} (${val.entries.length}/${val.total} entries${val.truncated ? ', truncated' : ''}):\n${val.entries.map((e) => `  ${e.type === 'directory' ? 'd' : '-'} ${e.name} (${e.size}B)`).join('\n')}`
+            text: `SFTP listing for ${val.path} (${val.entries.length}/${val.total} entries${val.truncated ? ', truncated' : ''}):\n${val.entries.map((e) => `  ${e.type === 'directory' ? 'd' : '-'} ${e.name} (${e.size}B)`).join('\n')}${implicitNote(val)}`
           }
         ]
       }
@@ -675,6 +719,7 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
+          ...resolutionOf(res),
           path: res.path,
           entries: (res.entries || []).map((e) => ({
             name: e.name,
@@ -721,14 +766,15 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
           type: { type: 'string' },
           size: { type: 'integer' },
           modifiedAt: { type: 'integer' },
-          permissions: { oneOf: [{ type: 'integer' }, { type: 'null' }] }
+          permissions: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
+          ...RESOLUTION_PROPERTIES
         }
       },
       render(_args, val) {
         return [
           {
             type: 'text',
-            text: `Stat ${val.path}: type=${val.type}, size=${val.size}B, modifiedAt=${formatEpochSeconds(val.modifiedAt)}`
+            text: `Stat ${val.path}: type=${val.type}, size=${val.size}B, modifiedAt=${formatEpochSeconds(val.modifiedAt)}${implicitNote(val)}`
           }
         ]
       }
@@ -745,6 +791,7 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
+          ...resolutionOf(res),
           path: res.path,
           type: res.type ?? 'file',
           size: typeof res.size === 'number' ? res.size : 0,
@@ -788,14 +835,15 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext, reso
           offset: { type: 'integer' },
           size: { type: 'integer' },
           modifiedAt: { type: 'integer' },
-          spillPath: { oneOf: [{ type: 'string' }, { type: 'null' }] }
+          spillPath: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          ...RESOLUTION_PROPERTIES
         }
       },
       render(_args, val) {
         return [
           {
             type: 'text',
-            text: `Read ${val.path} (${val.content.length} chars, total size ${val.size}B${val.truncated ? ', truncated' : ''}):\n\`\`\`\n${val.content}\n\`\`\``
+            text: `Read ${val.path} (${val.content.length} chars, total size ${val.size}B${val.truncated ? ', truncated' : ''}):\n\`\`\`\n${val.content}\n\`\`\`${implicitNote(val)}`
           }
         ]
       }
@@ -820,6 +868,7 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext, reso
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
+          ...resolutionOf(res),
           path: res.path,
           content: spilled.text,
           spillPath: spilled.spillPath,
@@ -1296,7 +1345,8 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
                 command: { type: 'string' }
               }
             }
-          }
+          },
+          ...RESOLUTION_PROPERTIES
         }
       },
       render(_args, val) {
@@ -1315,6 +1365,8 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
             ? `Top: ${processes.map((p) => `${p.pid} ${p.command} (cpu ${p.cpu}%, mem ${p.mem}%)`).join('; ')}${moreProcesses > 0 ? ` (+${moreProcesses} more)` : ''}`
             : 'Top: n/a'
         ]
+        const implied = implicitNote(val)
+        if (implied !== '') lines.push(implied.trim())
         return [{ type: 'text', text: lines.join('\n') }]
       }
     },
@@ -1330,6 +1382,7 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
         const processes = res.processes || []
         return {
           serverId: res.serverId,
+          ...resolutionOf(res),
           timestamp: res.timestamp,
           cpuUsagePercent: res.cpu.usagePercent,
           loadAvg: res.cpu.loadAvg,
