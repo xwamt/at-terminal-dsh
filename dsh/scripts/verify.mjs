@@ -1549,7 +1549,48 @@ await check('client', 'Client half satisfies the browser-bundle contract', async
     'xterm belongs to the chunk only: the entry must not contain it, or first paint pays for a panel nobody opened'
   )
 
-  return `${manifest.name} -> ${rel} (${source.length} B) + ${chunkRel} (${chunkSource.length} B), factory executes (apply + inject[${plugin.inject.length}])`
+  // 5. The styles chunk, checked the same way and for the same reason.
+  //
+  //    `styles.ts` is 77 kB of stylesheet strings. It used to be injected in `apply()`, so every
+  //    boot paid for it; it is now fetched by the first surface that renders. The failure mode
+  //    is identical to xterm's: one accidental `import { ensureStyles } from './styles'` puts it
+  //    back into the entry, everything still works, and only the payload changes.
+  const stylesRel = './client.styles.js'
+  const stylesPath = path.resolve(BUNDLE_DIR, stylesRel)
+  assert.ok(fs.existsSync(stylesPath), `the styles chunk is missing: ${stylesRel}`)
+  assert.ok(
+    new Set(manifest.files ?? []).has(stylesRel.replace(/^\.\//, '')),
+    `files must list ${stylesRel}, or the browser 404s the chunk`
+  )
+  const stylesSource = fs.readFileSync(stylesPath, 'utf8')
+  const stylesLead = stylesSource.replace(/^\/\*[\s\S]*?\*\/\s*/, '')
+  assert.ok(
+    stylesLead.startsWith('window.__ModuleLoader__.load({'),
+    'the styles chunk must register through window.__ModuleLoader__.load({...}) as its first statement'
+  )
+  assert.equal(
+    stylesSource.split('window.__ModuleLoader__.load(').length - 1,
+    1,
+    'the styles chunk must register exactly once'
+  )
+  assert.equal(
+    stylesSource.match(/\bid:\s*["']([^"']+)["']/)?.[1],
+    manifest.name,
+    'the styles chunk id must equal the package name: the loader keys a chunk by (id, chunk)'
+  )
+  assert.ok(
+    /chunk:\s*["']client\.styles\.js["']/.test(stylesSource),
+    'the styles chunk must declare its own file name in a `chunk` field'
+  )
+  //    The marker is the style element id, not the function name: the entry legitimately mentions
+  //    `ensureStyles` (it calls the one the chunk exports), while the id literal exists only where
+  //    the stylesheet is built.
+  assert.ok(
+    /at-terminal-client-styles/.test(stylesSource) && !/at-terminal-client-styles/.test(source),
+    'the stylesheet belongs to the styles chunk only: the entry must not build it, or every boot pays for it'
+  )
+
+  return `${manifest.name} -> ${rel} (${source.length} B) + ${chunkRel} (${chunkSource.length} B) + ${stylesRel} (${stylesSource.length} B), factory executes (apply + inject[${plugin.inject.length}])`
 })
 
 /* --------------------------------- 8. build artifact -------------------------- */

@@ -57,8 +57,8 @@ import {
   getActiveTerminalState,
   type ActiveTerminalState
 } from './sessions';
-import { ensureStyles } from './styles';
 import { clearAllTabState, clearTabState } from './tabState';
+import { disposeStyles, withStyles } from './stylesGate';
 import { setFormatLocale } from './localeFormat';
 import { gaugeRegular, guideTerminalArtwork } from './icons';
 import type { AgentAuditSummary, AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
@@ -491,6 +491,25 @@ function MonitorHeaderButton(props: { t: Translate; onOpenPane: () => void }) {
     'button',
     {
       className: 'att-nav-btn att-icon-btn',
+      // Styled inline as well as by class: this button lives in the conversation header, so it
+      // mounts in *every* session, and a class-only button would drag the styles chunk onto that
+      // path (which is the whole 77 kB the split exists to avoid). The inline copy is the static
+      // half of `.att-nav-btn`; hover and the selected state still come from the stylesheet once
+      // some other surface has loaded it.
+      style: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '28px',
+        padding: '0 10px',
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--vscode-descriptionForeground)',
+        borderRadius: 'var(--dsw-radius-sm)',
+        cursor: 'pointer',
+        font: 'inherit',
+        fontSize: '12px'
+      },
       title: props.t('monitor.title'),
       'aria-label': props.t('monitor.title'),
       onClick: () => props.onOpenPane()
@@ -693,7 +712,9 @@ export function apply(ctx: ClientContext): void {
   }
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'at-terminal: dictionaries');
-  ctx.effect(() => ensureStyles(document), 'at-terminal: styles');
+  // The stylesheet is a chunk now: injected by the first surface that renders, not here.
+  // This effect only owns the teardown, so an unload still removes what the gate added.
+  ctx.effect(() => () => disposeStyles(), 'at-terminal: styles teardown');
   ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), 'at-terminal: assets tab type');
   ctx.effect(
     () => ctx.sidebarRightTabs.register(sessionDefinition(t)),
@@ -938,7 +959,7 @@ export function apply(ctx: ClientContext): void {
         // whichever registered last.
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID, locale: NS },
-          wrapWithLocale(AtTerminalBody, t, { openSessionTab, openMonitorTab })
+          wrapWithLocale(withStyles(AtTerminalBody), t, { openSessionTab, openMonitorTab })
         )
       ),
     'at-terminal: assets pane body'
@@ -949,7 +970,7 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('sidebar.right.pane.tab', () =>
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID_SESSION, locale: NS },
-          wrapWithLocale(AtTerminalSessionBody, t, { openMonitorTab })
+          wrapWithLocale(withStyles(AtTerminalSessionBody), t, { openMonitorTab })
         )
       ),
     'at-terminal: terminal pane body'
@@ -960,7 +981,7 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('sidebar.right.pane.tab', () =>
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID_MONITOR, locale: NS },
-          wrapWithLocale(AtTerminalMonitorBody, t)
+          wrapWithLocale(withStyles(AtTerminalMonitorBody), t)
         )
       ),
     'at-terminal: monitor pane body'
@@ -1012,7 +1033,7 @@ export function apply(ctx: ClientContext): void {
           // `t` from `BodyLocale` — exactly like the two sidebar bodies. A bare registration
           // compiles and mounts, and then prints dictionary keys or, worse, whatever language
           // was hard-coded, to a user whose Harness is in the other one.
-          wrapWithLocale(AtTerminalSettingsTab, t)
+          wrapWithLocale(withStyles(AtTerminalSettingsTab), t)
         )
       ),
     'at-terminal: settings tab'
@@ -1024,7 +1045,7 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register(
           { name: 'shell.overlay', id: '@at-series/dsh-at-terminal/monitor-hud', locale: NS },
-          wrapWithLocale(MonitorHudContainer, t, {
+          wrapWithLocale(withStyles(MonitorHudContainer), t, {
             onRegisterController: (ctrl: HudController | null) => {
               hudController = ctrl;
             }
@@ -1069,7 +1090,7 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('tool.call.toolview', () =>
         ctx.slots.register(
           { name: 'tool.call.toolview', key: TOOL_RUN_REMOTE_COMMAND, locale: NS },
-          wrapWithLocale(AtTerminalCommandRow, t)
+          wrapWithLocale(withStyles(AtTerminalCommandRow), t)
         )
       ),
     'at-terminal: remote command tool card'

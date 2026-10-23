@@ -188,3 +188,6 @@ Run `AT Terminal: Import Assets` in another supported IDE or device to decrypt t
 - Private-key selection through the file picker.
 - Inline validation and saving state.
 - Icons, sidebars, and forms adapt to the active IDE theme.
+- The panel stylesheet is a **separate chunk**: it is fetched the first time one of the plugin's
+  surfaces renders, not when the Harness boots, so a session that never opens the panel does not
+  download it (client entry 422 909 B → 329 332 B).

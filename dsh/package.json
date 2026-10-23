@@ -20,6 +20,7 @@
     "commands.js",
     "client.js",
     "client.xterm.js",
+    "client.styles.js",
     "host.bundle.js",
     "terminal.bundle.js",
     "cordis.patch.yml",

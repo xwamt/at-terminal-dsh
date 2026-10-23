@@ -152,7 +152,10 @@ describe('the Settings tab reads the dictionary (S5-03)', () => {
    * unfinished rather than broken — the kind of defect that survives a screenshot review.
    */
   it('is registered wrapped, so `t` is the bound translator', () => {
-    expect(MAIN).toMatch(/wrapWithLocale\(\s*AtTerminalSettingsTab\s*,\s*t\s*\)/);
+    // The inner `withStyles(...)` is the styles gate, not a substitute for the locale wrapper:
+    // the assertion still requires `wrapWithLocale` to be the outer call, so a bare
+    // `slots.register(…)` — or a gate that replaced the wrapper — still fails here.
+    expect(MAIN).toMatch(/wrapWithLocale\(\s*(?:withStyles\(\s*)?AtTerminalSettingsTab\s*\)?\s*,\s*t\s*\)/);
   });
 });
 

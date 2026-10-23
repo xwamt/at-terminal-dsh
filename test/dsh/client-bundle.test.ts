@@ -47,8 +47,18 @@ function isProvider(value: unknown): value is ProviderLike {
 }
 
 function createReactShim() {
-  const stateSlots: unknown[] = [];
-  const refSlots: Array<{ current: unknown }> = [];
+  /**
+   * Hooks are keyed by the component function, then by call order.
+   *
+   * They used to be one flat array indexed by call order alone, which worked only while the
+   * body was the single hook-using component under the provider. A wrapper that also uses
+   * hooks (the styles gate) then claimed slot 0 and the body's first `useState` read the
+   * wrapper's value — a collision that made the panel render the wrong page. Keying by
+   * component is what React does with position; keying by function is close enough here and
+   * survives wrappers being added or removed.
+   */
+  const slotsByComponent = new WeakMap<object, { state: unknown[]; refs: Array<{ current: unknown }> }>();
+  let activeSlots: { state: unknown[]; refs: Array<{ current: unknown }> } = { state: [], refs: [] };
   let cursor = 0;
   let effectQueue: Array<() => unknown> = [];
   const cleanups: Array<() => void> = [];
@@ -81,22 +91,22 @@ function createReactShim() {
       useState: (initial: unknown) => {
         const index = cursor;
         cursor += 1;
-        if (!(index in stateSlots)) {
-          stateSlots[index] = typeof initial === 'function' ? (initial as () => unknown)() : initial;
+        if (!(index in activeSlots.state)) {
+          activeSlots.state[index] = typeof initial === 'function' ? (initial as () => unknown)() : initial;
         }
         return [
-          stateSlots[index],
+          activeSlots.state[index],
           (next: unknown) => {
-            stateSlots[index] =
-              typeof next === 'function' ? (next as (prev: unknown) => unknown)(stateSlots[index]) : next;
+            activeSlots.state[index] =
+              typeof next === 'function' ? (next as (prev: unknown) => unknown)(activeSlots.state[index]) : next;
           }
         ];
       },
       useRef: (initial: unknown) => {
         const index = cursor;
         cursor += 1;
-        if (!(index in refSlots)) refSlots[index] = { current: initial };
-        return refSlots[index];
+        if (!(index in activeSlots.refs)) activeSlots.refs[index] = { current: initial };
+        return activeSlots.refs[index];
       },
       useEffect: (run: () => unknown) => {
         cursor += 1;
@@ -112,11 +122,11 @@ function createReactShim() {
       useReducer: (reducer: (state: unknown, action: unknown) => unknown, initial: unknown) => {
         const index = cursor;
         cursor += 1;
-        if (!(index in stateSlots)) stateSlots[index] = initial;
+        if (!(index in activeSlots.state)) activeSlots.state[index] = initial;
         return [
-          stateSlots[index],
+          activeSlots.state[index],
           (action: unknown) => {
-            stateSlots[index] = reducer(stateSlots[index], action);
+            activeSlots.state[index] = reducer(activeSlots.state[index], action);
           }
         ];
       },
@@ -130,19 +140,40 @@ function createReactShim() {
       cursor = 0;
       return component({});
     },
-    /** Instantiate an element tree one level of components deep (providers + the body). */
+    /**
+     * Instantiate an element tree until a host element (or `null`) comes out.
+     *
+     * It used to stop after one level, which was enough while the body sat directly under the
+     * locale provider. The styles gate (`withStyles`) adds a level that returns `null` on its
+     * first pass — by design, it waits for a chunk — so "one level" now lands on a component
+     * element and the assertions see an empty tree. Unwrapping in a loop keeps the helper's
+     * promise ("give me the rendered tree") true however many wrappers a body grows.
+     */
     instantiate(element: unknown): unknown {
-      if (element === null || typeof element !== 'object') return element;
-      const node = element as ElementLike;
-      if (isProvider(node.type)) {
-        node.type.context.current = node.props.value;
-        return this.instantiate(node.props.children);
+      let current = element;
+      for (let depth = 0; depth < 8; depth += 1) {
+        if (current === null || typeof current !== 'object') return current;
+        const node = current as ElementLike;
+        if (isProvider(node.type)) {
+          node.type.context.current = node.props.value;
+          current = node.props.children;
+          continue;
+        }
+        if (typeof node.type === 'function') {
+          const component = node.type as unknown as object;
+          let slots = slotsByComponent.get(component);
+          if (slots === undefined) {
+            slots = { state: [], refs: [] };
+            slotsByComponent.set(component, slots);
+          }
+          activeSlots = slots;
+          cursor = 0;
+          current = (node.type as (props: Record<string, unknown>) => unknown)(node.props);
+          continue;
+        }
+        return node;
       }
-      if (typeof node.type === 'function') {
-        cursor = 0;
-        return (node.type as (props: Record<string, unknown>) => unknown)(node.props);
-      }
-      return node;
+      throw new Error('instantiate() exceeded its component depth cap');
     },
     drainEffects(): void {
       const queued = effectQueue;
@@ -1597,7 +1628,14 @@ describe('client bundle — apply wiring', () => {
     expect(harness.openTabCalls.length, 'a HUD request opened a pane tab').toBe(mark);
   });
 
-  it('injects the real reused stylesheets once, scoped, and removes them on dispose', () => {
+  it('injects the real reused stylesheets once, scoped, on the first surface — not at activation', async () => {
+    // The split's whole point: activation registers tab types and nothing else, so a session
+    // that never opens the panel does not pay for 77 kB of stylesheet strings.
+    expect(harness.styles.get('at-terminal-client-styles')).toBeUndefined();
+
+    primeHappyPath(harness);
+    await harness.settle();
+
     const style = harness.styles.get('at-terminal-client-styles');
     expect(style).toBeDefined();
     // Real bytes from the three reused sheets, scoped under the panel root.
@@ -1606,8 +1644,9 @@ describe('client bundle — apply wiring', () => {
     expect(style?.textContent).toContain('.att-root .xterm');
     expect(style?.textContent).toContain('--vscode-terminal-background: var(--dsw-alias-bg-base');
     expect(style?.textContent).not.toMatch(/(^|\})\s*body\s*\{/);
-    // A second activation must not stack a second copy.
-    harness.apply();
+    // A second render (another surface mounting) must not stack a second copy: the load is
+    // single-flight, which is what keeps a restored sidebar from injecting three.
+    await harness.settle();
     expect([...harness.styles.values()]).toHaveLength(1);
     // Disposal takes the CSS with it.
     for (const effect of harness.effects) effect.dispose();
