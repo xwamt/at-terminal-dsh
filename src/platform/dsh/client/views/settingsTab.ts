@@ -57,6 +57,24 @@ interface ServerRow {
   port?: number;
 }
 
+/**
+ * What the Host reports about the optional composition bundle.
+ *
+ * Four facts, not one: `available` (is there a plugin manager at all), `installed` (is the package
+ * in the profile), `enabled` (does its patch layer contribute) and `rows` (how many components
+ * actually mounted). Collapsing them would let the page show "Install" to someone who has it, or
+ * "Active" to someone whose three rows failed to mount.
+ */
+interface OptionalBundleState {
+  available: boolean;
+  name: string;
+  spec: string;
+  installed: boolean;
+  enabled: boolean;
+  rows: number;
+  reason?: string;
+}
+
 const sectionStyle = {
   display: 'flex',
   flexDirection: 'column' as const,
@@ -104,9 +122,30 @@ export function AtTerminalSettingsTab(): unknown {
       : decision === 'confirmed'
         ? t('monitor.decision.confirmed')
         : t('monitor.decision.denied');
+  /**
+   * One sentence per state, and the three states are genuinely different facts.
+   *
+   * Same reason as `decisionLabel`: literal `t('…')` calls, so the copy test can find them.
+   */
+  const optionalState = (state: OptionalBundleState): string =>
+    !state.installed
+      ? t('settings.optional.state.missing')
+      : state.enabled
+        ? t('settings.optional.state.enabled', { count: state.rows })
+        : t('settings.optional.state.disabled');
   const [audits, setAudits] = useState<AgentAuditSummary[] | null>(null);
   const [hostKeys, setHostKeys] = useState<HostKeyRow[] | null>(null);
   const [servers, setServers] = useState<ServerRow[]>([]);
+  /**
+   * The optional composition bundle, as the Host's plugin manager describes it.
+   *
+   * `null` means "not read yet", which is different from every state the Host can report: the
+   * three real states are not installed / installed but switched off / active, and rendering an
+   * unread page as "not installed" would show an Install button to someone who already has it.
+   */
+  const [optional, setOptional] = useState<OptionalBundleState | null>(null);
+  const [optionalBusy, setOptionalBusy] = useState(false);
+  const [optionalError, setOptionalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** Bumped after a forget to re-read the three sources; the local React typings have no
@@ -119,8 +158,9 @@ export function AtTerminalSettingsTab(): unknown {
     void Promise.all([
       getAgentExecutionStatusRpc(50).catch(() => null),
       callRpc('terminal.hostKeys', {}).catch(() => null),
-      callRpc('servers.list', {}).catch(() => null)
-    ]).then(([snapshot, keys, listed]) => {
+      callRpc('servers.list', {}).catch(() => null),
+      callRpc('terminal.optionalBundle.get', {}).catch(() => null)
+    ]).then(([snapshot, keys, listed, bundle]) => {
       if (cancelled) return;
       if (snapshot !== null) setAudits(snapshot.recentAudits ?? []);
       // A failed read is said out loud: an empty trust library and an unreadable one look
@@ -128,14 +168,16 @@ export function AtTerminalSettingsTab(): unknown {
       setHostKeys(Array.isArray(keys) ? (keys as HostKeyRow[]) : null);
       const rows = (listed as { servers?: ServerRow[] } | null)?.servers;
       setServers(Array.isArray(rows) ? rows : []);
+      setOptional(
+        bundle !== null && typeof bundle === 'object' ? (bundle as OptionalBundleState) : null
+      );
     });
     return () => {
       cancelled = true;
     };
   }, [reloadCount]);
 
-  const forget = (row: HostKeyRow, server: ServerRow): void => {
-    setBusy(true);
+  const forget = (row: HostKeyRow, server: ServerRow): void => {    setBusy(true);
     void callRpc('terminal.forgetHost', {
       serverId: server.id,
       host: row.host,
@@ -146,6 +188,25 @@ export function AtTerminalSettingsTab(): unknown {
         setError(failure instanceof Error ? failure.message : String(failure))
       )
       .finally(() => setBusy(false));
+  };
+
+  /**
+   * Install, enable or disable the optional bundle.
+   *
+   * All three go through the Host: installing is a `pnpm add` in the profile and switching is a
+   * composition reload, so neither can happen in the page. `reloadCount` re-reads afterwards —
+   * when the switch succeeds the page usually unmounts first, and when it fails the row has to
+   * show the state that actually survived.
+   */
+  const runOptional = (method: string, params: Record<string, unknown> = {}): void => {
+    setOptionalBusy(true);
+    setOptionalError(null);
+    void callRpc(method, params)
+      .then(() => setReloadCount((count) => count + 1))
+      .catch((failure: unknown) =>
+        setOptionalError(failure instanceof Error ? failure.message : String(failure))
+      )
+      .finally(() => setOptionalBusy(false));
   };
 
   const totals = { allowed: 0, confirmed: 0, denied: 0 };
@@ -254,6 +315,51 @@ export function AtTerminalSettingsTab(): unknown {
                     )
               );
             })
-          )
+          ),
+
+    // 4. the optional persistent shell
+    h('h3', { style: headingStyle }, t('settings.optional.heading')),
+    h('div', { style: mutedStyle }, t('settings.optional.about')),
+    optional === null
+      ? // Not read yet is its own state: defaulting it to "not installed" would offer an Install
+        // button to someone who already has the bundle.
+        h('div', { style: mutedStyle }, t('settings.audit.unreadable'))
+      : optional.available === false
+        ? h('div', { style: mutedStyle }, optional.reason ?? t('settings.optional.unavailable'))
+        : h(
+            'div',
+            { style: rowStyle },
+            h('span', {}, optionalState(optional)),
+            h(
+              'button',
+              {
+                type: 'button',
+                disabled: optionalBusy,
+                style: { fontSize: '12px' },
+                onClick: () =>
+                  optional.installed
+                    ? runOptional('terminal.optionalBundle.setEnabled', {
+                        enabled: !optional.enabled
+                      })
+                    : runOptional('terminal.optionalBundle.install')
+              },
+              optional.installed
+                ? optional.enabled
+                  ? t('settings.optional.disable')
+                  : t('settings.optional.enable')
+                : t('settings.optional.install')
+            )
+          ),
+    optionalError !== null
+      ? h('div', { style: mutedStyle }, t('settings.optional.failed', { message: optionalError }))
+      : null,
+    optionalBusy ? h('div', { style: mutedStyle }, t('settings.optional.busy')) : null,
+    optional?.available === true
+      ? h(
+          'div',
+          { style: { ...mutedStyle, fontSize: '11px' } },
+          t('settings.optional.manual', { spec: optional.spec })
+        )
+      : null
   );
 }

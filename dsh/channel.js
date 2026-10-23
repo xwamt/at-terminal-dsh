@@ -79,6 +79,12 @@ import { appendFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import {
+  OPTIONAL_BUNDLE_NAME,
+  describeOptionalBundle,
+  optionalBundleSpec
+} from './optionalBundle.js'
+
 /** Prefix for every route this channel pins. */
 export const PREFIX = '/dsh-at-terminal'
 
@@ -395,6 +401,9 @@ export function registerChannel(ctx, options) {
   const resolveSftp = options.resolveSftp ?? unavailableSftp
   const resolveAgent = options.resolveAgent ?? unavailableAgent
   const resolveSettings = options.resolveSettings ?? (() => ({}))
+  // The plugin manager is optional: a preset-only composition has none, and every tool this
+  // package ships still works there. The optional-bundle routes say so instead of throwing.
+  const resolvePluginManager = options.resolvePluginManager ?? (() => undefined)
   const startedAt = Date.now()
   const disposers = []
   const sseClients = new Set()
@@ -754,6 +763,64 @@ export function registerChannel(ctx, options) {
         host: params.host,
         port: params.port
       })
+    },
+
+    /* --------------------------- optional SSH bundle -------------------------- */
+
+    /**
+     * State of the optional composition bundle, read from the plugin manager's own view.
+     *
+     * The settings page shows one of three things from this: an install button, a switch, or the
+     * row count — so the answer has to distinguish "not installed" from "installed and switched
+     * off" (`installed` / `enabled`), and "this Harness has no plugin manager" (`available: false`,
+     * with a reason) from "no such bundle" (`available: true`, `installed: false`).
+     */
+    async 'terminal.optionalBundle.get'() {
+      // `listBundles()` is async in the manager, so the description is too.
+      return await describeOptionalBundle({ manager: resolvePluginManager(), version })
+    },
+
+    /**
+     * Install the one optional bundle this plugin knows about.
+     *
+     * The **spec is built here**, never taken from the request: this route exists so the settings
+     * page can offer one specific capability, and a route that installed a caller-supplied package
+     * name would be a remote package installer behind a local HTTP fence.
+     */
+    async 'terminal.optionalBundle.install'() {
+      const manager = resolvePluginManager()
+      if (manager === undefined || typeof manager.installBundle !== 'function') {
+        throw Object.assign(
+          new Error('this Harness has no plugin manager, so the optional bundle cannot be installed from here'),
+          { code: 'plugin-manager-unavailable' }
+        )
+      }
+      const spec = optionalBundleSpec(version)
+      const outcome = await manager.installBundle(spec, { activateNewBundles: true })
+      // `installBundle` reports through its return value (diagnostics, activation outcome); the
+      // caller needs to know whether the bundle actually came up, not just that pnpm exited 0.
+      const state = await describeOptionalBundle({ manager, version })
+      return { spec, outcome: outcome ?? null, state }
+    },
+
+    /**
+     * Turn the optional bundle's patch layer on or off without uninstalling it.
+     *
+     * `setBundleEnabled` persists the selection and reloads the composition, so the six
+     * `terminal_*` tools appear or disappear as one unit — that atomicity is the reason the rows
+     * live in a bundle instead of being toggled individually.
+     */
+    async 'terminal.optionalBundle.setEnabled'(params = {}) {
+      const manager = resolvePluginManager()
+      if (manager === undefined || typeof manager.setBundleEnabled !== 'function') {
+        throw Object.assign(
+          new Error('this Harness has no plugin manager, so the optional bundle cannot be switched here'),
+          { code: 'plugin-manager-unavailable' }
+        )
+      }
+      const enabled = params.enabled === true
+      await manager.setBundleEnabled(OPTIONAL_BUNDLE_NAME, enabled)
+      return { enabled, state: await describeOptionalBundle({ manager, version }) }
     },
 
     /* -------------------------------- sftp (M3) ------------------------------- */

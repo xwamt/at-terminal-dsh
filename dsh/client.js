@@ -1038,6 +1038,20 @@ var NS = "atTerminal", zh = {
   "settings.trust.unreadable": "\u4FE1\u4EFB\u5E93\u4E0D\u53EF\u8BFB\u3002",
   "settings.trust.empty": "\u8FD8\u6CA1\u6709\u4FE1\u4EFB\u8FC7\u4EFB\u4F55\u4E3B\u673A\u3002",
   "settings.trust.forget": "\u5FD8\u8BB0",
+  "settings.optional.heading": "\u6301\u4E45\u7EC8\u7AEF\uFF08\u53EF\u9009\uFF09",
+  // The three states are different facts, so they are different sentences: 'not installed' and
+  // 'installed but switched off' look identical if both render as an absent panel.
+  "settings.optional.about": "\u8BA9 Agent \u62E5\u6709\u4E00\u6761\u8DE8\u8C03\u7528\u4FDD\u6301\u7684 SSH shell\uFF08\u7EC8\u7AEF 6 \u4E2A\u5DE5\u5177\uFF09\u3002\u5355\u72EC\u6210\u5305\uFF1A\u88C5\u4E0A\u63D2\u4EF6\u4E0D\u4F1A\u5E73\u767D\u591A\u51FA 6 \u4E2A\u5DE5\u5177\u3002",
+  "settings.optional.state.missing": "\u672A\u5B89\u88C5",
+  "settings.optional.state.disabled": "\u5DF2\u5B89\u88C5\uFF0C\u672A\u542F\u7528",
+  "settings.optional.state.enabled": "\u5DF2\u542F\u7528\uFF0C{count} \u4E2A\u7EC4\u4EF6\u8FD0\u884C\u4E2D",
+  "settings.optional.install": "\u5B89\u88C5",
+  "settings.optional.enable": "\u542F\u7528",
+  "settings.optional.disable": "\u505C\u7528",
+  "settings.optional.busy": "\u6B63\u5728\u5904\u7406\u2026\u5B89\u88C5\u4F1A\u91CD\u8F7D\u7EC4\u5408\uFF0C\u53EF\u80FD\u9700\u8981\u51E0\u79D2\u3002",
+  "settings.optional.manual": "\u4E5F\u53EF\u4EE5\u81EA\u884C\u5B89\u88C5\uFF1Anpm install --save-exact {spec}",
+  "settings.optional.unavailable": "\u5F53\u524D Harness \u6CA1\u6709\u63D2\u4EF6\u7BA1\u7406\u5668\uFF0C\u65E0\u6CD5\u4ECE\u8FD9\u91CC\u5B89\u88C5\u6216\u5F00\u5173\uFF1B\u9762\u677F\u4E0E\u672C\u63D2\u4EF6\u7684 17 \u4E2A\u5DE5\u5177\u4E0D\u53D7\u5F71\u54CD\u3002",
+  "settings.optional.failed": "\u64CD\u4F5C\u5931\u8D25\uFF1A{message}",
   "settings.trust.failed": "\u64CD\u4F5C\u5931\u8D25\uFF1A{message}"
 }, en = {
   "type.label": "AT Terminal",
@@ -1414,6 +1428,18 @@ var NS = "atTerminal", zh = {
   "settings.trust.unreadable": "The trust library is unreadable.",
   "settings.trust.empty": "No host has been trusted yet.",
   "settings.trust.forget": "Forget",
+  "settings.optional.heading": "Persistent shell (optional)",
+  "settings.optional.about": "Gives the agent one SSH shell that survives between tool calls (six terminal tools). A separate package on purpose: installing the panel does not add six tools to every request.",
+  "settings.optional.state.missing": "Not installed",
+  "settings.optional.state.disabled": "Installed, switched off",
+  "settings.optional.state.enabled": "Active, {count} components running",
+  "settings.optional.install": "Install",
+  "settings.optional.enable": "Enable",
+  "settings.optional.disable": "Disable",
+  "settings.optional.busy": "Working\u2026 installing reloads the composition, which takes a few seconds.",
+  "settings.optional.manual": "Or install it yourself: npm install --save-exact {spec}",
+  "settings.optional.unavailable": "This Harness has no plugin manager, so it cannot be installed or switched from here. The panel and the 17 tools are unaffected.",
+  "settings.optional.failed": "Action failed: {message}",
   "settings.trust.failed": "Action failed: {message}"
 };
 
@@ -6955,18 +6981,21 @@ function timeOf(timestamp) {
   return [when.getHours(), when.getMinutes(), when.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
 }
 function AtTerminalSettingsTab() {
-  let t = import_react13.default.useContext(BodyLocale), decisionLabel = (decision) => t(decision === "allowed" ? "monitor.decision.allowed" : decision === "confirmed" ? "monitor.decision.confirmed" : "monitor.decision.denied"), [audits, setAudits] = (0, import_react13.useState)(null), [hostKeys, setHostKeys] = (0, import_react13.useState)(null), [servers, setServers] = (0, import_react13.useState)([]), [error, setError] = (0, import_react13.useState)(null), [busy, setBusy] = (0, import_react13.useState)(!1), [reloadCount, setReloadCount] = (0, import_react13.useState)(0);
+  let t = import_react13.default.useContext(BodyLocale), decisionLabel = (decision) => t(decision === "allowed" ? "monitor.decision.allowed" : decision === "confirmed" ? "monitor.decision.confirmed" : "monitor.decision.denied"), optionalState = (state) => state.installed ? state.enabled ? t("settings.optional.state.enabled", { count: state.rows }) : t("settings.optional.state.disabled") : t("settings.optional.state.missing"), [audits, setAudits] = (0, import_react13.useState)(null), [hostKeys, setHostKeys] = (0, import_react13.useState)(null), [servers, setServers] = (0, import_react13.useState)([]), [optional, setOptional] = (0, import_react13.useState)(null), [optionalBusy, setOptionalBusy] = (0, import_react13.useState)(!1), [optionalError, setOptionalError] = (0, import_react13.useState)(null), [error, setError] = (0, import_react13.useState)(null), [busy, setBusy] = (0, import_react13.useState)(!1), [reloadCount, setReloadCount] = (0, import_react13.useState)(0);
   (0, import_react13.useEffect)(() => {
     let cancelled = !1;
     return setError(null), Promise.all([
       getAgentExecutionStatusRpc(50).catch(() => null),
       callRpc("terminal.hostKeys", {}).catch(() => null),
-      callRpc("servers.list", {}).catch(() => null)
-    ]).then(([snapshot, keys, listed]) => {
+      callRpc("servers.list", {}).catch(() => null),
+      callRpc("terminal.optionalBundle.get", {}).catch(() => null)
+    ]).then(([snapshot, keys, listed, bundle]) => {
       if (cancelled) return;
       snapshot !== null && setAudits(snapshot.recentAudits ?? []), setHostKeys(Array.isArray(keys) ? keys : null);
       let rows = listed?.servers;
-      setServers(Array.isArray(rows) ? rows : []);
+      setServers(Array.isArray(rows) ? rows : []), setOptional(
+        bundle !== null && typeof bundle == "object" ? bundle : null
+      );
     }), () => {
       cancelled = !0;
     };
@@ -6979,6 +7008,10 @@ function AtTerminalSettingsTab() {
     }).then(() => setReloadCount((count2) => count2 + 1)).catch(
       (failure2) => setError(failure2 instanceof Error ? failure2.message : String(failure2))
     ).finally(() => setBusy(!1));
+  }, runOptional = (method, params = {}) => {
+    setOptionalBusy(!0), setOptionalError(null), callRpc(method, params).then(() => setReloadCount((count2) => count2 + 1)).catch(
+      (failure2) => setOptionalError(failure2 instanceof Error ? failure2.message : String(failure2))
+    ).finally(() => setOptionalBusy(!1));
   }, totals = { allowed: 0, confirmed: 0, denied: 0 };
   for (let audit of audits ?? [])
     audit.decision === "allowed" ? totals.allowed += 1 : audit.decision === "confirmed" ? totals.confirmed += 1 : totals.denied += 1;
@@ -7057,7 +7090,38 @@ function AtTerminalSettingsTab() {
           )
         );
       })
-    )
+    ),
+    // 4. the optional persistent shell
+    h("h3", { style: headingStyle }, t("settings.optional.heading")),
+    h("div", { style: mutedStyle }, t("settings.optional.about")),
+    optional === null ? (
+      // Not read yet is its own state: defaulting it to "not installed" would offer an Install
+      // button to someone who already has the bundle.
+      h("div", { style: mutedStyle }, t("settings.audit.unreadable"))
+    ) : optional.available === !1 ? h("div", { style: mutedStyle }, optional.reason ?? t("settings.optional.unavailable")) : h(
+      "div",
+      { style: rowStyle },
+      h("span", {}, optionalState(optional)),
+      h(
+        "button",
+        {
+          type: "button",
+          disabled: optionalBusy,
+          style: { fontSize: "12px" },
+          onClick: () => optional.installed ? runOptional("terminal.optionalBundle.setEnabled", {
+            enabled: !optional.enabled
+          }) : runOptional("terminal.optionalBundle.install")
+        },
+        optional.installed ? optional.enabled ? t("settings.optional.disable") : t("settings.optional.enable") : t("settings.optional.install")
+      )
+    ),
+    optionalError !== null ? h("div", { style: mutedStyle }, t("settings.optional.failed", { message: optionalError })) : null,
+    optionalBusy ? h("div", { style: mutedStyle }, t("settings.optional.busy")) : null,
+    optional?.available === !0 ? h(
+      "div",
+      { style: { ...mutedStyle, fontSize: "11px" } },
+      t("settings.optional.manual", { spec: optional.spec })
+    ) : null
   );
 }
 

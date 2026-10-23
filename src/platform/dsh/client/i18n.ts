@@ -446,6 +446,20 @@ export const zh: Record<string, string> = {
   'settings.trust.unreadable': '信任库不可读。',
   'settings.trust.empty': '还没有信任过任何主机。',
   'settings.trust.forget': '忘记',
+  'settings.optional.heading': '持久终端（可选）',
+  // The three states are different facts, so they are different sentences: 'not installed' and
+  // 'installed but switched off' look identical if both render as an absent panel.
+  'settings.optional.about': '让 Agent 拥有一条跨调用保持的 SSH shell（终端 6 个工具）。单独成包：装上插件不会平白多出 6 个工具。',
+  'settings.optional.state.missing': '未安装',
+  'settings.optional.state.disabled': '已安装，未启用',
+  'settings.optional.state.enabled': '已启用，{count} 个组件运行中',
+  'settings.optional.install': '安装',
+  'settings.optional.enable': '启用',
+  'settings.optional.disable': '停用',
+  'settings.optional.busy': '正在处理…安装会重载组合，可能需要几秒。',
+  'settings.optional.manual': '也可以自行安装：npm install --save-exact {spec}',
+  'settings.optional.unavailable': '当前 Harness 没有插件管理器，无法从这里安装或开关；面板与本插件的 17 个工具不受影响。',
+  'settings.optional.failed': '操作失败：{message}',
   'settings.trust.failed': '操作失败：{message}'
 };
 
@@ -825,5 +839,17 @@ export const en: Record<string, string> = {
   'settings.trust.unreadable': 'The trust library is unreadable.',
   'settings.trust.empty': 'No host has been trusted yet.',
   'settings.trust.forget': 'Forget',
+  'settings.optional.heading': 'Persistent shell (optional)',
+  'settings.optional.about': 'Gives the agent one SSH shell that survives between tool calls (six terminal tools). A separate package on purpose: installing the panel does not add six tools to every request.',
+  'settings.optional.state.missing': 'Not installed',
+  'settings.optional.state.disabled': 'Installed, switched off',
+  'settings.optional.state.enabled': 'Active, {count} components running',
+  'settings.optional.install': 'Install',
+  'settings.optional.enable': 'Enable',
+  'settings.optional.disable': 'Disable',
+  'settings.optional.busy': 'Working… installing reloads the composition, which takes a few seconds.',
+  'settings.optional.manual': 'Or install it yourself: npm install --save-exact {spec}',
+  'settings.optional.unavailable': 'This Harness has no plugin manager, so it cannot be installed or switched from here. The panel and the 17 tools are unaffected.',
+  'settings.optional.failed': 'Action failed: {message}',
   'settings.trust.failed': 'Action failed: {message}'
 };

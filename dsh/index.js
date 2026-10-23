@@ -412,6 +412,15 @@ export function apply(ctx, config = {}) {
     let terminal
     let sftp
     let assetsError
+    /**
+     * The Host's plugin manager, when this composition has one.
+     *
+     * Injected separately from the block above: it owns bundle installation and switching, which
+     * only the optional SSH bundle needs. A preset-only composition without it keeps all 17 tools
+     * and three panes; the settings page then says the switch is unavailable instead of the
+     * plugin failing to activate.
+     */
+    let pluginManager
     const assembled = createDshPlatform({
       logger: scoped.logger,
       credentials: scoped.credentials,
@@ -547,10 +556,24 @@ export function apply(ctx, config = {}) {
       throw Object.assign(new Error(detail), { code: 'services-unavailable' })
     }
 
+    /**
+     * The plugin manager, if this composition has one.
+     *
+     * `disabled: !!js "!ctx.get('profileContext')"` guards the row in `dsh-base`, so a profile
+     * assembly always has it and a bare composition may not — which is why this is a separate
+     * inject instead of a member of the list above: the tools must not depend on it.
+     */
+    ctx.inject(['pluginManager'], (manager) => {
+      pluginManager = manager.pluginManager
+      manager.effect(() => () => {
+        pluginManager = undefined
+      })
+    })
+
     scoped.effect(() =>
       registerChannel(scoped, {
         version: pkg.version,
-        // Resolved per call, so the channel can mount before the platform finishes opening
+        resolvePluginManager: () => pluginManager,        // Resolved per call, so the channel can mount before the platform finishes opening
         // the storage domain — and so a failed assembly keeps explaining itself instead of
         // being frozen into whatever these held at registration time.
         resolveAssets: resolve(() => assets),

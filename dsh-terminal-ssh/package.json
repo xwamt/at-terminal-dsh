@@ -1,8 +1,7 @@
 {
   "name": "@at-series/dsh-at-terminal-ssh",
-  "description": "Keep an AT Terminal SSH shell alive across tool calls (optional, opt-in bundle).",
-  "version": "0.1.0",
-  "private": true,
+  "description": "Keep an AT Terminal SSH shell alive across tool calls — the opt-in composition bundle for @at-series/dsh-at-terminal.",
+  "version": "0.2.0",
   "type": "module",
   "dsh": {
     "bundle": {
@@ -10,10 +9,23 @@
     }
   },
   "files": [
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-bundle",
+    "ssh",
+    "terminal"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/at-series/at-terminal-dsh.git",
+    "directory": "dsh-terminal-ssh"
+  },
   "peerDependencies": {
-    "@at-series/dsh-at-terminal": "*"
+    "@at-series/dsh-at-terminal": "^0.2.0"
   }
 }
