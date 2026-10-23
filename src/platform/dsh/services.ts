@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { parseServerConfig, type ServerConfig } from '../../config/schema';
 import { ConfigManager } from '../../config/ConfigManager';
 import type { Platform } from '../../core/ports';
-import { HostKeyStore } from '../../ssh/HostKeyStore';
+import { HostKeyStore, formatFingerprint } from '../../ssh/HostKeyStore';
 import type { HostKeyVerifier } from '../../ssh/SshConnectionConfig';
 import { SshSession, type SshSessionStatus } from '../../ssh/SshSession';
 import { resolveTerminalSettings } from '../../terminal/terminalSettings';
@@ -288,6 +288,19 @@ export interface DshTerminalApi {
     host: string;
     port: number;
   }>;
+  /**
+   * Every stored host key.
+   *
+   * Unscoped on purpose: trust is granted to a host, not to a server record, so this answers
+   * the whole library rather than a slice of a jump chain.
+   */
+  listHostKeys(): Promise<Array<{
+    host: string;
+    port: number;
+    fingerprint: string;
+    algorithm?: string;
+    trustedAt: number;
+  }>>;
 }
 
 /**
@@ -514,6 +527,18 @@ export function createDshTerminalApi({ platform, observer }: DshTerminalApiOptio
       const forgot = hostKeyStore.getTrusted(host, port) !== undefined;
       if (forgot) await hostKeyStore.forget(host, port);
       return { forgot, host, port };
+    },
+
+    async listHostKeys() {
+      // Formatted fingerprints: the stored value is the bare digest ssh2 hands the verifier,
+      // and a settings page that shows `a1b2…` cannot be compared against `ssh-keygen -lf`.
+      return hostKeyStore.list().map((entry) => ({
+        host: entry.host,
+        port: entry.port,
+        fingerprint: formatFingerprint(entry.fingerprint),
+        ...(entry.algorithm === undefined ? {} : { algorithm: entry.algorithm }),
+        trustedAt: entry.trustedAt
+      }));
     }
   };
 }

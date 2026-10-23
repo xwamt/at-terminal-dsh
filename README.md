@@ -108,7 +108,7 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 | `at_terminal_sftp_create_directory` | SFTP | Create a remote directory after write authorization |
 | `at_terminal_sftp_rename` | SFTP | Move or rename a path; source and destination both need write authorization |
 | `at_terminal_sftp_delete` | SFTP | Delete a single file. Directories are refused — use `at_terminal_run_remote_command` with an explicit `rm` for one; the user always confirms |
-| `at_terminal_open_monitor` | UI | Open the monitoring HUD; answers `opened: false, reason: "no-client"` when no panel is connected |
+| `at_terminal_open_monitor` | UI | Open the monitor — `mode: "hud"` (default) floats it, `mode: "tab"` puts it in the right sidebar; answers `opened: false, reason: "no-client"` when no panel is connected |
 | `at_terminal_get_hardware_metrics` | Metrics | Read CPU, memory, disk, network, and top processes for an SSH server |
 | `at_terminal_get_agent_execution_status` | Audit | Report the live action, recent audits (with `source: file \| memory`), and active transfers |
 | `at_terminal_job_output` | Reads what a background command has printed since the last read, with `wait` to block until it settles or the budget expires. Each call consumes what it returns |
@@ -134,7 +134,8 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 
 #### 1. DSH Agent 原生直连工具链（无需 MCP 跨进程中转）
 传统的 AI IDE 往往依赖独立的 stdio/HTTP MCP Server 进程进行中转，存在进程通信开销大、状态同步复杂、生命周期脱节的问题。
-- **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 15 个直连工具，覆盖 SSH 服务器、远程命令、终端上下文、8 个 SFTP 操作、硬件指标、Agent 执行状态与监控悬浮窗，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
+- **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 17 个直连工具，覆盖 SSH 服务器、远程命令（含后台作业与作业控制）、终端上下文、8 个 SFTP 操作、硬件指标、Agent 执行状态与监控面板，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
+- **运行期技能与提示词**：通过 `ctx.inject(['skills'])` 注册三个运行期技能（巡检 / 远端编辑 / 故障记录），工具规则集中在一个提示词段里，工具定义体积比逐条描述小 45%。
 - **全生命周期协同**：
   - **动态取消响应**：完全感知 `exec.signal`，当用户在 DSH 界面点击停止生成或取消任务时，远端 SSH 命令与传输流立即被精确中断。
   - **原生审批通道**：无缝对接 DSH 的 `ctx.approval` 交互机制。
@@ -176,10 +177,16 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 
 #### 7. 监控悬浮窗（胶囊 / 总览 / 历史）
 - **连接即胶囊**：连接服务器后悬浮窗以胶囊形态出现（CPU / 内存小条），不再默认展开挡住终端；点击展开为「总览 / 硬件指标 / Agent 执行」三页。
+- **两种呈现**：`at_terminal_open_monitor` 的 `mode: "hud"` 浮窗、`mode: "tab"` 落到右侧栏页签（页签自带目标服务器，不会被「最近连接的那台」顶掉）。
 - **按连接隔离的审计历史**：Agent 执行页默认展示最近 4 条审计，「历史执行」可查看本次连接以来的全部记录，断线或重连后自动重置。
 - **长内容折叠**：超长命令与容器挂载路径单行省略并提供展开按钮，面板不再出现横向滚动。
 
-#### 8. 跟随操作系统的快捷键
+#### 8. 设置页（决策统计 / 审计 / 信任库）
+- **宿主原生位置**：设置 → 插件 → **AT Terminal**，是贡献进宿主设置外壳的一个 tab，不另开页面；颜色全部走 `--dsw-*` token，跟随明暗主题，文案中英双字典。
+- **决策统计**：最近 50 条授权判定的分布（放行 / 弹窗后确认 / 拒绝），与 Agent 读的是同一批审计行。
+- **信任库**：列出每条已保存的 SSH 主机密钥与 `SHA256:` 指纹（与 `ssh-keygen -lf` 同形可直接比对），可按服务器「忘记」；跳板机或被删服务器的残留密钥会写明原因，而不是给一个按下去没反应的按钮。
+
+#### 9. 跟随操作系统的快捷键
 - **复制 / 粘贴 / 查找按平台映射**：macOS 为 `⌘C` / `⌘V` / `⌘F`，Windows 与 Linux 为 `Ctrl+C` / `Ctrl+V` / `Ctrl+F`。
 - **不抢占终端语义**：macOS 上 `Ctrl+C` 仍是 SIGINT；`⌘V` 走浏览器原生 paste 事件，无需额外的剪贴板读权限。
 - **统一的主修饰键**：新建标签与页面切换通过 DSH 快捷键注册表的 `primary` 语义绑定，macOS 自动为 Command、其他平台为 Control。
@@ -191,7 +198,8 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 #### 1. 构建产物说明
 执行构建后，将在 `dsh/` 目录中生成供 DSH 运行的完整 bundle 产物：
 - [`dsh/host.bundle.js`](dsh/host.bundle.js)：宿主端核心 Bundle（汇聚 SSH 会话管理器、SFTP 协议引擎、安全策略评估器等）；
-- [`dsh/client.js`](dsh/client.js)：DSH 前端界面 Bundle（包含 xterm 终端渲染组件、侧边栏 Tab 视图及样式）；
+- [`dsh/client.js`](dsh/client.js)：DSH 前端界面 Bundle（侧边栏 Tab 视图、面板与样式），首屏只取这一份；
+- [`dsh/client.xterm.js`](dsh/client.xterm.js)：按需加载的终端渲染 chunk（xterm 及其 addon，约 600 KB），首次打开终端面板才拉取；
 - [`dsh/policy-assets/`](dsh/policy-assets/)：安全策略规则库与白名单资产包；
 - [`cordis.patch.yml`](cordis.patch.yml)：DSH 插件规范清单与 Cordis 注入补丁。
 

@@ -72,7 +72,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `sftp_create_directory` | 写入 | 创建远程目录。 |
 | `sftp_rename` | 写入 | 重命名或移动远程文件/目录；源路径与目标路径都需要写授权。 |
 | `sftp_delete` | 写入 | 删除单个远程文件（拒绝目录——目录请改用 `run_remote_command` 执行显式 `rm`，该路径走命令策略）；即使完全信任也总是询问用户，且答案永不记住。 |
-| `open_monitor` | 界面 | 打开监控 HUD（硬件指标或 Agent 执行状态）。没有已连接的浏览器面板时返回 `opened: false, reason: "no-client"`，因为此时不会有任何东西显示出来。 |
+| `open_monitor` | 界面 | 打开监控（硬件指标或 Agent 执行状态）：`mode: "hud"`（默认）浮窗，`mode: "tab"` 放进右侧栏页签。没有已连接的浏览器面板时返回 `opened: false, reason: "no-client"`，因为此时不会有任何东西显示出来；`mode: "tab"` 下 `opened: false` 也可能表示侧边栏没有可放置页签的会话。 |
 | `get_hardware_metrics` | 只读 | 读取 SSH 服务器的 CPU、内存、磁盘、网络吞吐与占用最高的进程。探测脚本是内置的，绕过命令策略引擎；该调用仍然会进审计。 |
 | `get_agent_execution_status` | 只读 | 报告正在执行的动作、最近的审计记录与进行中的 SFTP 传输。`source: file` 表示数据来自 `agent-audit.jsonl`（重启后仍在）；`source: memory` 表示不在了。 |
 | `job_output` | 只读 | 读取后台 `run_remote_command` 自上次读取以来新产出的内容；`wait` 可阻塞到作业结算或预算用尽。每次调用会消费掉它返回的部分。 |
@@ -89,6 +89,22 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `/ssh-audit [行数]` | 打印持久审计尾部——时间、判定、命令或路径——最多 50 行。审计为空或不存在时如实说明，而不是报错。 |
 
 缺 agent 服务、缺审计、或组合里没有命令注册表时，两者都用一句话说清缺什么。
+
+## 设置页
+
+设置 → 插件 → **AT Terminal** 是本插件贡献到宿主设置外壳里的一个 tab（`settings.plugins.tab`），
+外壳、导航与分页由 `ui-settings-plugins` 拥有。页面所有颜色都是 `--dsw-*` token，因此跟随明暗主题；
+文案走本插件的中英双字典，不写死在组件里。
+
+| 分区 | 内容 |
+|---|---|
+| 决策统计 | 最近 50 条授权判定怎么分布——放行、弹窗后确认、拒绝。数据来自 Agent 读的同一批审计行，页面与 Agent 不会各说一套。 |
+| 最近审计 | 持久审计的最后 10 条：时间、判定、命令或路径。**复制 JSON** 把整批复制到剪贴板。 |
+| 信任库 | 已保存的每一条 SSH 主机密钥，带 `SHA256:` 指纹（与 `ssh-keygen -lf` 输出同形，才能真拿去比对）与所属服务器。**忘记** 走的是连接流程用的那条「按服务器限定」的路由。 |
+
+「忘记」是**故意有限制**的：路由把 host/port 解析到某台服务器的跳板链内，所以只有当某台已配置服务器
+自己的地址与该密钥一致时，这里才能忘记它。跳板机的密钥、或已被删除服务器留下的密钥，页面会写明原因，
+而不是给一个按下去什么也不发生的按钮。
 
 ## 安全行为
 

@@ -1159,7 +1159,7 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
     description:
-      'Open the monitoring HUD; opened=false when no panel listens.',
+      'Open the monitor; opened=false when no panel listens.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -1175,8 +1175,8 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
         },
         mode: {
           type: 'string',
-          enum: ['hud'],
-          description: 'Only "hud" exists.'
+          enum: ['hud', 'tab'],
+          description: '"hud" floats, "tab" is the sidebar pane.'
         }
       },
       required: ['target']
@@ -1209,9 +1209,9 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
       const input = argsOf('at_terminal_open_monitor', args)
       requireEnum('at_terminal_open_monitor', input, 'target', ['hardware', 'agent_execution'])
       if (input.mode !== undefined) {
-        // Narrowed to `hud` in 0.2.1. The message says so and says what to do, because the
-        // model may still be carrying `float` from an earlier prompt.
-        requireEnum('at_terminal_open_monitor', input, 'mode', ['hud'])
+        // `float` stays rejected: it named a DockKit pane this client has never rendered.
+        // `hud` and `tab` are both real presentations as of 0.2.2.
+        requireEnum('at_terminal_open_monitor', input, 'mode', ['hud', 'tab'])
       }
       const callCtx = { agent: exec?.agent ?? 'default', callId: exec?.callId ?? exec?.id, signal: exec?.signal }
       const run = runInContext ?? ((_ctx, fn) => fn())

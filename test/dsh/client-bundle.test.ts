@@ -415,6 +415,8 @@ interface Harness {
    * connects and one that lands the user back on the asset list.
    */
   openTabCalls: Array<{ kind: string; options?: Record<string, unknown> }>;
+  dispatchMonitorControl(payload: Record<string, unknown>): void;
+  monitorSourceUrls(): string[];
   /**
    * The two registered pane bodies, by the key each was registered under.
    *
@@ -675,6 +677,20 @@ function createHarness(
     }
   };
 
+  /**
+   * EventSource stand-in, because the branch under test is otherwise unreachable.
+   *
+   * `listenMonitorEvents` returns a no-op when the global is undefined, and a sandbox without
+   * one can therefore never exercise the `monitor-control` handler — which is exactly where the
+   * dropped `serverId` and the ignored `mode` lived. Listeners are recorded per type so a test
+   * can deliver a message the way the server does.
+   */
+  const monitorSources: Array<{
+    url: string;
+    listeners: Map<string, Array<(event: { data: string }) => void>>;
+    closed: boolean;
+  }> = [];
+
   const sandbox: Record<string, unknown> = {
     console,
     navigator: {
@@ -689,6 +705,32 @@ function createHarness(
     location: locationStub,
     document: documentStub,
     fetch: fetchStub,
+    EventSource: class {
+      url: string;
+      listeners: Map<string, Array<(event: { data: string }) => void>>;
+      closed: boolean;
+      constructor(url: string) {
+        this.url = url;
+        this.listeners = new Map();
+        this.closed = false;
+        monitorSources.push(this);
+      }
+      addEventListener(type: string, listener: (event: { data: string }) => void) {
+        const bucket = this.listeners.get(type) ?? [];
+        bucket.push(listener);
+        this.listeners.set(type, bucket);
+      }
+      removeEventListener(type: string, listener: (event: { data: string }) => void) {
+        const bucket = this.listeners.get(type) ?? [];
+        this.listeners.set(
+          type,
+          bucket.filter((entry) => entry !== listener)
+        );
+      }
+      close() {
+        this.closed = true;
+      }
+    },
     atob: globalThis.atob,
     btoa: globalThis.btoa,
     TextDecoder: globalThis.TextDecoder,
@@ -920,6 +962,17 @@ function createHarness(
     tabDefinitions,
     shortcutRegistrations,
     openTabCalls,
+    /** Every `monitor-control` message reaches every live source, as the server stream does. */
+    dispatchMonitorControl(payload: Record<string, unknown>) {
+      for (const source of monitorSources) {
+        for (const listener of source.listeners.get("monitor-control") ?? []) {
+          listener({ data: JSON.stringify(payload) });
+        }
+      }
+    },
+    monitorSourceUrls() {
+      return monitorSources.map((source) => source.url);
+    },
     bodies,
     closeHandlers,
     windowListeners,
@@ -1459,6 +1512,9 @@ describe('client bundle — apply wiring', () => {
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab',
       'sidebar.right.pane.tab.title',
+      // Settings → 插件 → AT Terminal. A **list** slot owned by `ui-settings-plugins`; the tab
+      // body is a plain component registered through `inject`.
+      'settings.plugins.tab',
       'shell.overlay',
       'conversation.session.header.utilities',
       // UI2-12: the one seat that renders outside our panel — the remote-command row in the
@@ -1480,6 +1536,65 @@ describe('client bundle — apply wiring', () => {
         expect(entry.options.locale).toBe('atTerminal');
       }
     }
+  });
+
+  /**
+   * The Settings tab, through the same kind of registration the host package uses.
+   *
+   * `settings.plugins.tab` is a list slot: a feature contributes a tab by registering into it
+   * through `inject`, and the section renders the body with `only: <id>`. Registering on a bare
+   * `register` (no inject) or under a different slot name would leave a body nothing renders —
+   * visible only as a missing tab in a page nobody in a test would think to open.
+   */
+  it('contributes a Settings tab into the slot that owns that page', () => {
+    const tab = harness.slotRegisters.find((entry) => entry.parent === 'settings.plugins.tab');
+    expect(tab).toBeDefined();
+    expect(tab?.options).toMatchObject({
+      name: 'settings.plugins.tab',
+      id: '@at-series/dsh-at-terminal/settings',
+      order: 20
+    });
+    const label = tab?.options.label as (() => string) | undefined;
+    expect(typeof label).toBe('function');
+    expect(label?.()).toBe('AT Terminal');
+    // A component, not a rendered tree: the slot owns mounting, so the registration must hand
+    // over something it can mount later (the tab is only rendered when selected).
+    expect(typeof tab?.component).toBe('function');
+  });
+
+  /**
+   * `monitor-control` honours `mode`, which it did not before.
+   *
+   * The handler tested for `'hud'` and sent everything else to `openMonitorTab` with a
+   * `?? 'float'` default — and `openMonitorTab` ignored `mode` entirely, opening the HUD
+   * whatever it was told. So `open_monitor`'s `mode` parameter was a promise the client broke
+   * silently, and the pane kind it named was never reached by any message.
+   */
+  it('opens the monitor pane when the Host says mode=tab, and the HUD otherwise', () => {
+    const before = harness.openTabCalls.length;
+
+    harness.dispatchMonitorControl({
+      action: 'open',
+      target: 'agent_execution',
+      serverId: 'srv-42',
+      mode: 'tab'
+    });
+    expect(harness.openTabCalls.slice(before)).toEqual([
+      {
+        kind: 'at-terminal-monitor',
+        // The pane reads these from its tab's `navigation.params` — the only channel a tab body
+        // has. Dropping them would open the pane on whatever it defaults to, which is the same
+        // class of bug as the HUD's dropped `serverId`.
+        options: { params: { target: 'agent_execution', serverId: 'srv-42' } }
+      }
+    ]);
+
+    // `hud` (and a message with no mode at all, which is what the Host's own default produces)
+    // must not open a tab: one intent, one surface.
+    const mark = harness.openTabCalls.length;
+    harness.dispatchMonitorControl({ action: 'open', target: 'hardware', mode: 'hud' });
+    harness.dispatchMonitorControl({ action: 'open', target: 'hardware' });
+    expect(harness.openTabCalls.length, 'a HUD request opened a pane tab').toBe(mark);
   });
 
   it('injects the real reused stylesheets once, scoped, and removes them on dispose', () => {

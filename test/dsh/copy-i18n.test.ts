@@ -114,6 +114,48 @@ describe('copy that was wrong (UI2-10)', () => {
   });
 });
 
+describe('the Settings tab reads the dictionary (S5-03)', () => {
+  const TAB = readFileSync(join(process.cwd(), 'src/platform/dsh/client/views/settingsTab.ts'), 'utf8');
+  const MAIN = readFileSync(join(process.cwd(), 'src/platform/dsh/client/main.ts'), 'utf8');
+
+  /**
+   * No copy in the file at all — the strong form of "use `t()`".
+   *
+   * Asserting that each heading is translated invites the next heading to be typed in Chinese
+   * again; asserting that the file contains **no CJK** makes any literal copy a failure, and a
+   * literal is the only way it could get there. This shipped: the first version of the tab had
+   * 「连接健康 / 审计 / 信任库 / 忘记」 hard-coded while both locales exist, so an English
+   * Harness showed a Chinese page and no test noticed.
+   */
+  it('holds no literal copy, so every string has to come from the dictionary', () => {
+    const cjk = TAB.match(/[\u4e00-\u9fff]/g) ?? [];
+    expect(cjk).toEqual([]);
+  });
+
+  /**
+   * Every key it asks for exists — including the three decision words, which are looked up
+   * through a helper rather than inline. `t('monitor.decision.*')` in the tab reuses the
+   * monitor's wording so one decision is not named two ways; the helper only exists so a
+   * renamed key is still found by the scan above, which reads literal call sites.
+   */
+  it('asks only for keys the dictionary defines', () => {
+    const asked = [...TAB.matchAll(/\bt\(\s*'([A-Za-z][\w.]*)'/g)].map((match) => match[1] as string);
+    expect(asked.length).toBeGreaterThan(10);
+    expect(asked.filter((key) => !(key in zh))).toEqual([]);
+  });
+
+  /**
+   * The tab is registered **through `wrapWithLocale`**.
+   *
+   * A bare `slots.register(…)` mounts just as well and then hands the component the identity
+   * translator, so every key renders as its own name. Nothing throws, and the page looks
+   * unfinished rather than broken — the kind of defect that survives a screenshot review.
+   */
+  it('is registered wrapped, so `t` is the bound translator', () => {
+    expect(MAIN).toMatch(/wrapWithLocale\(\s*AtTerminalSettingsTab\s*,\s*t\s*\)/);
+  });
+});
+
 describe('the failure banner is readable (UI2-10)', () => {
   it('puts the error colour on the frame, not on the body copy', () => {
     const rule = ruleFor('.att-banner');

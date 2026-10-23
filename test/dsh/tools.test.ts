@@ -503,7 +503,7 @@ describe('dsh/tools.js createTools', () => {
     expect(tool.output.render({ target: 'hardware' }, refused)[0].text).toContain('no browser panel is connected');
 
     // `float` is gone: the enum says so, and the message names the surviving value.
-    await expect(tool.execute({ target: 'hardware', mode: 'float' })).rejects.toThrow(/must be one of: hud/);
+    await expect(tool.execute({ target: 'hardware', mode: 'float' })).rejects.toThrow(/must be one of: hud, tab/);
   });
 
   it('exercises at_terminal_get_hardware_metrics and get_agent_execution_status', async () => {

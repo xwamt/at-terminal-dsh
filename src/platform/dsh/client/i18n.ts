@@ -423,7 +423,30 @@ export const zh: Record<string, string> = {
   'tool.command.timedOut': '命令已超时，以下为被中断前捕获的输出',
   'tool.command.truncated': '输出已截断，仅显示前一部分',
   'tool.command.copy': '复制输出',
-  'tool.command.copied': '已复制'
+  'tool.command.copied': '已复制',
+
+  /* ---- S5-03: the Settings → 插件 tab ---- */
+  // Counts, not "connection health": the audit rows record *decisions* about commands, and
+  // nothing in this bundle reports a connection attempt.
+  'settings.decisions.heading': '决策统计',
+  'settings.decisions.window': '最近 {count} 条决策',
+  'settings.decisions.allowed': '允许 {count}',
+  'settings.decisions.confirmed': '确认后执行 {count}',
+  'settings.decisions.denied': '拒绝 {count}',
+  'settings.audit.heading': '最近审计',
+  // One sentence for both cases — unreadable and unwritable are the same fact to a reader:
+  // there is no trail to show, and it is not because nothing happened.
+  'settings.audit.unreadable': '审计不可读：面板未连接。',
+  'settings.audit.empty': '还没有审计记录。',
+  'settings.audit.copy': '复制 JSON',
+  'settings.trust.heading': '信任库',
+  // Says why a key with no matching server has no button, before the rows are read.
+  'settings.trust.scope': '只有地址与某台服务器完全一致的密钥可以在这里忘记；跳板机与已删除服务器的密钥需在该会话中处理。',
+  'settings.trust.ownerless': '无对应服务器配置',
+  'settings.trust.unreadable': '信任库不可读。',
+  'settings.trust.empty': '还没有信任过任何主机。',
+  'settings.trust.forget': '忘记',
+  'settings.trust.failed': '操作失败：{message}'
 };
 
 export const en: Record<string, string> = {
@@ -785,5 +808,22 @@ export const en: Record<string, string> = {
   'tool.command.timedOut': 'Command timed out — output below is what was captured before it was killed',
   'tool.command.truncated': 'Output was truncated — only the first part is shown',
   'tool.command.copy': 'Copy output',
-  'tool.command.copied': 'Copied'
+  'tool.command.copied': 'Copied',
+  'settings.decisions.heading': 'Decisions',
+  'settings.decisions.window': 'Last {count} decisions',
+  'settings.decisions.allowed': 'Allowed {count}',
+  'settings.decisions.confirmed': 'Confirmed {count}',
+  'settings.decisions.denied': 'Denied {count}',
+  'settings.audit.heading': 'Recent audit',
+  'settings.audit.unreadable': 'Audit unavailable — the panel is not connected.',
+  'settings.audit.empty': 'No audit rows yet.',
+  'settings.audit.copy': 'Copy JSON',
+  'settings.trust.heading': 'Trusted hosts',
+  'settings.trust.scope':
+    'Only a key whose address matches a configured server can be forgotten here; jump-host and removed-server keys are handled from that session.',
+  'settings.trust.ownerless': 'no matching server',
+  'settings.trust.unreadable': 'The trust library is unreadable.',
+  'settings.trust.empty': 'No host has been trusted yet.',
+  'settings.trust.forget': 'Forget',
+  'settings.trust.failed': 'Action failed: {message}'
 };

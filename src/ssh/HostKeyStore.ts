@@ -56,6 +56,23 @@ export class HostKeyStore {
     return this.read()[this.key(host, port)];
   }
 
+  /**
+   * Every trusted key, newest first.
+   *
+   * The store was write-and-ask-one-host only (`check`, `getTrusted`, `describe`, `forget`),
+   * because the connect prompts never needed to look at the set. A trust library the user can
+   * review — and prune — needs the set, and reading it here keeps the storage key private.
+   *
+   * `trustedAt` has millisecond resolution, so a burst of accepts can tie; the address breaks
+   * the tie, because a page whose rows swap places between two identical reads looks like it
+   * is reordering itself for no reason.
+   */
+  list(): TrustedHostKey[] {
+    return Object.values(this.read()).sort(
+      (a, b) => b.trustedAt - a.trustedAt || this.key(a.host, a.port).localeCompare(this.key(b.host, b.port))
+    );
+  }
+
   async forget(host: string, port: number): Promise<void> {
     const keys = this.read();
     delete keys[this.key(host, port)];

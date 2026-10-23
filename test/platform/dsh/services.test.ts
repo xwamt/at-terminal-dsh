@@ -665,3 +665,47 @@ describe('dsh terminal api — forgetHost', () => {
     expect(store.getTrusted('18.199.246.45', 22)).toBeUndefined();
   });
 });
+
+/**
+ * `listHostKeys` — the read half the settings page needs.
+ *
+ * `forgetHost` was write-only from the page's point of view: it could clear a key it already
+ * knew about, but nothing enumerated the library, so a key could only be found by trying to
+ * connect to it. Two properties matter and both are asserted here — the digest is formatted the
+ * way `ssh-keygen -lf` prints it (a bare hex string is not something a user can compare), and
+ * keys belonging to **no** configured server are still listed, which is precisely the case the
+ * page exists for: a wrong entry recorded under an address no server has anymore.
+ */
+describe('dsh terminal api — listHostKeys', () => {
+  it('lists every trusted key, newest first, with a comparable fingerprint', async () => {
+    const { platform } = await assemble(await makeDir('at-dsh-term-list-'));
+    const api = createDshTerminalApi({ platform });
+    const store = new HostKeyStore(platform.state);
+
+    // Bare digests, the shape `trust()` receives from the verifier. The gap matters: `trustedAt`
+    // is a millisecond clock, and two accepts in the same tick would make "newest first" an
+    // assertion about the tie-break rather than about the order the page promises.
+    await store.trust('10.0.133.11', 22, 'aaaabbbbcccc');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await store.trust('18.199.246.45', 2222, 'dddd5555eeee', 'ssh-ed25519');
+
+    const keys = await api.listHostKeys();
+
+    expect(keys.map((entry) => `${entry.host}:${entry.port}`)).toEqual([
+      '18.199.246.45:2222',
+      '10.0.133.11:22'
+    ]);
+    // Prefixed, not bare: the page compares against `ssh-keygen -lf`, which prints SHA256:…
+    expect(keys[0].fingerprint).toBe('SHA256:dddd5555eeee');
+    expect(keys[1].fingerprint).toBe('SHA256:aaaabbbbcccc');
+    expect(keys[0].algorithm).toBe('ssh-ed25519');
+    // Neither host belongs to a server record, and both are still returned.
+    expect(keys).toHaveLength(2);
+  });
+
+  it('returns an empty list rather than throwing when nothing is trusted', async () => {
+    const { platform } = await assemble(await makeDir('at-dsh-term-list-empty-'));
+    const api = createDshTerminalApi({ platform });
+    await expect(api.listHostKeys()).resolves.toEqual([]);
+  });
+});

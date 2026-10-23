@@ -1087,7 +1087,9 @@ export interface MonitorControlMessage {
   action: 'open' | 'close' | 'focus' | 'set-target';
   target: 'hardware' | 'agent_execution';
   serverId?: string;
-  mode?: 'float' | 'hud';
+  // The Host sends only what its enum allows. 'float' named a DockKit pane this client has
+  // never rendered and is gone as of 0.2.2; 'tab' is the right-sidebar pane.
+  mode?: 'hud' | 'tab';
 }
 
 export function formatThroughput(bytesPerSec: number): string {

@@ -730,6 +730,16 @@ export function registerChannel(ctx, options) {
      * have no way to check. `host`/`port` are bounded to the server's own jump chain
      * inside the service, exactly as for `trustHost`.
      */
+    /**
+     * The trust library, for the settings tab.
+     *
+     * Read-only and unscoped: trust belongs to a host, not to a server record, and the page
+     * that shows it is not about one server. `terminal.forgetHost` above is the write.
+     */
+    'terminal.hostKeys'() {
+      return resolveTerminal().listHostKeys()
+    },
+
     'terminal.forgetHost'(params = {}) {
       return resolveTerminal().forgetHost({
         serverId: params.serverId,

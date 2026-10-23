@@ -14360,6 +14360,22 @@ var HostKeyStore = class {
   getTrusted(host, port) {
     return this.read()[this.key(host, port)];
   }
+  /**
+   * Every trusted key, newest first.
+   *
+   * The store was write-and-ask-one-host only (`check`, `getTrusted`, `describe`, `forget`),
+   * because the connect prompts never needed to look at the set. A trust library the user can
+   * review — and prune — needs the set, and reading it here keeps the storage key private.
+   *
+   * `trustedAt` has millisecond resolution, so a burst of accepts can tie; the address breaks
+   * the tie, because a page whose rows swap places between two identical reads looks like it
+   * is reordering itself for no reason.
+   */
+  list() {
+    return Object.values(this.read()).sort(
+      (a2, b4) => b4.trustedAt - a2.trustedAt || this.key(a2.host, a2.port).localeCompare(this.key(b4.host, b4.port))
+    );
+  }
   async forget(host, port) {
     let keys = this.read();
     delete keys[this.key(host, port)], await this.globalState.update(HOST_KEYS_KEY, keys);
@@ -16139,6 +16155,15 @@ function createDshTerminalApi({ platform: platform2, observer }) {
     async forgetHost(request) {
       let { host, port } = await resolveHost(request.serverId, request.host, request.port), forgot = hostKeyStore.getTrusted(host, port) !== void 0;
       return forgot && await hostKeyStore.forget(host, port), { forgot, host, port };
+    },
+    async listHostKeys() {
+      return hostKeyStore.list().map((entry) => ({
+        host: entry.host,
+        port: entry.port,
+        fingerprint: formatFingerprint(entry.fingerprint),
+        ...entry.algorithm === void 0 ? {} : { algorithm: entry.algorithm },
+        trustedAt: entry.trustedAt
+      }));
     }
   };
 }

@@ -45,7 +45,7 @@ __export(main_exports, {
   sessionDefinition: () => sessionDefinition
 });
 module.exports = __toCommonJS(main_exports);
-var import_react12 = require("react");
+var import_react13 = require("react");
 
 // src/sftp/FileSize.ts
 var UNITS = ["B", "KB", "MB", "GB", "TB"];
@@ -1016,7 +1016,29 @@ var NS = "atTerminal", zh = {
   "tool.command.timedOut": "\u547D\u4EE4\u5DF2\u8D85\u65F6\uFF0C\u4EE5\u4E0B\u4E3A\u88AB\u4E2D\u65AD\u524D\u6355\u83B7\u7684\u8F93\u51FA",
   "tool.command.truncated": "\u8F93\u51FA\u5DF2\u622A\u65AD\uFF0C\u4EC5\u663E\u793A\u524D\u4E00\u90E8\u5206",
   "tool.command.copy": "\u590D\u5236\u8F93\u51FA",
-  "tool.command.copied": "\u5DF2\u590D\u5236"
+  "tool.command.copied": "\u5DF2\u590D\u5236",
+  /* ---- S5-03: the Settings → 插件 tab ---- */
+  // Counts, not "connection health": the audit rows record *decisions* about commands, and
+  // nothing in this bundle reports a connection attempt.
+  "settings.decisions.heading": "\u51B3\u7B56\u7EDF\u8BA1",
+  "settings.decisions.window": "\u6700\u8FD1 {count} \u6761\u51B3\u7B56",
+  "settings.decisions.allowed": "\u5141\u8BB8 {count}",
+  "settings.decisions.confirmed": "\u786E\u8BA4\u540E\u6267\u884C {count}",
+  "settings.decisions.denied": "\u62D2\u7EDD {count}",
+  "settings.audit.heading": "\u6700\u8FD1\u5BA1\u8BA1",
+  // One sentence for both cases — unreadable and unwritable are the same fact to a reader:
+  // there is no trail to show, and it is not because nothing happened.
+  "settings.audit.unreadable": "\u5BA1\u8BA1\u4E0D\u53EF\u8BFB\uFF1A\u9762\u677F\u672A\u8FDE\u63A5\u3002",
+  "settings.audit.empty": "\u8FD8\u6CA1\u6709\u5BA1\u8BA1\u8BB0\u5F55\u3002",
+  "settings.audit.copy": "\u590D\u5236 JSON",
+  "settings.trust.heading": "\u4FE1\u4EFB\u5E93",
+  // Says why a key with no matching server has no button, before the rows are read.
+  "settings.trust.scope": "\u53EA\u6709\u5730\u5740\u4E0E\u67D0\u53F0\u670D\u52A1\u5668\u5B8C\u5168\u4E00\u81F4\u7684\u5BC6\u94A5\u53EF\u4EE5\u5728\u8FD9\u91CC\u5FD8\u8BB0\uFF1B\u8DF3\u677F\u673A\u4E0E\u5DF2\u5220\u9664\u670D\u52A1\u5668\u7684\u5BC6\u94A5\u9700\u5728\u8BE5\u4F1A\u8BDD\u4E2D\u5904\u7406\u3002",
+  "settings.trust.ownerless": "\u65E0\u5BF9\u5E94\u670D\u52A1\u5668\u914D\u7F6E",
+  "settings.trust.unreadable": "\u4FE1\u4EFB\u5E93\u4E0D\u53EF\u8BFB\u3002",
+  "settings.trust.empty": "\u8FD8\u6CA1\u6709\u4FE1\u4EFB\u8FC7\u4EFB\u4F55\u4E3B\u673A\u3002",
+  "settings.trust.forget": "\u5FD8\u8BB0",
+  "settings.trust.failed": "\u64CD\u4F5C\u5931\u8D25\uFF1A{message}"
 }, en = {
   "type.label": "AT Terminal",
   "session.label": "AT Terminal",
@@ -1376,7 +1398,23 @@ var NS = "atTerminal", zh = {
   "tool.command.timedOut": "Command timed out \u2014 output below is what was captured before it was killed",
   "tool.command.truncated": "Output was truncated \u2014 only the first part is shown",
   "tool.command.copy": "Copy output",
-  "tool.command.copied": "Copied"
+  "tool.command.copied": "Copied",
+  "settings.decisions.heading": "Decisions",
+  "settings.decisions.window": "Last {count} decisions",
+  "settings.decisions.allowed": "Allowed {count}",
+  "settings.decisions.confirmed": "Confirmed {count}",
+  "settings.decisions.denied": "Denied {count}",
+  "settings.audit.heading": "Recent audit",
+  "settings.audit.unreadable": "Audit unavailable \u2014 the panel is not connected.",
+  "settings.audit.empty": "No audit rows yet.",
+  "settings.audit.copy": "Copy JSON",
+  "settings.trust.heading": "Trusted hosts",
+  "settings.trust.scope": "Only a key whose address matches a configured server can be forgotten here; jump-host and removed-server keys are handled from that session.",
+  "settings.trust.ownerless": "no matching server",
+  "settings.trust.unreadable": "The trust library is unreadable.",
+  "settings.trust.empty": "No host has been trusted yet.",
+  "settings.trust.forget": "Forget",
+  "settings.trust.failed": "Action failed: {message}"
 };
 
 // src/platform/dsh/client/body.ts
@@ -9622,6 +9660,138 @@ function ensureStyles(doc) {
   };
 }
 
+// src/platform/dsh/client/views/settingsTab.ts
+var import_react12 = __toESM(require("react"), 1);
+var sectionStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+  maxWidth: "760px",
+  color: "var(--dsw-alias-label-primary)"
+}, headingStyle = {
+  margin: 0,
+  fontSize: "13px",
+  fontWeight: 600,
+  color: "var(--dsw-alias-label-secondary)"
+}, rowStyle = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: "10px",
+  fontSize: "12px",
+  padding: "4px 0",
+  borderBottom: "0.5px solid var(--dsw-alias-border-l3)"
+}, mutedStyle = { color: "var(--dsw-alias-label-tertiary)", fontSize: "12px" }, monoStyle = { fontFamily: "var(--dsw-alias-font-mono, monospace)", fontSize: "11px" };
+function timeOf(timestamp) {
+  let when = new Date(timestamp);
+  return [when.getHours(), when.getMinutes(), when.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
+}
+function AtTerminalSettingsTab() {
+  let t = import_react12.default.useContext(BodyLocale), decisionLabel = (decision) => t(decision === "allowed" ? "monitor.decision.allowed" : decision === "confirmed" ? "monitor.decision.confirmed" : "monitor.decision.denied"), [audits, setAudits] = (0, import_react12.useState)(null), [hostKeys, setHostKeys] = (0, import_react12.useState)(null), [servers, setServers] = (0, import_react12.useState)([]), [error, setError] = (0, import_react12.useState)(null), [busy, setBusy] = (0, import_react12.useState)(!1), [reloadCount, setReloadCount] = (0, import_react12.useState)(0);
+  (0, import_react12.useEffect)(() => {
+    let cancelled = !1;
+    return setError(null), Promise.all([
+      getAgentExecutionStatusRpc(50).catch(() => null),
+      callRpc("terminal.hostKeys", {}).catch(() => null),
+      callRpc("servers.list", {}).catch(() => null)
+    ]).then(([snapshot, keys, listed]) => {
+      if (cancelled) return;
+      snapshot !== null && setAudits(snapshot.recentAudits ?? []), setHostKeys(Array.isArray(keys) ? keys : null);
+      let rows = listed?.servers;
+      setServers(Array.isArray(rows) ? rows : []);
+    }), () => {
+      cancelled = !0;
+    };
+  }, [reloadCount]);
+  let forget = (row, server) => {
+    setBusy(!0), callRpc("terminal.forgetHost", {
+      serverId: server.id,
+      host: row.host,
+      port: row.port
+    }).then(() => setReloadCount((count2) => count2 + 1)).catch(
+      (failure) => setError(failure instanceof Error ? failure.message : String(failure))
+    ).finally(() => setBusy(!1));
+  }, totals = { allowed: 0, confirmed: 0, denied: 0 };
+  for (let audit of audits ?? [])
+    audit.decision === "allowed" ? totals.allowed += 1 : audit.decision === "confirmed" ? totals.confirmed += 1 : totals.denied += 1;
+  return h(
+    "div",
+    // No `att-*` class: the audit that every such class is defined in the stylesheet exists to
+    // stop unstyled hooks from accumulating, and this page is styled entirely inline from
+    // `--dsw-alias-*` tokens so it follows the host's light/dark switch.
+    { style: sectionStyle },
+    // 1. decision counts
+    h("h3", { style: headingStyle }, t("settings.decisions.heading")),
+    audits === null ? h("div", { style: mutedStyle }, t("settings.audit.unreadable")) : h(
+      "div",
+      { style: rowStyle },
+      h("span", {}, t("settings.decisions.window", { count: audits.length })),
+      h("span", { style: mutedStyle }, t("settings.decisions.allowed", { count: totals.allowed })),
+      h("span", { style: mutedStyle }, t("settings.decisions.confirmed", { count: totals.confirmed })),
+      h("span", { style: mutedStyle }, t("settings.decisions.denied", { count: totals.denied }))
+    ),
+    // 2. audit tail
+    h("h3", { style: headingStyle }, t("settings.audit.heading")),
+    ...audits === null ? [] : audits.length === 0 ? [h("div", { key: "empty", style: mutedStyle }, t("settings.audit.empty"))] : audits.slice(-10).reverse().map(
+      (audit) => h(
+        "div",
+        { key: audit.id, style: rowStyle },
+        h("span", { style: monoStyle }, timeOf(audit.timestamp)),
+        h(
+          "span",
+          { style: mutedStyle },
+          decisionLabel(audit.decision)
+        ),
+        h("span", {}, String(audit.command ?? "").slice(0, 90))
+      )
+    ),
+    audits === null ? null : h(
+      "button",
+      {
+        type: "button",
+        style: { alignSelf: "flex-start", fontSize: "12px" },
+        onClick: () => {
+          typeof navigator > "u" || navigator.clipboard?.writeText(JSON.stringify(audits, null, 2));
+        }
+      },
+      t("settings.audit.copy")
+    ),
+    // 3. trust library
+    h("h3", { style: headingStyle }, t("settings.trust.heading")),
+    h("div", { style: mutedStyle }, t("settings.trust.scope")),
+    error !== null ? h("div", { style: mutedStyle }, t("settings.trust.failed", { message: error })) : null,
+    hostKeys === null ? h("div", { style: mutedStyle }, t("settings.trust.unreadable")) : hostKeys.length === 0 ? h("div", { style: mutedStyle }, t("settings.trust.empty")) : h(
+      "div",
+      { style: { display: "flex", flexDirection: "column" } },
+      ...hostKeys.map((row) => {
+        let owner = servers.find(
+          (server) => server.host === row.host && (server.port ?? 22) === row.port
+        );
+        return h(
+          "div",
+          { key: `${row.host}:${row.port}`, style: rowStyle },
+          h("span", { style: monoStyle }, `${row.host}:${row.port}`),
+          h("span", { style: monoStyle }, row.fingerprint),
+          h(
+            "span",
+            { style: { ...mutedStyle, flex: 1 } },
+            owner === void 0 ? t("settings.trust.ownerless") : owner.label ?? owner.id
+          ),
+          owner === void 0 ? null : h(
+            "button",
+            {
+              type: "button",
+              disabled: busy,
+              style: { fontSize: "12px" },
+              onClick: () => forget(row, owner)
+            },
+            t("settings.trust.forget")
+          )
+        );
+      })
+    )
+  );
+}
+
 // src/platform/dsh/client/main.ts
 function newTabCommand(t, openSessionTab) {
   return {
@@ -9794,8 +9964,8 @@ function MonitorHeaderButton(props) {
   );
 }
 function MonitorHudContainer(props) {
-  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react12.useState)(null), [snapshot, setSnapshot] = (0, import_react12.useState)(null), [visible, setVisible] = (0, import_react12.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react12.useState)(null), [activeLabel, setActiveLabel] = (0, import_react12.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react12.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react12.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react12.useState)([]), connectedRef = (0, import_react12.useRef)(!1), connectionStartedAtRef = (0, import_react12.useRef)(0), seenAuditIdsRef = (0, import_react12.useRef)(/* @__PURE__ */ new Set());
-  return (0, import_react12.useEffect)(() => {
+  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react13.useState)(null), [snapshot, setSnapshot] = (0, import_react13.useState)(null), [visible, setVisible] = (0, import_react13.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react13.useState)(null), [activeLabel, setActiveLabel] = (0, import_react13.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react13.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react13.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react13.useState)([]), connectedRef = (0, import_react13.useRef)(!1), connectionStartedAtRef = (0, import_react13.useRef)(0), seenAuditIdsRef = (0, import_react13.useRef)(/* @__PURE__ */ new Set());
+  return (0, import_react13.useEffect)(() => {
     if (onRegisterController)
       return onRegisterController({
         open: (target, serverId) => {
@@ -9810,14 +9980,14 @@ function MonitorHudContainer(props) {
       }), () => {
         onRegisterController(null);
       };
-  }, [onRegisterController]), (0, import_react12.useEffect)(() => {
+  }, [onRegisterController]), (0, import_react13.useEffect)(() => {
     let handleActiveTerminal = (state) => {
       setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? (connectedRef.current || (connectedRef.current = !0, connectionStartedAtRef.current = Date.now(), seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setInitialSubtab("overview")), setVisible(!0)) : (connectedRef.current = !1, connectionStartedAtRef.current = 0, seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setVisible(!1));
     }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
     return handleActiveTerminal(getActiveTerminalState()), () => {
       unsubscribe();
     };
-  }, []), (0, import_react12.useEffect)(() => {
+  }, []), (0, import_react13.useEffect)(() => {
     let unmounted = !1, fetchLatest = () => {
       Promise.all([
         getHardwareMetricsRpc(activeServerId || void 0).catch(() => null),
@@ -9887,9 +10057,17 @@ function apply(ctx) {
       return console.warn("at-terminal: could not open a terminal tab", error), !1;
     }
   }, hudController = null, openMonitorTab = (options) => {
+    let target = options?.target ?? "hardware";
+    if (options?.mode === "tab")
+      try {
+        return ctx.sidebarRight.openTab(KIND_MONITOR, {
+          params: { target, serverId: options.serverId }
+        }), !0;
+      } catch (error) {
+        return console.warn("at-terminal: could not open the monitor tab", error), !1;
+      }
     try {
-      let target = options?.target ?? "hardware";
-      return hudController ? (hudController.open(target), !0) : !1;
+      return hudController ? (hudController.open(target, options?.serverId), !0) : !1;
     } catch (error) {
       return console.warn("at-terminal: could not open monitor floating window", error), !1;
     }
@@ -9905,11 +10083,7 @@ function apply(ctx) {
     "at-terminal: monitor shortcut"
   ), ctx.effect(
     () => listenMonitorEvents((msg) => {
-      msg.action === "open" ? msg.mode === "hud" ? hudController?.open(msg.target, msg.serverId) : openMonitorTab({
-        target: msg.target,
-        serverId: msg.serverId,
-        mode: msg.mode ?? "float"
-      }) : msg.action === "close" && msg.mode === "hud" && hudController?.close();
+      msg.action === "open" ? msg.mode === "tab" ? openMonitorTab({ target: msg.target, serverId: msg.serverId, mode: "tab" }) : hudController?.open(msg.target, msg.serverId) : msg.action === "close" && msg.mode === "hud" && hudController?.close();
     }),
     "at-terminal: monitor sse events"
   ), ctx.effect(
@@ -9982,6 +10156,24 @@ function apply(ctx) {
       };
     }),
     "at-terminal: chip titles"
+  ), ctx.effect(
+    () => ctx.slots.inject(
+      "settings.plugins.tab",
+      () => ctx.slots.register(
+        {
+          name: "settings.plugins.tab",
+          id: "@at-series/dsh-at-terminal/settings",
+          order: 20,
+          label: () => "AT Terminal"
+        },
+        // Wrapped, not bare: the slot hands a body its tab record, not copy, so the tab reads
+        // `t` from `BodyLocale` — exactly like the two sidebar bodies. A bare registration
+        // compiles and mounts, and then prints dictionary keys or, worse, whatever language
+        // was hard-coded, to a user whose Harness is in the other one.
+        wrapWithLocale(AtTerminalSettingsTab, t)
+      )
+    ),
+    "at-terminal: settings tab"
   ), ctx.effect(
     () => ctx.slots.inject(
       "shell.overlay",

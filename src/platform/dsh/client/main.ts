@@ -64,6 +64,7 @@ import { gaugeRegular, guideTerminalArtwork } from './icons';
 import type { AgentAuditSummary, AgentExecutionSnapshot, HardwareMetrics, Translate } from './models';
 import type { PanelMode } from './views/shared';
 import { h } from './views/shared';
+import { AtTerminalSettingsTab } from './views/settingsTab';
 
 /** The narrow slice of the client context this plugin touches. */
 export interface ClientContext {
@@ -753,16 +754,39 @@ export function apply(ctx: ClientContext): void {
 
   let hudController: HudController | null = null;
 
-  /** Open or toggle the monitor floating window. */
+  /**
+   * Open the monitor: floating HUD by default, right-sidebar pane when asked for `tab`.
+   *
+   * The pane and the HUD read the target from different places — the pane from its tab's
+   * `navigation.params`, the HUD from its controller — so both are passed explicitly. The
+   * `mode` argument used to be accepted and ignored, which made `open_monitor`'s `mode` a
+   * promise the client broke without saying so.
+   */
   const openMonitorTab = (options?: {
     target?: 'hardware' | 'agent_execution';
     serverId?: string;
-    mode?: 'float' | 'hud' | 'tab';
+    mode?: 'hud' | 'tab';
   }): boolean => {
+    const target = options?.target ?? 'hardware';
+    if (options?.mode === 'tab') {
+      try {
+        // `multiple: false`, so this focuses the existing pane instead of stacking duplicates.
+        ctx.sidebarRight.openTab(KIND_MONITOR, {
+          params: { target, serverId: options.serverId }
+        });
+        return true;
+      } catch (error) {
+        // The frame throws when there is no mounted session to place the tab into — the sidebar
+        // can be collapsed with nothing in it. Said out loud rather than falling back to the
+        // HUD, because silently rendering somewhere else is the confusion this whole card is
+        // about.
+        console.warn('at-terminal: could not open the monitor tab', error);
+        return false;
+      }
+    }
     try {
-      const target = options?.target ?? 'hardware';
       if (hudController) {
-        hudController.open(target);
+        hudController.open(target, options?.serverId);
         return true;
       }
       return false;
@@ -794,16 +818,15 @@ export function apply(ctx: ClientContext): void {
     () =>
       listenMonitorEvents((msg) => {
         if (msg.action === 'open') {
-          if (msg.mode === 'hud') {
+          // Unknown modes fall to the HUD, matching the Host's own default (`input.mode ?? 'hud'`).
+          // This used to test for `'hud'` and send everything else down the pane path with a
+          // `?? 'float'` default — a mode that no longer exists anywhere.
+          if (msg.mode === 'tab') {
+            openMonitorTab({ target: msg.target, serverId: msg.serverId, mode: 'tab' });
+          } else {
             // `msg.serverId` was dropped here, so a HUD opened by a tool call or a command
             // showed the active terminal's server — or "未选择服务器" when none was open.
             hudController?.open(msg.target, msg.serverId);
-          } else {
-            openMonitorTab({
-              target: msg.target,
-              serverId: msg.serverId,
-              mode: msg.mode ?? 'float'
-            });
           }
         } else if (msg.action === 'close') {
           if (msg.mode === 'hud') {
@@ -964,6 +987,35 @@ export function apply(ctx: ClientContext): void {
         };
       }),
     'at-terminal: chip titles'
+  );
+
+  /**
+   * Settings → 插件 → AT Terminal.
+   *
+   * `settings.plugins.tab` is a **list** slot owned by `ui-settings-plugins`
+   * (`lib/client.js:201-212`); that package owns the Settings navigation entry and the tab
+   * chrome, and renders each tab's body through the same slot with `only: <id>` (`:68`). So
+   * this one registration is the whole tab — no section plumbing of our own, and no `kind`
+   * taken from anyone else.
+   */
+  ctx.effect(
+    () =>
+      ctx.slots.inject('settings.plugins.tab', () =>
+        ctx.slots.register(
+          {
+            name: 'settings.plugins.tab',
+            id: '@at-series/dsh-at-terminal/settings',
+            order: 20,
+            label: () => 'AT Terminal'
+          },
+          // Wrapped, not bare: the slot hands a body its tab record, not copy, so the tab reads
+          // `t` from `BodyLocale` — exactly like the two sidebar bodies. A bare registration
+          // compiles and mounts, and then prints dictionary keys or, worse, whatever language
+          // was hard-coded, to a user whose Harness is in the other one.
+          wrapWithLocale(AtTerminalSettingsTab, t)
+        )
+      ),
+    'at-terminal: settings tab'
   );
 
   // HUD floating widget in shell.overlay

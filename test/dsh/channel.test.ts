@@ -1048,3 +1048,41 @@ describe('dsh Host channel — server records', () => {
     harness.dispose();
   });
 });
+
+/**
+ * `terminal.hostKeys` — the route the settings tab reads the trust library through.
+ *
+ * Asserted rather than assumed because the route name is the only contract between the two
+ * halves: a typo here is a page that silently shows "nothing trusted" forever, which reads
+ * exactly like an empty library.
+ */
+describe('dsh Host channel — trust library', () => {
+  it('passes the whole library through the terminal service', async () => {
+    const rows = [
+      { host: '10.0.133.11', port: 22, fingerprint: 'SHA256:aaa', trustedAt: 2 },
+      { host: '18.199.246.45', port: 2222, fingerprint: 'SHA256:bbb', trustedAt: 1 }
+    ];
+    let asked = 0;
+    const face = {
+      listHostKeys: async () => {
+        asked += 1;
+        return rows;
+      }
+    };
+    const harness = createHarness(undefined, undefined, () => face);
+
+    const answer = await callRpc(harness, { method: 'terminal.hostKeys' });
+
+    expect(answer.status).toBe(200);
+    expect(answer.json?.result).toEqual(rows);
+    expect(asked).toBe(1);
+    harness.dispose();
+  });
+
+  it('reports a missing terminal service instead of answering with an empty library', async () => {
+    const harness = createHarness();
+    const answer = await callRpc(harness, { method: 'terminal.hostKeys' });
+    expect(answer.json?.error?.code).toBe('services-unavailable');
+    harness.dispose();
+  });
+});

@@ -73,7 +73,7 @@ export const BodyLocale = React.createContext<Translate>((key) => key);
 /** What `apply` lends a body beyond copy: the one action a body cannot perform itself. */
 export interface BodyExtras {
   openSessionTab?: (serverId: string) => boolean;
-  openMonitorTab?: (options?: { serverId?: string; target?: 'hardware' | 'agent_execution'; mode?: 'float' | 'hud' | 'tab' }) => boolean;
+  openMonitorTab?: (options?: { serverId?: string; target?: 'hardware' | 'agent_execution'; mode?: 'hud' | 'tab' }) => boolean;
   onFloat?: (tabId: string) => void;
   [key: string]: unknown;
 }

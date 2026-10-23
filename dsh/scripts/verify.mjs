@@ -1678,7 +1678,40 @@ await check('theme-tokens', 'The token bridge carries no literal colors', () => 
     `styles.ts has ${functional.length} functional color(s) outside a token:\n  - ${functional.join('\n  - ')}`
   )
 
-  return `${declarations.length} bridge variables, all theme references; no functional colors`
+  /*
+   * The third scope: the Settings tab, which has **no stylesheet at all**.
+   *
+   * `settings.plugins.tab` renders a host-owned page, so its chrome is inline objects and the
+   * two scopes above cannot see it. That is exactly where a literal colour comes back — an
+   * inline `#333` looks correct on the light theme it was written on and stays dark on the
+   * other one. Two assertions, and both are needed: no literals, and at least a page's worth of
+   * token references, so a rename (or a page that stopped styling anything) fails loudly
+   * instead of passing vacuously.
+   */
+  const settingsTabPath = path.join(repoRoot, 'src/platform/dsh/client/views/settingsTab.ts')
+  assert.ok(
+    fs.existsSync(settingsTabPath),
+    `the Settings tab is missing: ${settingsTabPath} — if it was renamed, update this check`
+  )
+  const tabSource = fs.readFileSync(settingsTabPath, 'utf8')
+  const tabLiterals = [
+    ...[...tabSource.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((match) => match[0]),
+    ...[...tabSource.matchAll(/(?:rgba?|hsla?|oklch)\(([^)]*)\)/g)]
+      .filter((match) => !/var\(\s*--dsw-/.test(match[1]))
+      .map((match) => match[0])
+  ]
+  assert.equal(
+    tabLiterals.length,
+    0,
+    `the Settings tab has ${tabLiterals.length} literal color(s) in its inline styles:\n  - ${tabLiterals.join('\n  - ')}`
+  )
+  const tabTokens = tabSource.match(/var\(\s*--dsw-[a-z0-9-]+/g) ?? []
+  assert.ok(
+    tabTokens.length >= 5,
+    `the Settings tab references ${tabTokens.length} --dsw-* token(s); inline styles must still follow the theme`
+  )
+
+  return `${declarations.length} bridge variables, all theme references; no functional colors; Settings tab inline styles token-only (${tabTokens.length})`
 })
 
 /* ------------------------------- 10. policy -------------------------------- */

@@ -72,7 +72,7 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 | `sftp_create_directory` | write | Creates a new remote directory. |
 | `sftp_rename` | write | Renames or moves a remote file or directory. Both the source and destination paths require write authorization. |
 | `sftp_delete` | write | Deletes a single remote file (directories are refused — for one, use `run_remote_command` with an explicit `rm`, which goes through the command policy). Always asks the user, even at full trust, and the answer is never remembered. |
-| `open_monitor` | ui | Opens the monitoring HUD for hardware metrics or agent execution status. Answers `opened: false, reason: "no-client"` when no browser panel is connected, because nothing would appear. |
+| `open_monitor` | ui | Opens the monitor for hardware metrics or agent execution status: `mode: "hud"` (the default) floats it, `mode: "tab"` puts it in the right sidebar. Answers `opened: false, reason: "no-client"` when no browser panel is connected, because nothing would appear. `opened: false` with `mode: "tab"` also means the sidebar had no session to place the pane in. |
 | `get_hardware_metrics` | read-only | Reads CPU, memory, disk, network throughput, and top processes for an SSH server. Its probe script is built in and bypasses the command policy engine; the call is still audited. |
 | `get_agent_execution_status` | read-only | Reports the live running action, recent audit rows, and active SFTP transfers. `source: file` means the rows came from `agent-audit.jsonl` and outlived a restart; `source: memory` means they did not. |
 | `job_output` | read-only | Reads what a background `run_remote_command` printed since the previous read; `wait` blocks until the job settles or the budget expires. Each call consumes what it returns. |
@@ -91,6 +91,23 @@ asking does not spend a prompt, a tool call, or a turn.
 
 Both degrade honestly: without the agent service, the audit trail, or the command registry they
 answer with a sentence naming what is missing.
+
+## Settings Page
+
+Settings → Plugins → **AT Terminal** is a tab this plugin contributes into the host's own settings
+shell (`settings.plugins.tab`); the page follows the light/dark theme because every colour on it is
+a `--dsw-*` token, and its copy comes from this plugin's dictionary in both languages.
+
+| Section | What it shows |
+|---|---|
+| Decisions | How the last 50 authorization decisions broke down — allowed, confirmed after a prompt, denied. Read from the same audit rows the agent reads, so the page and the agent cannot disagree. |
+| Recent audit | The last ten rows of the durable trail: time, decision, and the command or path. **Copy JSON** puts the whole set on the clipboard. |
+| Trusted hosts | Every stored SSH host key with its `SHA256:` fingerprint (the form `ssh-keygen -lf` prints, so it can actually be compared) and the server it belongs to. **Forget** drops it through the same server-scoped route the connection flow uses. |
+
+Forgetting is deliberately bounded: the route resolves host and port inside one server's jump
+chain, so a key is only forgettable from this page when a configured server's own address matches
+it. A jump-host key, or one left behind by a removed server, says so instead of showing a button
+that would silently do nothing.
 
 ## Safety Behavior
 

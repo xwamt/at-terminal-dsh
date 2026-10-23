@@ -309,13 +309,23 @@ function fire(harness: ReturnType<typeof createHarness>, event: string, ...args:
   for (const listener of harness.listeners.get(event) ?? []) listener(...args);
 }
 
-/** Poll for a file, because the audit append is deliberately not awaited by the observer. */
-async function readWhenReady(file: string, deadlineMs = 2000): Promise<string[]> {
+/**
+ * Poll for a file, because the audit append is deliberately not awaited by the observer.
+ *
+ * `lines` is how many lines the caller is waiting for, and it defaults to "any content". It
+ * exists because a second read of an **already non-empty** file returns immediately: the old
+ * helper waited for the file to exist, not for the line just fired to land, so a test that
+ * fired a second event and re-read in the same tick asserted against one line and failed with
+ * `expected [ 'builtin_probe' ] to deeply equal [ 'builtin_probe', 'completed' ]`. The write is
+ * asynchronous by design, so the wait belongs here rather than in a sleep at the call site.
+ */
+async function readWhenReady(file: string, lines = 1, deadlineMs = 2000): Promise<string[]> {
   const started = Date.now();
   for (;;) {
     try {
       const text = await readFile(file, 'utf8');
-      if (text.trim() !== '') return text.trim().split('\n');
+      const written = text.trim() === '' ? [] : text.trim().split('\n');
+      if (written.length >= lines) return written;
     } catch {
       // not there yet
     }
@@ -737,7 +747,7 @@ describe('dsh Host half — wiring', () => {
       { name: 'at_terminal_ping', callId: 'call-ping', arguments: {}, agent: { session: { id: 'sess-1' } } },
       { isError: false, value: { ready: true } }
     );
-    const after = await readWhenReady(file);
+    const after = await readWhenReady(file, 2);
     expect(after.map((line) => JSON.parse(line).reasonCode)).toEqual(['builtin_probe', 'completed']);
   });
 

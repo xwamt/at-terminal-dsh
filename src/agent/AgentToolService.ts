@@ -398,7 +398,7 @@ export class AgentToolService {
   async openMonitor(input: {
     target: 'hardware' | 'agent_execution';
     serverId?: string;
-    mode?: 'hud';
+    mode?: 'hud' | 'tab';
   }): Promise<{
     opened: boolean;
     target: string;
@@ -406,9 +406,11 @@ export class AgentToolService {
     mode: string;
     reason?: 'no-client';
   }> {
-    // `hud` is the only presentation that exists. The enum used to advertise `float` (a
-    // DockKit pane the dsh client never renders) and the client folded both into the HUD
-    // silently, so the parameter looked like a choice and was not.
+    // Two presentations now, and both are real: `hud` is the floating overlay, `tab` is the
+    // right-sidebar pane (whose body already reads `navigation.params.target/serverId`). The
+    // enum used to advertise `float` — a DockKit pane this client never renders — while the
+    // client folded everything into the HUD, so the parameter looked like a choice and was not.
+    // `float` stays out: there is still nothing behind it.
     const mode = input.mode ?? 'hud';
     let targetServerId = input.serverId;
     if (!targetServerId && input.target === 'hardware') {
