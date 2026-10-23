@@ -41,6 +41,10 @@ Supported actions:
 - Rename, delete, and copy remote paths.
 - Preview remote files.
 - Send `cd` commands from a remote directory to the active SSH terminal.
+- A leading `~` is expanded to the session's login directory before the path reaches the server
+  (`~` and `.` are the same place here; `~user` is not expanded, because another account's home
+  needs `/etc/passwd` and is a different question). SFTP has no shell, so without this a path a
+  person types every day answered "No such file".
 
 ## Local Editing For Remote Files
 
@@ -141,6 +145,11 @@ terminal_close({ sessionId })
   `domain 'at_terminal_state' is already open`. The entry therefore reads the installed platform
   (waiting for the host bundle's in-flight assembly when it is still starting) and otherwise fails
   with "enable AT Terminal and restart". That is why this package declares AT Terminal as a peer.
+
+- **What the model reads is plain text.** The remote pty stream is a *terminal* stream — a window
+  title plus colour on every prompt. Both are stripped where the bytes enter (`feed()`), so the
+  viewport and the read pages carry what a plain-text terminal would print, not escape codes the
+  model pays for. Colour is deliberately lost: this backend has no xterm renderer to honour it.
 
 Verified on a real Harness (DSH 0.2.1-rc.2, macOS): `terminal_open({type:'ssh', name:'99.90'})`
 returned `started terminal session pty-1 (99.90) [type: ssh]`; a `terminal_send` of `cd /tmp`

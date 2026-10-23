@@ -104,10 +104,50 @@ export interface TerminalSpawnSpec {
   signal?: AbortSignal;
 }
 
-/** Strip ANSI so prompt detection reads text, not escape codes. */
-function stripAnsi(text: string): string {
+/**
+ * Escape sequences that carry no text: OSC (window title, hyperlinks), CSI (colour, cursor),
+ * charset designation and keypad-mode toggles.
+ *
+ * Kept as a list rather than one alternation so each shape can be read on its own; the OSC
+ * form appears in this stream on **every prompt** (`\u001b]0;root@host:~ \u0007`), which is why
+ * it is first.
+ */
+const ESCAPE_SEQUENCES: readonly RegExp[] = [
   // eslint-disable-next-line no-control-regex
-  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\u001b\][^\u0007]*\u0007/g, '');
+  /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g,
+  // eslint-disable-next-line no-control-regex
+  /\u001b\[[0-9;?]*[ -/]*[@-~]/g,
+  // eslint-disable-next-line no-control-regex
+  /\u001b[()][A-Za-z0-9]/g,
+  // eslint-disable-next-line no-control-regex
+  /\u001b[=>]/g
+];
+
+/** Strip ANSI so prompt detection reads text, not escape codes. */
+export function stripAnsi(text: string): string {
+  return ESCAPE_SEQUENCES.reduce((acc, pattern) => acc.replace(pattern, ''), text);
+}
+
+/**
+ * What the session actually stores: the stream with escapes gone and CRLF folded.
+ *
+ * A raw pty stream is a *terminal* stream — it carries colour, cursor moves and a window
+ * title per prompt. Every consumer here is text: the registry's `viewport`/`read` return
+ * strings that the model reads and the transcript renders, so the escapes were pure noise
+ * (and noise the model paid tokens for: a prompt cost ~30 invisible characters).
+ *
+ * This is deliberately **lossy** for colour: what is left is what a plain-text terminal
+ * would print. If a future panel wants colour back, the bytes to re-render it do not exist
+ * any more — that is the trade being made, and it is the same trade `dsh-terminal-bash`
+ * leaves to its renderer, which this backend has no equivalent of.
+ *
+ * Only line endings are normalised (`\r\r\n` is what an SSH login banner emits); a lone `\r`
+ * in the middle of a line is left alone, because collapsing it would merge lines that a
+ * progress bar deliberately overwrote in place, and interpreting that is a terminal
+ * emulator's job, not a backend's.
+ */
+export function sanitizeOutput(text: string): string {
+  return stripAnsi(text).replace(/\r+\n/g, '\n');
 }
 
 /**
@@ -150,10 +190,14 @@ export class SshPtySession {
 
   /** Called by the backend for every chunk the connection reports. */
   feed(chunk: string): void {
-    if (chunk.length === 0) return;
+    // Sanitised on the way in so the scrollback, the viewport and the read pages are the
+    // same text; sanitising on the way out would leave three places to forget (S6 real run:
+    // every prompt arrived as `\u001b]0;root@cl:/tmp\u0007\u001b[32mroot@cl\u001b[0m$`).
+    const text = sanitizeOutput(chunk);
     this.lastOutputAt = Date.now();
-    this.buffer.append(chunk);
-    this.active?.append(chunk);
+    if (text.length === 0) return;
+    this.buffer.append(text);
+    this.active?.append(text);
   }
 
   /** Called once when the remote side ends. */

@@ -41,6 +41,9 @@ MCP 版仍然包含基础版工作流：
 - 重命名、删除和复制远程路径。
 - 预览远程文件。
 - 从远程目录向当前 SSH 终端发送 `cd` 命令。
+- 路径开头的 `~` 会先展开成会话的登录目录（这里 `~` 与 `.` 是同一处；`~user` 不展开，那要读
+  `/etc/passwd`，是另一个问题）。SFTP 没有 shell，不展开的话一个人天天打的路径会回
+  `No such file`。
 
 ## 远程文件本地编辑
 
@@ -134,6 +137,10 @@ terminal_close({ sessionId })
   会直接回 `domain 'at_terminal_state' is already open`。所以这个入口只读取已安装的 platform
   （宿主还在装配时先等它），没有就报「请启用 AT Terminal 并重启」——这也是本包把 AT Terminal
   声明为 peer 的原因。
+
+- **模型读到的是纯文本。** 远端 pty 流是**终端**流——每个提示符都带一个窗口标题和一串颜色。
+  两者都在字节进入处（`feed()`）就剥掉，于是视口与分页里是「纯文本终端会打印的东西」，
+  而不是让模型掏 token 买的转义码。颜色是有意丢的：这个后端没有 xterm 渲染器去还原它。
 
 真机验证（DSH 0.2.1-rc.2，macOS）：`terminal_open({type:'ssh', name:'99.90'})` 返回
 `started terminal session pty-1 (99.90) [type: ssh]`；`terminal_send` 发 `cd /tmp` 结算为

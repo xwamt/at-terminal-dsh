@@ -17699,12 +17699,15 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   async resolvePath(lease, path) {
     let root = await this.rootFor(lease);
-    return !path || path === "." ? root : path.startsWith("/") ? await lease.session.realpath(path) : await lease.session.realpath(`${root}/${path}`);
+    if (!path || path === "." || path === "~")
+      return root;
+    let anchored = expandHome(root, path);
+    return anchored.startsWith("/") ? await lease.session.realpath(anchored) : await lease.session.realpath(joinRemotePath(root, anchored));
   }
   async resolveWritablePath(lease, path) {
     if (!path.trim())
       throw new Error("Remote path cannot be empty.");
-    let workspaceRoot = await this.rootFor(lease), normalized = (path.startsWith("/") ? path : joinRemotePath(workspaceRoot, path)).replace(/\/+$/, "") || "/";
+    let workspaceRoot = await this.rootFor(lease), anchored = path.startsWith("/") ? path : expandHome(workspaceRoot, path), normalized = (anchored.startsWith("/") ? anchored : joinRemotePath(workspaceRoot, anchored)).replace(/\/+$/, "") || "/";
     if (normalized === "/")
       throw new Error("Remote root path cannot be modified.");
     let parent = await lease.session.realpath(dirname(normalized)), resolved = joinRemotePath(parent, basenameRemotePath(normalized));
@@ -17720,6 +17723,9 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     return this.roots.set(lease.rootKey, root), root;
   }
 };
+function expandHome(root, path) {
+  return path === "~" ? root : path.startsWith("~/") ? joinRemotePath(root, path.slice(2)) : path;
+}
 async function pathExists(session, path) {
   try {
     return await session.stat(path), !0;

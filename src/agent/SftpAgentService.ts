@@ -642,10 +642,13 @@ export class SftpAgentService {
 
   private async resolvePath(lease: SessionLease, path: string | undefined): Promise<string> {
     const root = await this.rootFor(lease);
-    if (!path || path === '.') {
+    if (!path || path === '.' || path === '~') {
       return root;
     }
-    return path.startsWith('/') ? await lease.session.realpath(path) : await lease.session.realpath(`${root}/${path}`);
+    const anchored = expandHome(root, path);
+    return anchored.startsWith('/')
+      ? await lease.session.realpath(anchored)
+      : await lease.session.realpath(joinRemotePath(root, anchored));
   }
 
   private async resolveWritablePath(lease: SessionLease, path: string): Promise<WritableTarget> {
@@ -653,7 +656,8 @@ export class SftpAgentService {
       throw new Error('Remote path cannot be empty.');
     }
     const workspaceRoot = await this.rootFor(lease);
-    const candidate = path.startsWith('/') ? path : joinRemotePath(workspaceRoot, path);
+    const anchored = path.startsWith('/') ? path : expandHome(workspaceRoot, path);
+    const candidate = anchored.startsWith('/') ? anchored : joinRemotePath(workspaceRoot, anchored);
     const normalized = candidate.replace(/\/+$/, '') || '/';
     if (normalized === '/') {
       throw new Error('Remote root path cannot be modified.');
@@ -675,6 +679,28 @@ export class SftpAgentService {
     this.roots.set(lease.rootKey, root);
     return root;
   }
+}
+
+/**
+ * Expand a leading `~` to the session's home directory.
+ *
+ * The SFTP subsystem is not a shell, so nothing expands `~` on the server: `readdir('~')`
+ * answers **"No such file"** for a directory that plainly exists. That answer is worse than a
+ * refusal — a model that gets it retries with invented paths instead of asking, and the AT
+ * Terminal panel tells it `~` is a thing (the tilde is what a person types).
+ *
+ * `realpath('.')` is the session's start directory, which is the login home for these
+ * sessions and is already the value the write jail calls `workspaceRoot`. So `~`, `.` and no
+ * path at all mean the same place here, deliberately.
+ *
+ * `~user` is **not** expanded: resolving another account's home needs `/etc/passwd`, which is
+ * a second round trip answering a different question. It falls through unchanged and fails
+ * the way it fails today.
+ */
+function expandHome(root: string, path: string): string {
+  if (path === '~') return root;
+  if (path.startsWith('~/')) return joinRemotePath(root, path.slice(2));
+  return path;
 }
 
 async function pathExists(session: AgentSftpSession, path: string): Promise<boolean> {

@@ -1024,3 +1024,77 @@ describe('SftpAgentService — an unnamed target with several servers connected 
     expect(listing.candidates).toBeUndefined();
   });
 });
+
+/**
+ * `~` is not a shell thing here, and saying "No such file" about it is a lie.
+ *
+ * S6 real run: `at_terminal_sftp_list_directory { path: "~" }` answered `Error: No such file`
+ * on a directory that exists, because the SFTP subsystem does no shell expansion. A model
+ * that receives that answer does not conclude "expand it yourself" — it retries with invented
+ * paths. These cases pin the expansion, and pin that `~user` is *not* invented into
+ * something it cannot resolve.
+ */
+describe('SftpAgentService — the `~` the model types', () => {
+  function service(session: ReturnType<typeof makeSession>, allow = authorizer()) {
+    return new SftpAgentService({
+      terminalContext: connectedRegistry(),
+      createSession: () => session as never,
+      authorizer: allow
+    });
+  }
+
+  it('lists the home directory for "~" instead of asking SFTP about a literal tilde', async () => {
+    const session = makeSession();
+    const subject = service(session);
+
+    const listing = await subject.listDirectory({ path: '~' });
+
+    expect(session.listDirectory).toHaveBeenCalledWith('/home/deploy');
+    expect(listing.path).toBe('/home/deploy');
+  });
+
+  it('resolves "~/name" under the home directory for reads', async () => {
+    // A non-empty file: with `size: 0` the service reads nothing and never opens the file.
+    const session = makeSession({ stat: vi.fn(async () => ({ size: 10, modifiedAt: 1 })) });
+    const subject = service(session);
+
+    await subject.readFile({ path: '~/app.conf' });
+
+    // First argument only: the byte window and offset that follow are the service's own
+    // arithmetic, and pinning them here would make this case fail for an unrelated reason.
+    expect(session.readFile.mock.calls[0]?.[0]).toBe('/home/deploy/app.conf');
+  });
+
+  it('resolves "~/name" under the home directory for writes, and authorizes that path', async () => {
+    // A fresh path: `stat` must answer "missing", or the service refuses before authorizing.
+    const session = makeSession({
+      stat: vi.fn(async () => {
+        throw missingPathError();
+      })
+    });
+    const allow = authorizer();
+    const subject = service(session, allow);
+
+    const result = await subject.writeFile({ path: '~/notes.txt', content: 'x' });
+
+    expect(result.path).toBe('/home/deploy/notes.txt');
+    expect(session.writeFile).toHaveBeenCalledWith('/home/deploy/notes.txt', expect.any(Buffer));
+    // The authorizer sees the *expanded* path — otherwise a grant on "~/notes.txt" and a grant
+    // on "/home/deploy/notes.txt" would be two different scopes for the same file.
+    expect(allow.requireWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'server-1' }),
+      expect.objectContaining({ path: '/home/deploy/notes.txt' })
+    );
+  });
+
+  it('leaves "~user" alone — another account\'s home is a different question', async () => {
+    const session = makeSession();
+    const subject = service(session);
+
+    await subject.statPath({ path: '~deploy/x' });
+
+    // Not expanded, and not silently turned into `~/deploy/x` either: it stays one relative
+    // segment under the session root, which is what it always was.
+    expect(session.realpath).toHaveBeenCalledWith('/home/deploy/~deploy/x');
+  });
+});

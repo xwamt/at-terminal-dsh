@@ -3648,8 +3648,22 @@ function createDshTerminalApi({ platform: platform2, observer }) {
 }
 
 // src/platform/dsh/terminalBackend/sshBackend.ts
+var ESCAPE_SEQUENCES = [
+  // eslint-disable-next-line no-control-regex
+  /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g,
+  // eslint-disable-next-line no-control-regex
+  /\u001b\[[0-9;?]*[ -/]*[@-~]/g,
+  // eslint-disable-next-line no-control-regex
+  /\u001b[()][A-Za-z0-9]/g,
+  // eslint-disable-next-line no-control-regex
+  /\u001b[=>]/g
+];
 function stripAnsi(text) {
-  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\u001b\][^\u0007]*\u0007/g, "");
+  return ESCAPE_SEQUENCES.reduce((acc, pattern) => acc.replace(pattern, ""), text);
+}
+function sanitizeOutput(text) {
+  return stripAnsi(text).replace(/\r+\n/g, `
+`);
 }
 var PROMPT_TAIL = /(?:^|\n)[^\n]{0,160}[#$%>]\s*$/;
 function looksLikePrompt(tail) {
@@ -3671,7 +3685,8 @@ var SshPtySession = class {
   exitWaiters = [];
   /** Called by the backend for every chunk the connection reports. */
   feed(chunk) {
-    chunk.length !== 0 && (this.lastOutputAt = Date.now(), this.buffer.append(chunk), this.active?.append(chunk));
+    let text = sanitizeOutput(chunk);
+    this.lastOutputAt = Date.now(), text.length !== 0 && (this.buffer.append(text), this.active?.append(text));
   }
   /** Called once when the remote side ends. */
   end(info) {

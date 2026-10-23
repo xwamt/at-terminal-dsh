@@ -244,3 +244,53 @@ describe('resolveServerByName', () => {
     );
   });
 });
+
+/**
+ * S6 real run follow-up: the stream is a *terminal* stream, and every consumer is text.
+ *
+ * On the first real `terminal_open` the viewport arrived as
+ * `\u001b]0;root@cl:/tmp\u0007\u001b[32mroot@cl \u001b[34m/tmp \u001b[0m$ ` — the window title
+ * plus three colour runs, roughly thirty invisible characters per prompt, carried into every
+ * `terminal_send`/`terminal_read` result and paid for in tokens. Colour cannot be preserved
+ * for a plain-text consumer, so the honest move is to drop it at the one place the bytes enter.
+ */
+describe('ssh backend — the stored stream is text, not escapes', () => {
+  it('drops OSC, CSI and charset escapes, and folds the CRLF a login banner emits', async () => {
+    const subject = harness({ banner: '\u001b]0;root@cl:~ \u0007\u001b[?1034h\u001b[32mroot@cl\u001b[0m$ ' });
+    const session = await subject.ready();
+
+    subject.feed('\u001b]0;root@cl:/tmp\u0007\u001b[32mroot@cl \u001b[34m/tmp \u001b[0m$ cd /tmp\r\r\n');
+    subject.feed('\u001b]0;root@cl:/tmp\u0007\u001b[32mroot@cl \u001b[34m/tmp \u001b[0m$ ');
+
+    const page = session.read({ count: 10 });
+    expect(page.text).not.toContain('\u001b');
+    expect(page.text).not.toContain('\u0007');
+    // Folded to one newline per line, and the prompt survives as the text a person sees.
+    expect(page.text).toContain('root@cl /tmp $ cd /tmp\n');
+    expect(page.text).not.toContain('\r\r\n');
+  });
+
+  it('keeps the viewport of a send clean too — the model reads that string', async () => {
+    const subject = harness({ banner: 'root@v:~# ' });
+    const session = await subject.ready();
+
+    const operation = session.startSend({ text: 'pwd', submit: true });
+    subject.feed('\u001b[32mroot@v\u001b[0m:~# pwd\r\n/home/deploy\r\nroot@v:~# ');
+    const outcome = await operation.done;
+
+    expect(outcome.viewport).not.toContain('\u001b');
+    expect(outcome.viewport).toContain('/home/deploy');
+  });
+
+  it('treats a chunk of nothing but escapes as liveness, not as an empty line', async () => {
+    const subject = harness({ banner: 'root@v:~# ' });
+    const session = await subject.ready();
+    const before = session.read({ count: 10 }).totalLines;
+
+    // A cursor move with no text: the clock must move (the shell is alive), the scrollback
+    // must not gain a line.
+    subject.feed('\u001b[K\u001b]0;t\u0007');
+
+    expect(session.read({ count: 10 }).totalLines).toBe(before);
+  });
+});
