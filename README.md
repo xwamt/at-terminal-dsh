@@ -97,22 +97,38 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 3. Click **Install** for one-click installation and automatic configuration.
 
 #### Optional bundle: persistent SSH terminals
-The `terminal_*` family is a **separate** package, because it changes the composition rather than
-adding to this one (`dsh-terminal-ssh/`). Install it the same way, as a second local bundle, and
-restart:
+The `terminal_*` family is a **separate** package ([`@at-series/dsh-at-terminal-ssh`](https://www.npmjs.com/package/@at-series/dsh-at-terminal-ssh)),
+because it changes the composition rather than adding to this one. **Installing this plugin does not
+install it** — that is deliberate: it would put six more tools in every user's tool table, and tools
+cost prompt tokens on every request.
+
+Two ways to add it:
+
+**From the panel (no terminal needed).** *Settings → Plugins → AT Terminal → 持久终端（可选）*
+renders one row: **Install** when the package is missing, **启用 / 停用** once it is there, and the
+number of running components when it is active. The install pulls the exact version that pairs with
+the running plugin, from npm.
+
+**By hand.** Same two commands as any other bundle:
 
 ```sh
-# the plugin manager writes both of these into your profile's package.json
-dsh plugin --profile desktop add /path/to/at-terminal-dsh/dsh-terminal-ssh
+npm install --save-exact @at-series/dsh-at-terminal-ssh   # or:
+dsh plugin --profile desktop add @at-series/dsh-at-terminal-ssh
 ```
 
-or **Settings → Plugin Manager → Install Local Bundle** with `/path/to/at-terminal-dsh/dsh-terminal-ssh`.
-It requires this package (`@at-series/dsh-at-terminal`) to be installed and enabled: the backend
-borrows its server list, stored credentials and SSH layer — it has none of its own, and
-`terminal_open` says so if you disable AT Terminal afterwards.
+then add it to your profile's `dsh.profile.bundles` (the plugin manager writes that entry when it
+does the install; a manual `npm install` needs it added yourself).
+
+It requires this package (`@at-series/dsh-at-terminal`) at the same minor version — the bundle
+references its SSH backend by subpath (`@at-series/dsh-at-terminal/terminal-backend`), so the
+backend lives in one place instead of being copied. It borrows this plugin's server list, stored
+credentials and SSH layer; it has none of its own, and `terminal_open` says so if you disable AT
+Terminal afterwards.
 
 Verify it took: **Settings → Plugins → @at-series/dsh-at-terminal-ssh** should list three running
-components (`dsh-terminal` → `…/terminal-backend` → `dsh-tool-terminal`).
+components (`dsh-terminal` → `…/terminal-backend` → `dsh-tool-terminal`). Turning it off is the same
+switch: those three rows move together, which is why the capability is a bundle and not three
+independently toggled rows.
 
 ### Direct Agent Tools List
 
@@ -214,15 +230,14 @@ components (`dsh-terminal` → `…/terminal-backend` → `dsh-tool-terminal`).
 - **不抢占终端语义**：macOS 上 `Ctrl+C` 仍是 SIGINT；`⌘V` 走浏览器原生 paste 事件，无需额外的剪贴板读权限。
 - **统一的主修饰键**：新建标签与页面切换通过 DSH 快捷键注册表的 `primary` 语义绑定，macOS 自动为 Command、其他平台为 Control。
 
-#### 10. 可选：持久 SSH 终端（第二个 bundle，默认不装）
-- **复用宿主自己的 `ctx.terminals`**：给 DSH 内置的六个 `terminal_*` 工具接一个 `type: "ssh"` 后端，于是 `terminal_open({ type: "ssh", name: "payment01" })` 之后 `terminal_send` 的 `cd` 能**跨调用保留**——`at_terminal_run_remote_command` 做不到这件事，它每条命令一条通道。
+#### 10. 持久 SSH 终端（可选 bundle，默认不装）
+- **跨调用存活的远端 shell**：另装 `@at-series/dsh-at-terminal-ssh` 后，模型可用 `terminal_open({type:'ssh', name:'<服务器 id 或名称>'})` 开一个会话，`terminal_send` / `terminal_read` / `terminal_close` 连续操作——适合需要保持 `cd`、REPL、长任务的场景。`at_terminal_run_remote_command` 做不到这件事，它每条命令一条通道。
+- **复用宿主自己的 `ctx.terminals`**：给 DSH 内置的六个 `terminal_*` 工具接一个 `type: "ssh"` 后端，而不是另写一套终端工具——工具的返回形状、截断、`wait` 语义都跟着宿主走，宿主升级我们也跟着走。
 - **`name` 就是服务器选择器**：官方工具没有 `serverId` 参数，所以按「id 优先、名称其次」匹配，**同名两台直接报错并列出两个 id**（不替使用者挑一台）。
 - **隔离而非侵入**：组合成 `cordis:group` + `isolate: { terminals: true }`，不装它的 profile 完全不受影响，装上也不会和右侧栏终端（另一套子系统）抢同一个注册表。
-
-#### 10. 持久 SSH 终端（可选 bundle）
-- **跨调用存活的远端 shell**：另装 `dsh-terminal-ssh/` 后，模型可用 `terminal_open({type:'ssh', name:'<服务器 id 或名称>'})` 开一个会话，`terminal_send` / `terminal_read` / `terminal_close` 连续操作——适合需要保持 `cd`、REPL、长任务的场景。
-- **不装就没有**：第二个 bundle 用 `isolate.terminals` 起一个私有注册表再挂官方 `terminal_*` 工具家族，主 bundle 不依赖它，右栏终端也完全不受影响。
-- **诚实边界**：`name` 是唯一的服务器选择器（官方工具没有 `serverId` 位）；同名的两台服务器会报错列 id；就绪只认「看到提示符」，否则只能算 `inferred_idle`；`terminal_signal` 直接拒绝（`ssh2` 无 pty 信号通道，改用 `Ctrl+C` 或关闭会话）。
+- **诚实边界**：就绪只认「看到提示符」，否则只能算 `inferred_idle`；`terminal_signal` 直接拒绝（`ssh2` 无 pty 信号通道，改用 `Ctrl+C` 或关闭会话）。
+- **怎么装**：**设置 → 插件 → AT Terminal → 持久终端（可选）** 一行搞定（安装 / 启用 / 停用），或自己装：
+  `npm install --save-exact @at-series/dsh-at-terminal-ssh`。**装主插件不会自动带上它**——那会给每个用户的工具表平白加 6 个工具，而工具是要按请求付 prompt token 的。
 
 ---
 
@@ -256,7 +271,15 @@ npm run typecheck
 
 # 6. 校验/更新 vendored 依赖 (@deepseek-ai/schemastery 等)
 npm run vendor:dsh
+
+# 7. 发布两个包（默认只做配对检查 + 跑四道门禁并打印计划，加 --publish 才真发）
+npm run release
+npm run release -- --publish --tag
 ```
+
+> **发布为什么是一个命令**：本仓库发的是**两个** npm 包（插件 + 可选组合包）。组合包按 subpath
+> 引用插件的 `terminal-backend`，所以两者版本必须同步——只发插件不算发版。`release` 脚本会先校验
+> 「版本一致 + peer 范围接受该版本」，不一致直接拒绝；已在 registry 上的版本会跳过，重复跑是安全的。
 
 #### 3. 安装插件到 DeepSeek Harness
 

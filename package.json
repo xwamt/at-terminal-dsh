@@ -35,7 +35,8 @@
     "verify:kernel": "node scripts/verify-kernel-seam.mjs",
     "vendor:dsh": "node dsh/scripts/vendor.mjs",
     "dsh:channel:probe": "node dsh/scripts/probe-channel.mjs",
-    "build:dsh": "node dsh/esbuild.dsh.mjs"
+    "build:dsh": "node dsh/esbuild.dsh.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@at-series/command-policy": "0.1.1",
