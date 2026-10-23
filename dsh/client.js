@@ -9798,8 +9798,8 @@ function MonitorHudContainer(props) {
   return (0, import_react12.useEffect)(() => {
     if (onRegisterController)
       return onRegisterController({
-        open: (target) => {
-          setVisible(!0), setForceExpanded(!0), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview");
+        open: (target, serverId) => {
+          setVisible(!0), setForceExpanded(!0), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0 && serverId !== "" && setActiveServerId(serverId);
         },
         close: () => {
           setVisible(!1), setForceExpanded(!1);
@@ -9905,7 +9905,7 @@ function apply(ctx) {
     "at-terminal: monitor shortcut"
   ), ctx.effect(
     () => listenMonitorEvents((msg) => {
-      msg.action === "open" ? msg.mode === "hud" ? hudController?.open(msg.target) : openMonitorTab({
+      msg.action === "open" ? msg.mode === "hud" ? hudController?.open(msg.target, msg.serverId) : openMonitorTab({
         target: msg.target,
         serverId: msg.serverId,
         mode: msg.mode ?? "float"

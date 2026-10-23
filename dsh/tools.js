@@ -77,7 +77,10 @@ export const CAPABILITIES = Object.freeze([
   // Three runtime skills, registered on the host catalog. Whether the model can see them
   // depends on the composition mounting `tool-skill` (this desktop build mounts it for
   // preset-run agents only), so `ping` reports what actually registered.
-  'runtime-skills'
+  'runtime-skills',
+  // `/ssh-metrics` and `/ssh-audit`, registered on the host's command registry. Visible in the
+  // slash menu, and provable from the session log: they append `command/*` and nothing else.
+  'slash-commands'
 ])
 
 /** JSON-schema type for one settings field, for the probe's output schema. */

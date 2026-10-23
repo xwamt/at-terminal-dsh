@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 
 import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
+import { createCommands, registerCommands } from './commands.js'
 import { classify, createGuard, createPreExecute } from './policy.js'
 import { TRUST_VARIABLE, promptSection, recordSectionRegistration, trustFact } from './prompt.js'
 import { RUNTIME_SKILLS, recordSkillStatus, registerRuntimeSkills, verifyRegisteredSkills } from './skills.js'
@@ -261,6 +262,33 @@ export function apply(ctx, config = {}) {
     return () => {
       for (const dispose of disposers) dispose?.()
     }
+  })
+
+  /**
+   * Two Host-side slash commands. `/ssh-metrics` and `/ssh-audit` answer questions about the
+   * plugin itself, and running them as commands is the point: the session gets
+   * `command/run` + `command/done` and no assistant message, so asking "what is the CPU at"
+   * does not spend a turn.
+   *
+   * `ctx.inject` as elsewhere: a composition without `dsh-commands` loses the two commands and
+   * keeps the tools. The duplicate-name case is handled inside `registerCommands` because
+   * `commands.register()` throws on it and a reload would otherwise take the bundle down.
+   */
+  ctx.inject(['commands'], (scoped) => {
+    scoped.effect(() => {
+      const disposers = registerCommands(
+        scoped.commands,
+        createCommands({
+          resolveAgentService,
+          readAudit: (limit) => auditLog?.readRecent(limit),
+          logger: scoped.logger
+        }),
+        { logger: scoped.logger }
+      )
+      return () => {
+        for (const dispose of disposers) dispose?.()
+      }
+    }, 'at-terminal: commands')
   })
 
   /**

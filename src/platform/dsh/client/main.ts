@@ -501,7 +501,12 @@ function MonitorHeaderButton(props: { t: Translate; onOpenPane: () => void }) {
 }
 
 interface HudController {
-  open(target?: 'hardware' | 'agent_execution'): void;
+  /**
+   * Show the HUD. `serverId` names whose numbers to show; without it the HUD keeps following
+   * the active terminal session, which is the right default for a user-opened panel and the
+   * wrong one for an explicit request (a tool call or `/ssh-metrics` naming a server).
+   */
+  open(target?: 'hardware' | 'agent_execution', serverId?: string): void;
   close(): void;
   toggle(): void;
 }
@@ -534,12 +539,15 @@ function MonitorHudContainer(props: {
   useEffect(() => {
     if (onRegisterController) {
       onRegisterController({
-        open: (target) => {
+        open: (target, serverId) => {
           setVisible(true);
           setForceExpanded(true);
           if (target === 'hardware') setInitialSubtab('hardware');
           else if (target === 'agent_execution') setInitialSubtab('agent');
           else setInitialSubtab('overview');
+          // An explicit request picks its own server; otherwise the active-terminal sync below
+          // keeps deciding, which is what an idle HUD should do.
+          if (serverId !== undefined && serverId !== '') setActiveServerId(serverId);
         },
         close: () => {
           setVisible(false);
@@ -787,7 +795,9 @@ export function apply(ctx: ClientContext): void {
       listenMonitorEvents((msg) => {
         if (msg.action === 'open') {
           if (msg.mode === 'hud') {
-            hudController?.open(msg.target);
+            // `msg.serverId` was dropped here, so a HUD opened by a tool call or a command
+            // showed the active terminal's server — or "未选择服务器" when none was open.
+            hudController?.open(msg.target, msg.serverId);
           } else {
             openMonitorTab({
               target: msg.target,

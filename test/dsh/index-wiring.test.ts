@@ -161,6 +161,20 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     }
   };
 
+  // The command registry. Modelled because the host half registers into it, and a misspelled
+  // service name would otherwise look exactly like a correct wiring in a composition that
+  // happens not to mount commands.
+  const commandRegistry = new Map<string, { name: string; handler: (input: unknown) => unknown }>();
+  const commands = {
+    register(definition: { name: string; handler: (input: unknown) => unknown }) {
+      if (commandRegistry.has(definition.name)) {
+        throw new Error(`command "${definition.name}" is already registered`);
+      }
+      commandRegistry.set(definition.name, definition);
+      return () => commandRegistry.delete(definition.name);
+    }
+  };
+
   const storageDomain = options.storageDomain ?? new MemoryStorageDomain();
   const credentials = new MemoryCredentialProvider();
 
@@ -214,7 +228,7 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
 
   // `storageDomain` and `credentials` stand in for the Harness's own services, which the
   // default composition mounts. `webServer` is what makes the channel reachable.
-  const present: Record<string, unknown> = { webServer, storageDomain, credentials, systemPrompt, skills };
+  const present: Record<string, unknown> = { webServer, storageDomain, credentials, systemPrompt, skills, commands };
 
   const ctx = makeCtx({
     systemPrompt,
@@ -251,7 +265,8 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     listeners,
     promptSections,
     promptVariables,
-    skillCatalog
+    skillCatalog,
+    commandRegistry
   };
 }
 
@@ -856,6 +871,19 @@ describe('dsh Host half — wiring', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     expect(status).toBe("registered 3/3 (catalog confirms)");
+  });
+
+  it("registers both slash commands, and a second apply keeps the first ones", async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    expect([...harness.commandRegistry.keys()].sort()).toEqual(["ssh-audit", "ssh-metrics"]);
+
+    // Applying the same bundle twice must not take the plugin down: the host throws on a
+    // duplicate name, so the registry helper has to absorb it.
+    expect(() => hostHalf.apply(harness.ctx, {})).not.toThrow();
+    expect([...harness.commandRegistry.keys()].sort()).toEqual(["ssh-audit", "ssh-metrics"]);
   });
 
 });

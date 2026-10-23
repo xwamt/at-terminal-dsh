@@ -16,6 +16,7 @@
     "tools.js",
     "settings.js",
     "channel.js",
+    "commands.js",
     "client.js",
     "client.xterm.js",
     "host.bundle.js",

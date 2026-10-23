@@ -78,6 +78,20 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 | `job_output` | read-only | Reads what a background `run_remote_command` printed since the previous read; `wait` blocks until the job settles or the budget expires. Each call consumes what it returns. |
 | `job_kill` | command | Stops a background job. For an SSH command that means SIGTERM to the remote process group and up to one second proving it is gone, so `killed` means the process ended rather than that a signal was sent. |
 
+## Slash Commands
+
+Two Host-side commands answer questions about the plugin itself. They run outside a model turn:
+the session log records `command/run` and `command/done` and appends no assistant message, so
+asking does not spend a prompt, a tool call, or a turn.
+
+| Command | What it does |
+|---|---|
+| `/ssh-metrics [server id or label]` | Prints CPU, load, memory and the fullest disk for one server (the active one by default), then opens the monitoring HUD **on that server**. Says `HUD: not opened (<reason>)` when no browser panel is listening, instead of claiming a window nobody sees. |
+| `/ssh-audit [rows]` | Prints the tail of the durable audit trail — time, decision, and the command or path — clamped to 50 rows. Says the trail is empty or absent rather than failing. |
+
+Both degrade honestly: without the agent service, the audit trail, or the command registry they
+answer with a sentence naming what is missing.
+
 ## Safety Behavior
 
 - SFTP agent writes are authorized one directory at a time. The prompt offers `Allow Once` (the default), `Allow This Folder For 15 Minutes`, and `Allow This Folder For The Session`; no answer ever covers a directory the user was not shown.
