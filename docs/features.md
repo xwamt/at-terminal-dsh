@@ -114,6 +114,7 @@ strings}`), so a wrong language can be diagnosed without spending a model turn.
 |---|---|
 | Decisions | How the last 50 authorization decisions broke down — allowed, confirmed after a prompt, denied. Read from the same audit rows the agent reads, so the page and the agent cannot disagree. |
 | Recent audit | The last ten rows of the durable trail: time, decision, and the command or path. **Copy JSON** puts the whole set on the clipboard. |
+| Persistent shell (optional) | Whether the optional `@at-series/dsh-at-terminal-ssh` bundle is installed and switched on, with an **Install** / **Enable** / **Disable** control and the count of running components. |
 | Trusted hosts | Every stored SSH host key with its `SHA256:` fingerprint (the form `ssh-keygen -lf` prints, so it can actually be compared) and the server it belongs to. **Forget** drops it through the same server-scoped route the connection flow uses. |
 
 Forgetting is deliberately bounded: the route resolves host and port inside one server's jump

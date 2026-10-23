@@ -75,29 +75,136 @@ interface OptionalBundleState {
   reason?: string;
 }
 
-const sectionStyle = {
+/**
+ * Layout vocabulary for this page.
+ *
+ * The page had one defect worth stating in code, because it is a *layout* defect and no amount of
+ * colour work fixes it: an SSH fingerprint is ~50 characters of base64 with no spaces to break on.
+ * Laid out as one flex row (`host` · fingerprint · owner · button) inside a 760px column, it pushed
+ * the button past the right edge and the whole panel grew a horizontal scrollbar — you had to drag
+ * sideways to reach **Forget**. Two rules follow, and every long string on this page obeys one:
+ *
+ * 1. A string with no break opportunities wraps (`overflowWrap: 'anywhere'`) rather than expanding
+ *    its container — the fingerprint sits on its own line, under the host it belongs to.
+ * 2. A string that must stay on one line truncates (`minWidth: 0` + `textOverflow: 'ellipsis'`),
+ *    because `min-width: auto` on a flex child is what silently refuses to shrink.
+ *
+ * Every colour is a `--dsw-*` token: this page is rendered inside the host's settings shell in both
+ * light and dark themes, and an inline hex would be correct in exactly one of them.
+ */
+const pageStyle = {
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: '14px',
+  width: '100%',
+  maxWidth: '820px',
+  boxSizing: 'border-box' as const,
+  color: 'var(--dsw-alias-label-primary)'
+};
+/** One card per section, so four unrelated tables stop reading as one long list. */
+const cardStyle = {
   display: 'flex',
   flexDirection: 'column' as const,
   gap: '10px',
-  maxWidth: '760px',
-  color: 'var(--dsw-alias-label-primary)'
+  minWidth: 0,
+  padding: '12px 14px',
+  border: '1px solid var(--dsw-alias-border-l1)',
+  borderRadius: 'var(--dsw-radius-md)',
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxSizing: 'border-box' as const
 };
 const headingStyle = {
   margin: 0,
   fontSize: '13px',
   fontWeight: 600,
-  color: 'var(--dsw-alias-label-secondary)'
+  color: 'var(--dsw-alias-label-primary)'
 };
 const rowStyle = {
   display: 'flex',
-  alignItems: 'baseline',
-  gap: '10px',
-  fontSize: '12px',
-  padding: '4px 0',
-  borderBottom: '0.5px solid var(--dsw-alias-border-l3)'
+  alignItems: 'center',
+  gap: '8px',
+  minWidth: 0,
+  fontSize: '12px'
 };
 const mutedStyle = { color: 'var(--dsw-alias-label-tertiary)', fontSize: '12px' };
+/** Secondary, not tertiary: an explanation is read, a timestamp is glanced at. */
+const captionStyle = {
+  color: 'var(--dsw-alias-label-caption)',
+  fontSize: '12px',
+  lineHeight: '18px'
+};
 const monoStyle = { fontFamily: 'var(--dsw-alias-font-mono, monospace)', fontSize: '11px' };
+/**
+ * A fingerprint may not widen the page.
+ *
+ * `break-all` on top of `anywhere`: the former also breaks between characters mid-"word", which is
+ * what a base64 string is.
+ */
+const fingerprintStyle = {
+  ...monoStyle,
+  color: 'var(--dsw-alias-label-secondary)',
+  overflowWrap: 'anywhere' as const,
+  wordBreak: 'break-all' as const,
+  minWidth: 0
+};
+/** One line, truncated, with the full value available from `title`. */
+const ellipsisStyle = {
+  minWidth: 0,
+  overflow: 'hidden' as const,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap' as const
+};
+const buttonStyle = {
+  flex: 'none' as const,
+  padding: '3px 10px',
+  fontSize: '12px',
+  color: 'var(--dsw-alias-label-primary)',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 'var(--dsw-radius-sm)',
+  cursor: 'pointer'
+};
+const statRowStyle = { display: 'flex', gap: '8px', flexWrap: 'wrap' as const };
+const statStyle = {
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: '2px',
+  minWidth: '96px',
+  padding: '8px 12px',
+  border: '1px solid var(--dsw-alias-border-l1)',
+  borderRadius: 'var(--dsw-radius-sm)',
+  background: 'var(--dsw-alias-bg-layer-2)'
+};
+const statValueStyle = { fontSize: '18px', fontWeight: 600, lineHeight: '22px' };
+const listStyle = { display: 'flex', flexDirection: 'column' as const, gap: '6px', minWidth: 0 };
+const auditRowStyle = {
+  display: 'grid',
+  // `minmax(0, 1fr)` on the command column is what lets it shrink: a bare `1fr` keeps the item's
+  // min-content width, so one long command would widen the whole card again.
+  gridTemplateColumns: '62px minmax(64px, auto) minmax(0, 1fr)',
+  alignItems: 'center',
+  gap: '8px',
+  minWidth: 0,
+  fontSize: '12px'
+};
+const keyCardStyle = {
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: '3px',
+  minWidth: 0,
+  padding: '8px 10px',
+  border: '1px solid var(--dsw-alias-border-l1)',
+  borderRadius: 'var(--dsw-radius-sm)'
+};
+/** `currentColor` keeps the badge honest: one declaration, three tokens. */
+const badgeStyle = {
+  justifySelf: 'start' as const,
+  padding: '1px 7px',
+  fontSize: '11px',
+  lineHeight: '16px',
+  borderRadius: 'var(--dsw-radius-sm)',
+  border: '1px solid currentColor'
+};
 
 function timeOf(timestamp: number): string {
   const when = new Date(timestamp);
@@ -216,150 +323,219 @@ export function AtTerminalSettingsTab(): unknown {
     else totals.denied += 1;
   }
 
+  /** The decision badge: colour carries the verdict, and `currentColor` carries the border. */
+  const badge = (decision: AgentAuditSummary['decision']) =>
+    h(
+      'span',
+      {
+        style: {
+          ...badgeStyle,
+          color:
+            decision === 'allowed'
+              ? 'var(--dsw-alias-state-success-primary)'
+              : decision === 'confirmed'
+                ? 'var(--dsw-alias-state-warn-primary)'
+                : 'var(--dsw-alias-state-error-primary)'
+        }
+      },
+      decisionLabel(decision)
+    );
+
   return h(
     'div',
-    // No `att-*` class: the audit that every such class is defined in the stylesheet exists to
-    // stop unstyled hooks from accumulating, and this page is styled entirely inline from
+    // No `att-*` class: the gate that every such class is defined in the stylesheet exists to stop
+    // unstyled hooks from accumulating, and this page is styled entirely inline from
     // `--dsw-alias-*` tokens so it follows the host's light/dark switch.
-    { style: sectionStyle },
-    // 1. decision counts
-    h('h3', { style: headingStyle }, t('settings.decisions.heading')),
-    audits === null
-      ? h('div', { style: mutedStyle }, t('settings.audit.unreadable'))
-      : h(
-          'div',
-          { style: rowStyle },
-          h('span', {}, t('settings.decisions.window', { count: audits.length })),
-          h('span', { style: mutedStyle }, t('settings.decisions.allowed', { count: totals.allowed })),
-          h('span', { style: mutedStyle }, t('settings.decisions.confirmed', { count: totals.confirmed })),
-          h('span', { style: mutedStyle }, t('settings.decisions.denied', { count: totals.denied }))
-        ),
+    { style: pageStyle },
 
-    // 2. audit tail
-    h('h3', { style: headingStyle }, t('settings.audit.heading')),
-    ...(audits === null
-      ? []
-      : audits.length === 0
-        ? [h('div', { key: 'empty', style: mutedStyle }, t('settings.audit.empty'))]
-        : audits
-            .slice(-10)
-            .reverse()
-            .map((audit) =>
+    /* ------------------------------ decision counts ----------------------------- */
+    h(
+      'div',
+      { style: cardStyle },
+      h('h3', { style: headingStyle }, t('settings.decisions.heading')),
+      audits === null
+        ? h('div', { style: mutedStyle }, t('settings.audit.unreadable'))
+        : h(
+            'div',
+            { style: statRowStyle },
+            ...[
+              [totals.allowed, t('settings.decisions.allowed.label')],
+              [totals.confirmed, t('settings.decisions.confirmed.label')],
+              [totals.denied, t('settings.decisions.denied.label')]
+            ].map(([count, label]) =>
               h(
                 'div',
-                { key: audit.id, style: rowStyle },
-                h('span', { style: monoStyle }, timeOf(audit.timestamp)),
-                h(
-                  'span',
-                  { style: mutedStyle },
-                  decisionLabel(audit.decision)
-                ),
-                h('span', {}, String(audit.command ?? '').slice(0, 90))
+                { key: String(label), style: statStyle },
+                h('span', { style: statValueStyle }, String(count)),
+                h('span', { style: mutedStyle }, String(label))
               )
-            )),
-    audits === null
-      ? null
-      : h(
-          'button',
-          {
-            type: 'button',
-            style: { alignSelf: 'flex-start', fontSize: '12px' },
-            onClick: () => {
-              if (typeof navigator === 'undefined') return;
-              void navigator.clipboard?.writeText(JSON.stringify(audits, null, 2));
-            }
-          },
-          t('settings.audit.copy')
-        ),
-
-    // 3. trust library
-    h('h3', { style: headingStyle }, t('settings.trust.heading')),
-    h('div', { style: mutedStyle }, t('settings.trust.scope')),
-    error !== null ? h('div', { style: mutedStyle }, t('settings.trust.failed', { message: error })) : null,
-    hostKeys === null
-      ? h('div', { style: mutedStyle }, t('settings.trust.unreadable'))
-      : hostKeys.length === 0
-        ? h('div', { style: mutedStyle }, t('settings.trust.empty'))
-        : h(
-            'div',
-            { style: { display: 'flex', flexDirection: 'column' } },
-            ...hostKeys.map((row) => {
-              // `forgetHost` bounds host/port to a server's own jump chain, so a key is only
-              // actionable when a configured server's address is exactly this key's.
-              const owner = servers.find(
-                (server) => server.host === row.host && (server.port ?? 22) === row.port
-              );
-              return h(
-                'div',
-                { key: `${row.host}:${row.port}`, style: rowStyle },
-                h('span', { style: monoStyle }, `${row.host}:${row.port}`),
-                h('span', { style: monoStyle }, row.fingerprint),
-                h(
-                  'span',
-                  { style: { ...mutedStyle, flex: 1 } },
-                  owner === undefined
-                    ? t('settings.trust.ownerless')
-                    : (owner.label ?? owner.id)
-                ),
-                owner === undefined
-                  ? null
-                  : h(
-                      'button',
-                      {
-                        type: 'button',
-                        disabled: busy,
-                        style: { fontSize: '12px' },
-                        onClick: () => forget(row, owner)
-                      },
-                      t('settings.trust.forget')
-                    )
-              );
-            })
-          ),
-
-    // 4. the optional persistent shell
-    h('h3', { style: headingStyle }, t('settings.optional.heading')),
-    h('div', { style: mutedStyle }, t('settings.optional.about')),
-    optional === null
-      ? // Not read yet is its own state: defaulting it to "not installed" would offer an Install
-        // button to someone who already has the bundle.
-        h('div', { style: mutedStyle }, t('settings.audit.unreadable'))
-      : optional.available === false
-        ? h('div', { style: mutedStyle }, optional.reason ?? t('settings.optional.unavailable'))
-        : h(
-            'div',
-            { style: rowStyle },
-            h('span', {}, optionalState(optional)),
-            h(
-              'button',
-              {
-                type: 'button',
-                disabled: optionalBusy,
-                style: { fontSize: '12px' },
-                onClick: () =>
-                  optional.installed
-                    ? runOptional('terminal.optionalBundle.setEnabled', {
-                        enabled: !optional.enabled
-                      })
-                    : runOptional('terminal.optionalBundle.install')
-              },
-              optional.installed
-                ? optional.enabled
-                  ? t('settings.optional.disable')
-                  : t('settings.optional.enable')
-                : t('settings.optional.install')
             )
           ),
-    optionalError !== null
-      ? h('div', { style: mutedStyle }, t('settings.optional.failed', { message: optionalError }))
-      : null,
-    optionalBusy ? h('div', { style: mutedStyle }, t('settings.optional.busy')) : null,
-    optional?.available === true
-      ? h(
-          'div',
-          { style: { ...mutedStyle, fontSize: '11px' } },
-          t('settings.optional.manual', { spec: optional.spec })
-        )
-      : null
+      audits === null
+        ? null
+        : h('div', { style: captionStyle }, t('settings.decisions.window', { count: audits.length }))
+    ),
+
+    /* --------------------------------- audit tail -------------------------------- */
+    h(
+      'div',
+      { style: cardStyle },
+      h('h3', { style: headingStyle }, t('settings.audit.heading')),
+      ...(audits === null
+        ? [h('div', { key: 'unreadable', style: mutedStyle }, t('settings.audit.unreadable'))]
+        : audits.length === 0
+          ? [h('div', { key: 'empty', style: mutedStyle }, t('settings.audit.empty'))]
+          : audits
+              .slice(-10)
+              .reverse()
+              .map((audit) => {
+                // A command is one long line with no break opportunities, so it truncates rather
+                // than widening the card; the full text stays reachable through `title`.
+                const command = String(audit.command ?? '');
+                return h(
+                  'div',
+                  { key: audit.id, style: auditRowStyle },
+                  h('span', { style: { ...monoStyle, color: 'var(--dsw-alias-label-caption)' } }, timeOf(audit.timestamp)),
+                  badge(audit.decision),
+                  h(
+                    'span',
+                    { style: { ...monoStyle, color: 'var(--dsw-alias-label-secondary)', ...ellipsisStyle } },
+                    command === '' ? '—' : command
+                  )
+                );
+              })),
+      audits === null
+        ? null
+        : h(
+            'button',
+            {
+              type: 'button',
+              style: { ...buttonStyle, alignSelf: 'flex-start' },
+              onClick: () => {
+                if (typeof navigator === 'undefined') return;
+                void navigator.clipboard?.writeText(JSON.stringify(audits, null, 2));
+              }
+            },
+            t('settings.audit.copy')
+          )
+    ),
+
+    /* ------------------------------- trust library ------------------------------ */
+    h(
+      'div',
+      { style: cardStyle },
+      h('h3', { style: headingStyle }, t('settings.trust.heading')),
+      h('div', { style: captionStyle }, t('settings.trust.scope')),
+      error !== null ? h('div', { style: mutedStyle }, t('settings.trust.failed', { message: error })) : null,
+      hostKeys === null
+        ? h('div', { style: mutedStyle }, t('settings.trust.unreadable'))
+        : hostKeys.length === 0
+          ? h('div', { style: mutedStyle }, t('settings.trust.empty'))
+          : h(
+              'div',
+              { style: listStyle },
+              ...hostKeys.map((row) => {
+                // `forgetHost` bounds host/port to a server's own jump chain, so a key is only
+                // actionable when a configured server's address is exactly this key's.
+                const owner = servers.find(
+                  (server) => server.host === row.host && (server.port ?? 22) === row.port
+                );
+                /**
+                 * Three lines, and the reason is the fingerprint: at ~50 characters it cannot share
+                 * a row with a host, an owner and a button inside any panel width worth supporting.
+                 * Line 1 is what you scan for (address + the action), line 2 is whose it is, line 3
+                 * is what you came to compare — and it is allowed to wrap instead of scrolling.
+                 */
+                return h(
+                  'div',
+                  { key: `${row.host}:${row.port}`, style: keyCardStyle },
+                  h(
+                    'div',
+                    { style: { ...rowStyle, justifyContent: 'space-between' } },
+                    h(
+                      'span',
+                      { style: { ...monoStyle, color: 'var(--dsw-alias-label-primary)', ...ellipsisStyle } },
+                      `${row.host}:${row.port}`
+                    ),
+                    owner === undefined
+                      ? null
+                      : h(
+                          'button',
+                          {
+                            type: 'button',
+                            disabled: busy,
+                            style: buttonStyle,
+                            onClick: () => forget(row, owner)
+                          },
+                          t('settings.trust.forget')
+                        )
+                  ),
+                  h(
+                    'div',
+                    { style: mutedStyle },
+                    owner === undefined
+                      ? t('settings.trust.ownerless')
+                      : (owner.label ?? owner.id)
+                  ),
+                  h('div', { style: fingerprintStyle, title: row.fingerprint }, row.fingerprint)
+                );
+              })
+            )
+    ),
+
+    /* ------------------------- the optional persistent shell --------------------- */
+    h(
+      'div',
+      { style: cardStyle },
+      h('h3', { style: headingStyle }, t('settings.optional.heading')),
+      h('div', { style: captionStyle }, t('settings.optional.about')),
+      optional === null
+        ? // Not read yet is its own state: defaulting it to "not installed" would offer an Install
+          // button to someone who already has the bundle.
+          h('div', { style: mutedStyle }, t('settings.audit.unreadable'))
+        : optional.available === false
+          ? h('div', { style: mutedStyle }, optional.reason ?? t('settings.optional.unavailable'))
+          : h(
+              'div',
+              { style: { ...rowStyle, justifyContent: 'space-between', gap: '12px' } },
+              h('span', { style: { fontSize: '12px' } }, optionalState(optional)),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  disabled: optionalBusy,
+                  style: buttonStyle,
+                  onClick: () =>
+                    optional.installed
+                      ? runOptional('terminal.optionalBundle.setEnabled', {
+                          enabled: !optional.enabled
+                        })
+                      : runOptional('terminal.optionalBundle.install')
+                },
+                optional.installed
+                  ? optional.enabled
+                    ? t('settings.optional.disable')
+                    : t('settings.optional.enable')
+                  : t('settings.optional.install')
+              )
+            ),
+      optionalError !== null
+        ? h('div', { style: mutedStyle }, t('settings.optional.failed', { message: optionalError }))
+        : null,
+      optionalBusy ? h('div', { style: mutedStyle }, t('settings.optional.busy')) : null,
+      optional?.available === true
+        ? h(
+            'div',
+            {
+              style: {
+                ...monoStyle,
+                color: 'var(--dsw-alias-label-tertiary)',
+                overflowWrap: 'anywhere' as const
+              }
+            },
+            t('settings.optional.manual', { spec: optional.spec })
+          )
+        : null
+    )
   );
 }

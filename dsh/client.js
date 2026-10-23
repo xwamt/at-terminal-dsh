@@ -1022,9 +1022,10 @@ var NS = "atTerminal", zh = {
   // nothing in this bundle reports a connection attempt.
   "settings.decisions.heading": "\u51B3\u7B56\u7EDF\u8BA1",
   "settings.decisions.window": "\u6700\u8FD1 {count} \u6761\u51B3\u7B56",
-  "settings.decisions.allowed": "\u5141\u8BB8 {count}",
-  "settings.decisions.confirmed": "\u786E\u8BA4\u540E\u6267\u884C {count}",
-  "settings.decisions.denied": "\u62D2\u7EDD {count}",
+  // Short labels for the stat cards; the number is rendered beside them, so it is not in the key.
+  "settings.decisions.allowed.label": "\u5141\u8BB8",
+  "settings.decisions.confirmed.label": "\u786E\u8BA4\u540E\u6267\u884C",
+  "settings.decisions.denied.label": "\u62D2\u7EDD",
   "settings.audit.heading": "\u6700\u8FD1\u5BA1\u8BA1",
   // One sentence for both cases — unreadable and unwritable are the same fact to a reader:
   // there is no trail to show, and it is not because nothing happened.
@@ -1415,9 +1416,9 @@ var NS = "atTerminal", zh = {
   "tool.command.copied": "Copied",
   "settings.decisions.heading": "Decisions",
   "settings.decisions.window": "Last {count} decisions",
-  "settings.decisions.allowed": "Allowed {count}",
-  "settings.decisions.confirmed": "Confirmed {count}",
-  "settings.decisions.denied": "Denied {count}",
+  "settings.decisions.allowed.label": "Allowed",
+  "settings.decisions.confirmed.label": "Confirmed",
+  "settings.decisions.denied.label": "Denied",
   "settings.audit.heading": "Recent audit",
   "settings.audit.unreadable": "Audit unavailable \u2014 the panel is not connected.",
   "settings.audit.empty": "No audit rows yet.",
@@ -6957,25 +6958,93 @@ function withStyles(Component) {
 
 // src/platform/dsh/client/views/settingsTab.ts
 var import_react13 = __toESM(require("react"), 1);
-var sectionStyle = {
+var pageStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "14px",
+  width: "100%",
+  maxWidth: "820px",
+  boxSizing: "border-box",
+  color: "var(--dsw-alias-label-primary)"
+}, cardStyle = {
   display: "flex",
   flexDirection: "column",
   gap: "10px",
-  maxWidth: "760px",
-  color: "var(--dsw-alias-label-primary)"
+  minWidth: 0,
+  padding: "12px 14px",
+  border: "1px solid var(--dsw-alias-border-l1)",
+  borderRadius: "var(--dsw-radius-md)",
+  background: "var(--dsw-alias-bg-layer-1)",
+  boxSizing: "border-box"
 }, headingStyle = {
   margin: 0,
   fontSize: "13px",
   fontWeight: 600,
-  color: "var(--dsw-alias-label-secondary)"
+  color: "var(--dsw-alias-label-primary)"
 }, rowStyle = {
   display: "flex",
-  alignItems: "baseline",
-  gap: "10px",
+  alignItems: "center",
+  gap: "8px",
+  minWidth: 0,
+  fontSize: "12px"
+}, mutedStyle = { color: "var(--dsw-alias-label-tertiary)", fontSize: "12px" }, captionStyle = {
+  color: "var(--dsw-alias-label-caption)",
   fontSize: "12px",
-  padding: "4px 0",
-  borderBottom: "0.5px solid var(--dsw-alias-border-l3)"
-}, mutedStyle = { color: "var(--dsw-alias-label-tertiary)", fontSize: "12px" }, monoStyle = { fontFamily: "var(--dsw-alias-font-mono, monospace)", fontSize: "11px" };
+  lineHeight: "18px"
+}, monoStyle = { fontFamily: "var(--dsw-alias-font-mono, monospace)", fontSize: "11px" }, fingerprintStyle = {
+  ...monoStyle,
+  color: "var(--dsw-alias-label-secondary)",
+  overflowWrap: "anywhere",
+  wordBreak: "break-all",
+  minWidth: 0
+}, ellipsisStyle = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap"
+}, buttonStyle = {
+  flex: "none",
+  padding: "3px 10px",
+  fontSize: "12px",
+  color: "var(--dsw-alias-label-primary)",
+  background: "var(--dsw-alias-bg-layer-2)",
+  border: "1px solid var(--dsw-alias-border-l2)",
+  borderRadius: "var(--dsw-radius-sm)",
+  cursor: "pointer"
+}, statRowStyle = { display: "flex", gap: "8px", flexWrap: "wrap" }, statStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "2px",
+  minWidth: "96px",
+  padding: "8px 12px",
+  border: "1px solid var(--dsw-alias-border-l1)",
+  borderRadius: "var(--dsw-radius-sm)",
+  background: "var(--dsw-alias-bg-layer-2)"
+}, statValueStyle = { fontSize: "18px", fontWeight: 600, lineHeight: "22px" }, listStyle = { display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }, auditRowStyle = {
+  display: "grid",
+  // `minmax(0, 1fr)` on the command column is what lets it shrink: a bare `1fr` keeps the item's
+  // min-content width, so one long command would widen the whole card again.
+  gridTemplateColumns: "62px minmax(64px, auto) minmax(0, 1fr)",
+  alignItems: "center",
+  gap: "8px",
+  minWidth: 0,
+  fontSize: "12px"
+}, keyCardStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "3px",
+  minWidth: 0,
+  padding: "8px 10px",
+  border: "1px solid var(--dsw-alias-border-l1)",
+  borderRadius: "var(--dsw-radius-sm)"
+}, badgeStyle = {
+  justifySelf: "start",
+  padding: "1px 7px",
+  fontSize: "11px",
+  lineHeight: "16px",
+  borderRadius: "var(--dsw-radius-sm)",
+  border: "1px solid currentColor"
+};
 function timeOf(timestamp) {
   let when = new Date(timestamp);
   return [when.getHours(), when.getMinutes(), when.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
@@ -7015,113 +7084,163 @@ function AtTerminalSettingsTab() {
   }, totals = { allowed: 0, confirmed: 0, denied: 0 };
   for (let audit of audits ?? [])
     audit.decision === "allowed" ? totals.allowed += 1 : audit.decision === "confirmed" ? totals.confirmed += 1 : totals.denied += 1;
+  let badge = (decision) => h(
+    "span",
+    {
+      style: {
+        ...badgeStyle,
+        color: decision === "allowed" ? "var(--dsw-alias-state-success-primary)" : decision === "confirmed" ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-state-error-primary)"
+      }
+    },
+    decisionLabel(decision)
+  );
   return h(
     "div",
-    // No `att-*` class: the audit that every such class is defined in the stylesheet exists to
-    // stop unstyled hooks from accumulating, and this page is styled entirely inline from
+    // No `att-*` class: the gate that every such class is defined in the stylesheet exists to stop
+    // unstyled hooks from accumulating, and this page is styled entirely inline from
     // `--dsw-alias-*` tokens so it follows the host's light/dark switch.
-    { style: sectionStyle },
-    // 1. decision counts
-    h("h3", { style: headingStyle }, t("settings.decisions.heading")),
-    audits === null ? h("div", { style: mutedStyle }, t("settings.audit.unreadable")) : h(
+    { style: pageStyle },
+    /* ------------------------------ decision counts ----------------------------- */
+    h(
       "div",
-      { style: rowStyle },
-      h("span", {}, t("settings.decisions.window", { count: audits.length })),
-      h("span", { style: mutedStyle }, t("settings.decisions.allowed", { count: totals.allowed })),
-      h("span", { style: mutedStyle }, t("settings.decisions.confirmed", { count: totals.confirmed })),
-      h("span", { style: mutedStyle }, t("settings.decisions.denied", { count: totals.denied }))
-    ),
-    // 2. audit tail
-    h("h3", { style: headingStyle }, t("settings.audit.heading")),
-    ...audits === null ? [] : audits.length === 0 ? [h("div", { key: "empty", style: mutedStyle }, t("settings.audit.empty"))] : audits.slice(-10).reverse().map(
-      (audit) => h(
+      { style: cardStyle },
+      h("h3", { style: headingStyle }, t("settings.decisions.heading")),
+      audits === null ? h("div", { style: mutedStyle }, t("settings.audit.unreadable")) : h(
         "div",
-        { key: audit.id, style: rowStyle },
-        h("span", { style: monoStyle }, timeOf(audit.timestamp)),
-        h(
-          "span",
-          { style: mutedStyle },
-          decisionLabel(audit.decision)
-        ),
-        h("span", {}, String(audit.command ?? "").slice(0, 90))
-      )
+        { style: statRowStyle },
+        ...[
+          [totals.allowed, t("settings.decisions.allowed.label")],
+          [totals.confirmed, t("settings.decisions.confirmed.label")],
+          [totals.denied, t("settings.decisions.denied.label")]
+        ].map(
+          ([count2, label]) => h(
+            "div",
+            { key: String(label), style: statStyle },
+            h("span", { style: statValueStyle }, String(count2)),
+            h("span", { style: mutedStyle }, String(label))
+          )
+        )
+      ),
+      audits === null ? null : h("div", { style: captionStyle }, t("settings.decisions.window", { count: audits.length }))
     ),
-    audits === null ? null : h(
-      "button",
-      {
-        type: "button",
-        style: { alignSelf: "flex-start", fontSize: "12px" },
-        onClick: () => {
-          typeof navigator > "u" || navigator.clipboard?.writeText(JSON.stringify(audits, null, 2));
-        }
-      },
-      t("settings.audit.copy")
-    ),
-    // 3. trust library
-    h("h3", { style: headingStyle }, t("settings.trust.heading")),
-    h("div", { style: mutedStyle }, t("settings.trust.scope")),
-    error !== null ? h("div", { style: mutedStyle }, t("settings.trust.failed", { message: error })) : null,
-    hostKeys === null ? h("div", { style: mutedStyle }, t("settings.trust.unreadable")) : hostKeys.length === 0 ? h("div", { style: mutedStyle }, t("settings.trust.empty")) : h(
+    /* --------------------------------- audit tail -------------------------------- */
+    h(
       "div",
-      { style: { display: "flex", flexDirection: "column" } },
-      ...hostKeys.map((row) => {
-        let owner = servers.find(
-          (server) => server.host === row.host && (server.port ?? 22) === row.port
-        );
+      { style: cardStyle },
+      h("h3", { style: headingStyle }, t("settings.audit.heading")),
+      ...audits === null ? [h("div", { key: "unreadable", style: mutedStyle }, t("settings.audit.unreadable"))] : audits.length === 0 ? [h("div", { key: "empty", style: mutedStyle }, t("settings.audit.empty"))] : audits.slice(-10).reverse().map((audit) => {
+        let command = String(audit.command ?? "");
         return h(
           "div",
-          { key: `${row.host}:${row.port}`, style: rowStyle },
-          h("span", { style: monoStyle }, `${row.host}:${row.port}`),
-          h("span", { style: monoStyle }, row.fingerprint),
+          { key: audit.id, style: auditRowStyle },
+          h("span", { style: { ...monoStyle, color: "var(--dsw-alias-label-caption)" } }, timeOf(audit.timestamp)),
+          badge(audit.decision),
           h(
             "span",
-            { style: { ...mutedStyle, flex: 1 } },
-            owner === void 0 ? t("settings.trust.ownerless") : owner.label ?? owner.id
-          ),
-          owner === void 0 ? null : h(
-            "button",
-            {
-              type: "button",
-              disabled: busy,
-              style: { fontSize: "12px" },
-              onClick: () => forget(row, owner)
-            },
-            t("settings.trust.forget")
+            { style: { ...monoStyle, color: "var(--dsw-alias-label-secondary)", ...ellipsisStyle } },
+            command === "" ? "\u2014" : command
           )
         );
-      })
-    ),
-    // 4. the optional persistent shell
-    h("h3", { style: headingStyle }, t("settings.optional.heading")),
-    h("div", { style: mutedStyle }, t("settings.optional.about")),
-    optional === null ? (
-      // Not read yet is its own state: defaulting it to "not installed" would offer an Install
-      // button to someone who already has the bundle.
-      h("div", { style: mutedStyle }, t("settings.audit.unreadable"))
-    ) : optional.available === !1 ? h("div", { style: mutedStyle }, optional.reason ?? t("settings.optional.unavailable")) : h(
-      "div",
-      { style: rowStyle },
-      h("span", {}, optionalState(optional)),
-      h(
+      }),
+      audits === null ? null : h(
         "button",
         {
           type: "button",
-          disabled: optionalBusy,
-          style: { fontSize: "12px" },
-          onClick: () => optional.installed ? runOptional("terminal.optionalBundle.setEnabled", {
-            enabled: !optional.enabled
-          }) : runOptional("terminal.optionalBundle.install")
+          style: { ...buttonStyle, alignSelf: "flex-start" },
+          onClick: () => {
+            typeof navigator > "u" || navigator.clipboard?.writeText(JSON.stringify(audits, null, 2));
+          }
         },
-        optional.installed ? optional.enabled ? t("settings.optional.disable") : t("settings.optional.enable") : t("settings.optional.install")
+        t("settings.audit.copy")
       )
     ),
-    optionalError !== null ? h("div", { style: mutedStyle }, t("settings.optional.failed", { message: optionalError })) : null,
-    optionalBusy ? h("div", { style: mutedStyle }, t("settings.optional.busy")) : null,
-    optional?.available === !0 ? h(
+    /* ------------------------------- trust library ------------------------------ */
+    h(
       "div",
-      { style: { ...mutedStyle, fontSize: "11px" } },
-      t("settings.optional.manual", { spec: optional.spec })
-    ) : null
+      { style: cardStyle },
+      h("h3", { style: headingStyle }, t("settings.trust.heading")),
+      h("div", { style: captionStyle }, t("settings.trust.scope")),
+      error !== null ? h("div", { style: mutedStyle }, t("settings.trust.failed", { message: error })) : null,
+      hostKeys === null ? h("div", { style: mutedStyle }, t("settings.trust.unreadable")) : hostKeys.length === 0 ? h("div", { style: mutedStyle }, t("settings.trust.empty")) : h(
+        "div",
+        { style: listStyle },
+        ...hostKeys.map((row) => {
+          let owner = servers.find(
+            (server) => server.host === row.host && (server.port ?? 22) === row.port
+          );
+          return h(
+            "div",
+            { key: `${row.host}:${row.port}`, style: keyCardStyle },
+            h(
+              "div",
+              { style: { ...rowStyle, justifyContent: "space-between" } },
+              h(
+                "span",
+                { style: { ...monoStyle, color: "var(--dsw-alias-label-primary)", ...ellipsisStyle } },
+                `${row.host}:${row.port}`
+              ),
+              owner === void 0 ? null : h(
+                "button",
+                {
+                  type: "button",
+                  disabled: busy,
+                  style: buttonStyle,
+                  onClick: () => forget(row, owner)
+                },
+                t("settings.trust.forget")
+              )
+            ),
+            h(
+              "div",
+              { style: mutedStyle },
+              owner === void 0 ? t("settings.trust.ownerless") : owner.label ?? owner.id
+            ),
+            h("div", { style: fingerprintStyle, title: row.fingerprint }, row.fingerprint)
+          );
+        })
+      )
+    ),
+    /* ------------------------- the optional persistent shell --------------------- */
+    h(
+      "div",
+      { style: cardStyle },
+      h("h3", { style: headingStyle }, t("settings.optional.heading")),
+      h("div", { style: captionStyle }, t("settings.optional.about")),
+      optional === null ? (
+        // Not read yet is its own state: defaulting it to "not installed" would offer an Install
+        // button to someone who already has the bundle.
+        h("div", { style: mutedStyle }, t("settings.audit.unreadable"))
+      ) : optional.available === !1 ? h("div", { style: mutedStyle }, optional.reason ?? t("settings.optional.unavailable")) : h(
+        "div",
+        { style: { ...rowStyle, justifyContent: "space-between", gap: "12px" } },
+        h("span", { style: { fontSize: "12px" } }, optionalState(optional)),
+        h(
+          "button",
+          {
+            type: "button",
+            disabled: optionalBusy,
+            style: buttonStyle,
+            onClick: () => optional.installed ? runOptional("terminal.optionalBundle.setEnabled", {
+              enabled: !optional.enabled
+            }) : runOptional("terminal.optionalBundle.install")
+          },
+          optional.installed ? optional.enabled ? t("settings.optional.disable") : t("settings.optional.enable") : t("settings.optional.install")
+        )
+      ),
+      optionalError !== null ? h("div", { style: mutedStyle }, t("settings.optional.failed", { message: optionalError })) : null,
+      optionalBusy ? h("div", { style: mutedStyle }, t("settings.optional.busy")) : null,
+      optional?.available === !0 ? h(
+        "div",
+        {
+          style: {
+            ...monoStyle,
+            color: "var(--dsw-alias-label-tertiary)",
+            overflowWrap: "anywhere"
+          }
+        },
+        t("settings.optional.manual", { spec: optional.spec })
+      ) : null
+    )
   );
 }
 

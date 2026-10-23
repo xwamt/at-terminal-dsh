@@ -430,9 +430,10 @@ export const zh: Record<string, string> = {
   // nothing in this bundle reports a connection attempt.
   'settings.decisions.heading': '决策统计',
   'settings.decisions.window': '最近 {count} 条决策',
-  'settings.decisions.allowed': '允许 {count}',
-  'settings.decisions.confirmed': '确认后执行 {count}',
-  'settings.decisions.denied': '拒绝 {count}',
+  // Short labels for the stat cards; the number is rendered beside them, so it is not in the key.
+  'settings.decisions.allowed.label': '允许',
+  'settings.decisions.confirmed.label': '确认后执行',
+  'settings.decisions.denied.label': '拒绝',
   'settings.audit.heading': '最近审计',
   // One sentence for both cases — unreadable and unwritable are the same fact to a reader:
   // there is no trail to show, and it is not because nothing happened.
@@ -825,9 +826,9 @@ export const en: Record<string, string> = {
   'tool.command.copied': 'Copied',
   'settings.decisions.heading': 'Decisions',
   'settings.decisions.window': 'Last {count} decisions',
-  'settings.decisions.allowed': 'Allowed {count}',
-  'settings.decisions.confirmed': 'Confirmed {count}',
-  'settings.decisions.denied': 'Denied {count}',
+  'settings.decisions.allowed.label': 'Allowed',
+  'settings.decisions.confirmed.label': 'Confirmed',
+  'settings.decisions.denied.label': 'Denied',
   'settings.audit.heading': 'Recent audit',
   'settings.audit.unreadable': 'Audit unavailable — the panel is not connected.',
   'settings.audit.empty': 'No audit rows yet.',
