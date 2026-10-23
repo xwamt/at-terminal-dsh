@@ -135,6 +135,17 @@ terminal_close({ sessionId })
   session. Reporting `delivered: true` with a made-up process group would be fabricated evidence.
 - The session opens with the same server record, credentials and host-key store the panel uses,
   so a server edited in the AT Terminal tab is the server the agent connects to.
+- **It borrows this bundle's platform and never builds one.** The two bundles are loaded into one
+  Node process but built separately, so each carries its own copy of the platform registry; a
+  second assembly cannot work because `storageDomain.open()` is exclusive and answers
+  `domain 'at_terminal_state' is already open`. The entry therefore reads the installed platform
+  (waiting for the host bundle's in-flight assembly when it is still starting) and otherwise fails
+  with "enable AT Terminal and restart". That is why this package declares AT Terminal as a peer.
+
+Verified on a real Harness (DSH 0.2.1-rc.2, macOS): `terminal_open({type:'ssh', name:'99.90'})`
+returned `started terminal session pty-1 (99.90) [type: ssh]`; a `terminal_send` of `cd /tmp`
+settled `stdin_read` / `running`; the next `terminal_send` of `pwd` printed `/tmp`, and
+`terminal_read` showed both commands in one shell history — the persistence this bundle exists for.
 
 ## Safety Behavior
 

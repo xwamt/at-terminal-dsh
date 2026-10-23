@@ -1,5 +1,5 @@
 import type { Platform } from '../../core/ports';
-import { clearPlatform, setPlatform } from '../current';
+import { clearPlatform, setPlatform, trackPlatformAssembly } from '../current';
 import { createDshClipboard } from './clipboard';
 import { createDshConfigReader } from './config';
 import { createDshSecretStore } from './credentials';
@@ -56,6 +56,15 @@ export interface DshPlatformHandle {
 }
 
 export async function createDshPlatform(deps: DshPlatformDeps): Promise<DshPlatformHandle> {
+  // Published before the first `await`, so a second bundle in the same process (the opt-in
+  // terminal bundle) can wait for this assembly instead of building a second platform. Two
+  // assemblies are not merely redundant: `ctx.storageDomain.open()` is exclusive, so the loser
+  // fails with `domain 'at_terminal_state' is already open` — which is exactly what the first
+  // real `terminal_open` hit.
+  return trackPlatformAssembly(buildDshPlatform(deps));
+}
+
+async function buildDshPlatform(deps: DshPlatformDeps): Promise<DshPlatformHandle> {
   const logger = deps.logger ?? NOOP_DSH_LOGGER;
 
   // Opened first: if the storage domain is unusable, nothing below it is worth

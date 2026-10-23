@@ -4,7 +4,7 @@
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
 [![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.2_Verified-brightgreen.svg)](#installation--setup--安装与配置)
-[![Test Coverage](https://img.shields.io/badge/tests-82%2F82%20passed%20(1091%20tests)-blue.svg)](#build--verification--构建与验证)
+[![Test Coverage](https://img.shields.io/badge/tests-97%2F97%20passed%20(1305%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
 
@@ -61,6 +61,10 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 8. **Platform-Native Shortcuts**:
    - Copy, paste and find follow the operating system: `⌘C` / `⌘V` / `⌘F` on macOS, `Ctrl+C` / `Ctrl+V` / `Ctrl+F` on Windows and Linux.
    - On macOS `Ctrl+C` stays a shell interrupt instead of becoming "copy"; the DSH shortcut registry binds `primary`, so new-tab and page switches map the same way.
+9. **Optional Persistent SSH Terminals** (second, opt-in bundle — not installed by default):
+   - Adds a `type: "ssh"` backend to dsh's own `ctx.terminals`, so the six built-in `terminal_*` tools drive a **remote** shell: `terminal_open({ type: "ssh", name: "payment01" })`, then `terminal_send` / `terminal_read`, and `cd` survives between calls.
+   - `name` is the server selector (server id first, then label; an ambiguous label is refused rather than guessed), because the official tool takes no `serverId`.
+   - Composed as `cordis:group` + `isolate: { terminals: true }`, so a profile without it is byte-for-byte unaffected, and the right-sidebar terminal (a different subsystem) keeps its own registry.
 
 ### Installation & Setup
 
@@ -91,6 +95,24 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 1. Open the **dsh-market** plugin inside DeepSeek Harness Settings.
 2. Navigate to the **Remote** category or search for `at-terminal-dsh`.
 3. Click **Install** for one-click installation and automatic configuration.
+
+#### Optional bundle: persistent SSH terminals
+The `terminal_*` family is a **separate** package, because it changes the composition rather than
+adding to this one (`dsh-terminal-ssh/`). Install it the same way, as a second local bundle, and
+restart:
+
+```sh
+# the plugin manager writes both of these into your profile's package.json
+dsh plugin --profile desktop add /path/to/at-terminal-dsh/dsh-terminal-ssh
+```
+
+or **Settings → Plugin Manager → Install Local Bundle** with `/path/to/at-terminal-dsh/dsh-terminal-ssh`.
+It requires this package (`@at-series/dsh-at-terminal`) to be installed and enabled: the backend
+borrows its server list, stored credentials and SSH layer — it has none of its own, and
+`terminal_open` says so if you disable AT Terminal afterwards.
+
+Verify it took: **Settings → Plugins → @at-series/dsh-at-terminal-ssh** should list three running
+components (`dsh-terminal` → `…/terminal-backend` → `dsh-tool-terminal`).
 
 ### Direct Agent Tools List
 
@@ -191,6 +213,11 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 - **复制 / 粘贴 / 查找按平台映射**：macOS 为 `⌘C` / `⌘V` / `⌘F`，Windows 与 Linux 为 `Ctrl+C` / `Ctrl+V` / `Ctrl+F`。
 - **不抢占终端语义**：macOS 上 `Ctrl+C` 仍是 SIGINT；`⌘V` 走浏览器原生 paste 事件，无需额外的剪贴板读权限。
 - **统一的主修饰键**：新建标签与页面切换通过 DSH 快捷键注册表的 `primary` 语义绑定，macOS 自动为 Command、其他平台为 Control。
+
+#### 10. 可选：持久 SSH 终端（第二个 bundle，默认不装）
+- **复用宿主自己的 `ctx.terminals`**：给 DSH 内置的六个 `terminal_*` 工具接一个 `type: "ssh"` 后端，于是 `terminal_open({ type: "ssh", name: "payment01" })` 之后 `terminal_send` 的 `cd` 能**跨调用保留**——`at_terminal_run_remote_command` 做不到这件事，它每条命令一条通道。
+- **`name` 就是服务器选择器**：官方工具没有 `serverId` 参数，所以按「id 优先、名称其次」匹配，**同名两台直接报错并列出两个 id**（不替使用者挑一台）。
+- **隔离而非侵入**：组合成 `cordis:group` + `isolate: { terminals: true }`，不装它的 profile 完全不受影响，装上也不会和右侧栏终端（另一套子系统）抢同一个注册表。
 
 #### 10. 持久 SSH 终端（可选 bundle）
 - **跨调用存活的远端 shell**：另装 `dsh-terminal-ssh/` 后，模型可用 `terminal_open({type:'ssh', name:'<服务器 id 或名称>'})` 开一个会话，`terminal_send` / `terminal_read` / `terminal_close` 连续操作——适合需要保持 `cd`、REPL、长任务的场景。

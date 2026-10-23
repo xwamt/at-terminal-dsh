@@ -10,422 +10,6 @@ var __export = (target2, all) => {
     __defProp(target2, name2, { get: all[name2], enumerable: !0 });
 };
 
-// src/platform/current.ts
-var current;
-function setPlatform(value) {
-  current = value;
-}
-function clearPlatform(expected) {
-  expected !== void 0 && current !== expected || (current = void 0);
-}
-function platform() {
-  if (current === void 0)
-    throw new Error(
-      "AT Terminal: platform not installed; extension activation must call setPlatform()"
-    );
-  return current;
-}
-
-// src/platform/dsh/clipboard.ts
-function createDshClipboard({ logger }) {
-  return {
-    async writeText(text) {
-      logger.info("AT Terminal: clipboard write requested \u2014 %s", text);
-    }
-  };
-}
-
-// src/platform/dsh/config.ts
-var SUPPORTED_CONFIG_SECTION = "sshManager";
-function createDshConfigReader(settings) {
-  return {
-    getSection(section) {
-      if (section !== SUPPORTED_CONFIG_SECTION)
-        throw new Error(
-          `AT Terminal on dsh: unsupported configuration section "${section}". This platform exposes only "${SUPPORTED_CONFIG_SECTION}" (the dsh settings schema is flat and drops the "${SUPPORTED_CONFIG_SECTION}." prefix, so the section name here is not a namespace to look up but the single section that exists).`
-        );
-      return {
-        /**
-         * `settings[key]` is re-indexed on every call rather than destructured once,
-         * because the record is the seam: the tests (and, in principle, a future
-         * hot-reload) mutate it in place after the reader is built, and the port's
-         * contract is "read the configuration now".
-         */
-        get(key, defaultValue) {
-          let value = settings[key]?.get();
-          return value === void 0 ? defaultValue : value;
-        }
-      };
-    }
-  };
-}
-
-// src/platform/dsh/host.ts
-var NOOP_DSH_LOGGER = {
-  info: () => {
-  },
-  warn: () => {
-  },
-  error: () => {
-  }
-}, AT_TERMINAL_CREDENTIAL_NAMESPACE = "AT_TERMINAL";
-function isCredentialRefName(value) {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
-}
-function serverSecretRefName(kind, serverId) {
-  let prefix = `${AT_TERMINAL_CREDENTIAL_NAMESPACE}_${kind.toUpperCase()}`;
-  if (/^[a-z0-9-]+$/.test(serverId)) {
-    let name2 = `${prefix}_S_${serverId.toUpperCase().replace(/-/g, "_")}`;
-    if (isCredentialRefName(name2))
-      return name2;
-  }
-  return `${prefix}_X_${Buffer.from(serverId, "utf8").toString("hex").toUpperCase()}`;
-}
-
-// src/platform/dsh/credentials.ts
-var PASSWORD_PREFIX = "sshManager.password.", PASSPHRASE_PREFIX = "sshManager.passphrase.";
-function parseSecretKey(key) {
-  for (let [prefix, kind] of [
-    [PASSWORD_PREFIX, "password"],
-    [PASSPHRASE_PREFIX, "passphrase"]
-  ])
-    if (key.startsWith(prefix))
-      return { kind, serverId: key.slice(prefix.length) };
-}
-function refFor(key) {
-  let parsed = parseSecretKey(key);
-  if (parsed === void 0)
-    throw new Error(
-      `AT Terminal on dsh: "${key}" is not a credential key this plugin owns (expected a "${PASSWORD_PREFIX}" or "${PASSPHRASE_PREFIX}" prefix)`
-    );
-  return serverSecretRefName(parsed.kind, parsed.serverId);
-}
-function createDshSecretStore({ credentials, logger }) {
-  return {
-    async get(key) {
-      let ref = refFor(key), resolved = await credentials.resolve(ref);
-      if (!(resolved === void 0 || resolved.value.length === 0))
-        return logger.info('AT Terminal: resolved SSH secret from the "%s" layer.', resolved.source), resolved.value;
-    },
-    async store(key, value) {
-      let ref = refFor(key);
-      await credentials.set(ref, value);
-    },
-    async delete(key) {
-      let ref = refFor(key);
-      await credentials.unset(ref);
-    }
-  };
-}
-
-// src/platform/dsh/environment.ts
-function createDshHostEnvironment(facts) {
-  return {
-    appName: facts.appName,
-    appRoot: facts.appRoot,
-    uriScheme: facts.uriScheme,
-    // `context.extensionUri.fsPath`'s counterpart: the bundle directory that holds the
-    // packaged webview/hub assets.
-    extensionPath: facts.bundlePath,
-    // `context.globalStorageUri.fsPath`'s counterpart: the `$DSH_HOME`-based directory
-    // that survives a bundle reinstall.
-    storageDir: facts.storageDir,
-    workspaceFolders: void 0
-  };
-}
-
-// src/platform/dsh/localization.ts
-function createDshLocalization(messages = {}) {
-  return {
-    t(message, args) {
-      let template = Object.prototype.hasOwnProperty.call(messages, message) ? messages[message] : message;
-      return args === void 0 ? template : template.replace(
-        /\{(\w+)\}/g,
-        (placeholder, key) => Object.prototype.hasOwnProperty.call(args, key) ? String(args[key]) : placeholder
-      );
-    }
-  };
-}
-
-// src/core/disposable.ts
-var noopDisposable = { dispose: () => {
-} };
-
-// src/core/cancellation.ts
-var cancellationTokenNone = Object.freeze({
-  isCancellationRequested: !1,
-  onCancellationRequested: () => noopDisposable
-});
-
-// src/platform/dsh/notifier.ts
-function logAt(logger, kind, format, ...args) {
-  kind === "info" ? logger.info(format, ...args) : kind === "warning" ? logger.warn(format, ...args) : logger.error(format, ...args);
-}
-function splitTrailing(rest) {
-  let [head, ...tail] = rest, hasOptions = typeof head == "object" && head !== null;
-  return {
-    options: hasOptions ? head : void 0,
-    actions: hasOptions ? tail : rest
-  };
-}
-function createDshNotifier({ logger, respond }) {
-  async function dispatch(kind, message, rest) {
-    let { options, actions } = splitTrailing(rest), suffix = actions.length > 0 ? ` [${actions.join(" | ")}]` : "";
-    if (logAt(logger, kind, `AT Terminal: %s${suffix}`, message), !(respond === void 0 || actions.length === 0))
-      return await respond({ kind, message, options, actions });
-  }
-  return {
-    async showInformationMessage(message, ...rest) {
-      return await dispatch("info", message, rest);
-    },
-    async showWarningMessage(message, ...rest) {
-      return await dispatch("warning", message, rest);
-    },
-    async showErrorMessage(message, ...rest) {
-      return await dispatch("error", message, rest);
-    },
-    async withProgress(options, task) {
-      return logger.info("AT Terminal: progress \u2014 %s", options.title ?? "(untitled)"), await task({
-        report(value) {
-          value.message !== void 0 ? logger.info("AT Terminal: progress \u2014 %s", value.message) : value.increment !== void 0 ? logger.info("AT Terminal: progress \u2014 +%s", value.increment) : logger.info("AT Terminal: progress \u2014 tick");
-        }
-      }, cancellationTokenNone);
-    }
-  };
-}
-
-// src/platform/dsh/prompter.ts
-function createDshPrompter({ logger, respond }) {
-  async function showQuickPick(items, options, _token) {
-    let multi = options?.canPickMany === !0;
-    logger.info(
-      "AT Terminal: quick pick requested (%s) \u2014 %s",
-      options?.title ?? "(untitled)",
-      items.join(" | ")
-    );
-    let answer = await respond?.quickPick?.({ items, options }, multi);
-    if (answer !== void 0)
-      return multi ? Array.isArray(answer) ? answer : [answer] : Array.isArray(answer) ? answer[0] : answer;
-  }
-  return {
-    showQuickPick,
-    async showInputBox(options, _token) {
-      return logger.info("AT Terminal: input requested \u2014 %s", options?.prompt ?? options?.title ?? "(untitled)"), await respond?.inputBox?.({ options });
-    },
-    async showOpenDialog(options) {
-      return logger.info("AT Terminal: open dialog requested \u2014 %s", options.title ?? "(untitled)"), await respond?.openDialog?.({ options });
-    },
-    async showSaveDialog(options) {
-      return logger.info("AT Terminal: save dialog requested \u2014 %s", options.title ?? "(untitled)"), await respond?.saveDialog?.({ options });
-    }
-  };
-}
-
-// src/platform/dsh/state.ts
-var AT_TERMINAL_STATE_DOMAIN = "at_terminal_state", AT_TERMINAL_STATE_TABLE = "kv", AT_TERMINAL_STATE_VERSION = 1;
-function parseJsonRecord(value) {
-  if (value === void 0)
-    throw new TypeError(
-      "AT Terminal: a state record cannot be undefined \u2014 call update(key, undefined) to delete it"
-    );
-  let text;
-  try {
-    text = JSON.stringify(value);
-  } catch (error) {
-    throw new TypeError(`AT Terminal: a state record must be JSON-serializable (${String(error)})`);
-  }
-  if (text === void 0)
-    throw new TypeError("AT Terminal: a state record must be JSON-serializable (JSON.stringify produced no text)");
-  return JSON.parse(text);
-}
-function createStateDomainSpec() {
-  return {
-    name: AT_TERMINAL_STATE_DOMAIN,
-    version: AT_TERMINAL_STATE_VERSION,
-    tables: {
-      [AT_TERMINAL_STATE_TABLE]: { valueSchema: { parse: parseJsonRecord } }
-    }
-  };
-}
-async function openDshStateStore({
-  storageDomain,
-  logger = NOOP_DSH_LOGGER
-}) {
-  let domain = await storageDomain.open(createStateDomainSpec());
-  if (domain.name !== AT_TERMINAL_STATE_DOMAIN)
-    throw await domain.close(), new Error(
-      `AT Terminal: storageDomain.open() returned domain "${domain.name}" instead of "${AT_TERMINAL_STATE_DOMAIN}"`
-    );
-  let table = domain.table(AT_TERMINAL_STATE_TABLE);
-  return logger.info('AT Terminal: state domain "%s" opened.', AT_TERMINAL_STATE_DOMAIN), {
-    state: {
-      get(key, defaultValue) {
-        let stored = table.get(key);
-        return stored === void 0 ? defaultValue : stored;
-      },
-      async update(key, value) {
-        if (value === void 0) {
-          await table.delete(key);
-          return;
-        }
-        await table.put(key, parseJsonRecord(value));
-      }
-    },
-    close: () => domain.close()
-  };
-}
-
-// src/utils/notifications.ts
-var TIMED_NOTIFICATION_MS = 3e3, FAILED_NOTIFICATION_MS = 8e3;
-function showTimedNotification(message, kind = "info", durationMs = TIMED_NOTIFICATION_MS) {
-  let icon = kind === "error" ? "$(error)" : kind === "warning" ? "$(warning)" : "$(info)";
-  try {
-    platform().notifier.withProgress(
-      {
-        location: "notification",
-        title: `${icon} ${message}`,
-        cancellable: !1
-      },
-      async () => {
-        await delay(durationMs);
-      }
-    ).then(void 0, () => {
-    });
-  } catch {
-  }
-}
-function delay(durationMs) {
-  return new Promise((resolve) => setTimeout(resolve, durationMs));
-}
-
-// src/platform/dsh/transfers.ts
-function createDshTransferReporter(notifier) {
-  return {
-    async withProgress(label, job) {
-      return await notifier.withProgress(
-        // `cancellable: false` mirrors the VS Code reporter: an SFTP byte transfer is not
-        // interrupted from the progress surface, so offering a cancel affordance that the
-        // adapter cannot honour would be a lie on either host.
-        { location: "notification", title: label, cancellable: !1 },
-        async (progress) => await job({
-          report: ({ transferredBytes, totalBytes }) => {
-            progress.report({ message: `${transferredBytes} / ${totalBytes}` });
-          }
-        })
-      );
-    },
-    async notifySuccess(message) {
-      showTimedNotification(message, "info", TIMED_NOTIFICATION_MS);
-    },
-    async notifyFailure(message) {
-      showTimedNotification(message, "error", FAILED_NOTIFICATION_MS);
-    }
-  };
-}
-
-// src/platform/dsh/uris.ts
-import { join as joinFsPath } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-var DshUri = class {
-  constructor(scheme, fsPath, authority, query, fragment) {
-    this.scheme = scheme;
-    this.fsPath = fsPath;
-    this.authority = authority;
-    this.query = query;
-    this.fragment = fragment;
-  }
-  /**
-   * `file:` URIs go through `pathToFileURL` so the result is a URL a browser or an
-   * `import()` can actually consume: it percent-encodes what a raw
-   * `file://${fsPath}` concatenation would corrupt (spaces, `#`, `?`, non-ASCII) and
-   * supplies the third slash for an absolute POSIX path. A non-`file` scheme has no
-   * such encoder, so it is reassembled from its parts.
-   *
-   * Query and fragment are appended for both. That is not decoration: the SFTP
-   * preview encodes the *local* backing file into `query` and keys its document map
-   * by `uri.toString()` (`src/sftp/SftpPreview.ts`), so dropping the query here
-   * would make two previews collide on one map entry.
-   */
-  toString() {
-    let result = this.scheme === "file" ? pathToFileURL(this.fsPath).toString() : `${this.scheme}:${this.authority === void 0 ? "" : `//${this.authority}`}${this.fsPath}`;
-    return this.query !== void 0 && (result += `?${this.query}`), this.fragment !== void 0 && (result += `#${this.fragment}`), result;
-  }
-}, SCHEME_PREFIX = /^([A-Za-z][A-Za-z0-9+.-]*):/;
-function splitNonFileParts(rest) {
-  let hashIndex = rest.indexOf("#"), fragment = hashIndex < 0 ? void 0 : rest.slice(hashIndex + 1), withoutFragment = hashIndex < 0 ? rest : rest.slice(0, hashIndex), queryIndex = withoutFragment.indexOf("?"), query = queryIndex < 0 ? void 0 : withoutFragment.slice(queryIndex + 1), path = queryIndex < 0 ? withoutFragment : withoutFragment.slice(0, queryIndex), authority;
-  if (path.startsWith("//")) {
-    let slashIndex = path.indexOf("/", 2);
-    authority = slashIndex < 0 ? path.slice(2) : path.slice(2, slashIndex), path = slashIndex < 0 ? "" : path.slice(slashIndex);
-  }
-  return { path, authority, query, fragment };
-}
-function createDshUriService() {
-  return {
-    /** `Uri.file`: a local filesystem path in the `file` scheme, never a remote one. */
-    file: (fsPath) => new DshUri("file", fsPath),
-    joinPath: (base, ...segments) => segments.length === 0 ? base : new DshUri(base.scheme, joinFsPath(base.fsPath, ...segments)),
-    parse: (value) => {
-      let scheme = SCHEME_PREFIX.exec(value);
-      if (scheme === null)
-        return new DshUri("file", value);
-      let rest = value.slice(scheme[0].length);
-      if (scheme[1] === "file")
-        try {
-          return new DshUri("file", fileURLToPath(value));
-        } catch {
-          return new DshUri("file", rest);
-        }
-      let parts = splitNonFileParts(rest);
-      return new DshUri(scheme[1], parts.path, parts.authority, parts.query, parts.fragment);
-    },
-    /**
-     * `authority` / `query` / `fragment` are part of the port's `UriComponents`, so
-     * they are carried instead of dropped: silently discarding a field the caller
-     * filled in is the kind of "looks fine, is wrong" behaviour this codebase bans.
-     * They are not exposed on `UriLike`, only folded into `toString()`.
-     */
-    from: (components) => new DshUri(
-      components.scheme,
-      components.path ?? "",
-      components.authority,
-      components.query,
-      components.fragment
-    ),
-    /**
-     * A genuine narrowing: only objects this module built are accepted. The check is
-     * deliberately *not* structural (`'scheme' in value && 'fsPath' in value`),
-     * because the port's other consumer of it is `SftpEditSessionManager`'s
-     * "is this a URI I own" test, and a random `{scheme, fsPath}` bag from somewhere
-     * else is not one.
-     */
-    isUri: (value) => value instanceof DshUri
-  };
-}
-
-// src/platform/dsh/index.ts
-async function createDshPlatform(deps) {
-  let logger = deps.logger ?? NOOP_DSH_LOGGER, state = await openDshStateStore({ storageDomain: deps.storageDomain, logger }), notifier = createDshNotifier({ logger }), platform2 = {
-    notifier,
-    prompter: createDshPrompter({ logger }),
-    uris: createDshUriService(),
-    config: createDshConfigReader(deps.settings),
-    secrets: createDshSecretStore({ credentials: deps.credentials, logger }),
-    state: state.state,
-    transfers: createDshTransferReporter(notifier),
-    keyboardInteractive: async () => {
-    },
-    localization: createDshLocalization(deps.messages ?? {}),
-    clipboard: createDshClipboard({ logger }),
-    environment: createDshHostEnvironment(deps.facts)
-  };
-  return setPlatform(platform2), {
-    platform: platform2,
-    async close() {
-      clearPlatform(platform2), await state.close();
-    }
-  };
-}
-
 // src/platform/dsh/services.ts
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
@@ -3425,7 +3009,7 @@ function parseServerConfigList(value) {
 }
 
 // src/config/ConfigManager.ts
-var SERVERS_KEY = "sshManager.servers", PASSWORD_PREFIX2 = "sshManager.password.", PASSPHRASE_PREFIX2 = "sshManager.passphrase.", ConfigManager = class {
+var SERVERS_KEY = "sshManager.servers", PASSWORD_PREFIX = "sshManager.password.", PASSPHRASE_PREFIX = "sshManager.passphrase.", ConfigManager = class {
   constructor(globalState, secrets) {
     this.globalState = globalState;
     this.secrets = secrets;
@@ -3460,10 +3044,10 @@ var SERVERS_KEY = "sshManager.servers", PASSWORD_PREFIX2 = "sshManager.password.
     return this.secrets.get(this.passphraseKey(id));
   }
   passwordKey(id) {
-    return `${PASSWORD_PREFIX2}${id}`;
+    return `${PASSWORD_PREFIX}${id}`;
   }
   passphraseKey(id) {
-    return `${PASSPHRASE_PREFIX2}${id}`;
+    return `${PASSPHRASE_PREFIX}${id}`;
   }
 };
 
@@ -3532,6 +3116,24 @@ var HostKeyStore = class {
     return `${host}:${port}`;
   }
 };
+
+// src/platform/current.ts
+var SLOT = Symbol.for("at-terminal.platform");
+function slot() {
+  let store = globalThis, existing = store[SLOT];
+  return existing === void 0 && (existing = {}, store[SLOT] = existing), existing;
+}
+function platform() {
+  let { current } = slot();
+  if (current === void 0)
+    throw new Error(
+      "AT Terminal: platform not installed; extension activation must call setPlatform()"
+    );
+  return current;
+}
+function pendingPlatformAssembly() {
+  return slot().pending;
+}
 
 // src/i18n/t.ts
 function t(message, args) {
@@ -4306,31 +3908,25 @@ function resolveServerByName(servers, name2) {
     `at-terminal: no SSH server matches "${name2}". Known servers: ${known.join(", ")}${servers.length > known.length ? `, +${servers.length - known.length} more` : ""}.`
   );
 }
-async function assemble(scoped) {
-  let resolved;
+async function borrowedPlatform() {
   try {
-    resolved = platform();
-  } catch {
-    resolved = (await createDshPlatform({
-      // No settings row: this entry has no form of its own, so the platform takes its
-      // documented defaults instead of inventing values the main bundle does not use.
-      logger: scoped.logger,
-      credentials: scoped.credentials,
-      storageDomain: scoped.storageDomain,
-      // No settings row of its own; an empty object is the documented "all defaults" case.
-      settings: {},
-      facts: {
-        pluginName: "@at-series/dsh-at-terminal-ssh",
-        pluginVersion: "0.1.0",
-        bundlePath: "",
-        storageDir: "",
-        appName: "DeepSeek Harness",
-        appRoot: "",
-        uriScheme: "dsh"
+    return platform();
+  } catch (absent) {
+    let pending = pendingPlatformAssembly();
+    if (pending !== void 0) {
+      await pending;
+      try {
+        return platform();
+      } catch {
       }
-    })).platform;
+    }
+    throw new Error(
+      `at-terminal: terminal_open needs the AT Terminal bundle enabled in this profile \u2014 the server list, stored credentials and SSH layer all live there. Enable "AT Terminal" and restart the Harness. (${absent.message})`
+    );
   }
-  let serverApi = createDshServerApi({ platform: resolved, privateKeyDirectory: "" });
+}
+async function assemble() {
+  let resolved = await borrowedPlatform(), serverApi = createDshServerApi({ platform: resolved, privateKeyDirectory: "" });
   return {
     api: createDshTerminalApi({ platform: resolved }),
     servers: async () => (await serverApi.list()).servers ?? []
@@ -4359,7 +3955,7 @@ function apply(ctx) {
   ctx.inject(["terminals", "storageDomain", "credentials"], (scoped) => {
     let terminals = scoped.terminals;
     if (terminals === void 0) return;
-    let prepared, prepare = () => (prepared ??= assemble(scoped), prepared);
+    let prepared, prepare = () => (prepared ??= assemble(), prepared);
     terminals.registerBackend(
       createSshTerminalBackend({
         type: "ssh",

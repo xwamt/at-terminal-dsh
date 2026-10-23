@@ -19,20 +19,25 @@
  * servers can share a label, and silently picking one is exactly the bug S5-04 removed from the
  * tool layer.
  *
- * ## The platform, and why this reuses before it builds
+ * ## The platform, and why this borrows instead of building
  *
  * `src/platform/current.ts` holds one process-wide `Platform`, and `createDshPlatform()`
- * installs it. Building a second one unconditionally would **replace** the main bundle's, and
- * every domain call (`SshSession`, credentials, notifications) reads whichever is current — so
- * a second assembly is a hazard, not a detail. Normal case: the main bundle applied first, its
- * platform is installed, and this entry borrows it. The fallback exists only for a profile that
- * enables this group first, and it is a real assembly rather than a stub.
+ * installs it. The first version of this entry treated "no platform yet" as "assemble one",
+ * which looked defensive and was wrong on the real Harness: `ctx.storageDomain.open()` is
+ * **exclusive**, so the second assembly died with `domain 'at_terminal_state' is already open`
+ * and every `terminal_open` returned that error. There is no correct second assembly — the
+ * domain belongs to the process, not to a bundle.
+ *
+ * So this entry only ever **borrows**: it reads the installed platform, or waits for the host
+ * bundle's in-flight assembly (`pendingPlatformAssembly`), and otherwise fails with a sentence
+ * that names the fix (enable AT Terminal). That is not a degraded mode — this bundle declares
+ * `@at-series/dsh-at-terminal` as a peer and has no server list, credentials or SSH layer of its
+ * own.
  */
 
-import { createDshPlatform } from './index';
 import { createDshServerApi, createDshTerminalApi } from './services';
 import type { Platform } from '../../core/ports';
-import { platform } from '../../platform/current';
+import { pendingPlatformAssembly, platform } from '../../platform/current';
 import { createSshTerminalBackend, type SshConnection } from './terminalBackend/sshBackend';
 
 /** Plugin name, as it appears in the loader tree. */
@@ -92,42 +97,43 @@ export function resolveServerByName(servers: ServerRow[], name: string): ServerR
   );
 }
 
+/**
+ * The platform this entry borrows.
+ *
+ * Waiting for a pending assembly matters more than it looks: `terminal_open` is usually the
+ * first thing a model calls after a restart, and the host bundle's assembly is asynchronous, so
+ * "no platform" is a normal state for a few hundred milliseconds rather than a missing plugin.
+ */
+async function borrowedPlatform(): Promise<Platform> {
+  try {
+    return platform();
+  } catch (absent) {
+    const pending = pendingPlatformAssembly();
+    if (pending !== undefined) {
+      await pending;
+      try {
+        return platform();
+      } catch {
+        // Assembled and failed; fall through to the actionable error below.
+      }
+    }
+    throw new Error(
+      'at-terminal: terminal_open needs the AT Terminal bundle enabled in this profile — the ' +
+        'server list, stored credentials and SSH layer all live there. Enable "AT Terminal" and ' +
+        `restart the Harness. (${(absent as Error).message})`
+    );
+  }
+}
+
 /** Everything a spawn needs, assembled once on first use. */
 interface Prepared {
   api: TerminalApi;
   servers: () => Promise<ServerRow[]>;
 }
 
-/** Reuse the installed platform when there is one; otherwise assemble and keep it. */
-async function assemble(scoped: {
-  logger?: unknown;
-  storageDomain?: unknown;
-  credentials?: unknown;
-}): Promise<Prepared> {
-  let resolved: Platform;
-  try {
-    resolved = platform();
-  } catch {
-    const handle = await createDshPlatform({
-      // No settings row: this entry has no form of its own, so the platform takes its
-      // documented defaults instead of inventing values the main bundle does not use.
-      logger: scoped.logger as never,
-      credentials: scoped.credentials as never,
-      storageDomain: scoped.storageDomain as never,
-      // No settings row of its own; an empty object is the documented "all defaults" case.
-      settings: {},
-      facts: {
-        pluginName: '@at-series/dsh-at-terminal-ssh',
-        pluginVersion: '0.1.0',
-        bundlePath: '',
-        storageDir: '',
-        appName: 'DeepSeek Harness',
-        appRoot: '',
-        uriScheme: 'dsh'
-      }
-    });
-    resolved = handle.platform;
-  }
+/** Bind the borrow to the two faces a spawn needs. */
+async function assemble(): Promise<Prepared> {
+  const resolved = await borrowedPlatform();
   const serverApi = createDshServerApi({ platform: resolved, privateKeyDirectory: '' });
   return {
     api: createDshTerminalApi({ platform: resolved }) as unknown as TerminalApi,
@@ -185,7 +191,7 @@ export function apply(ctx: {
     if (terminals === undefined) return;
     let prepared: Promise<Prepared> | undefined;
     const prepare = (): Promise<Prepared> => {
-      prepared ??= assemble(scoped);
+      prepared ??= assemble();
       return prepared;
     };
     terminals.registerBackend(

@@ -129,6 +129,16 @@ terminal_close({ sessionId })
   `delivered: true` 属于伪造证据。
 - 会话用的是与面板同一套服务器记录、凭据与主机密钥库，所以在 AT Terminal 面板里改过的服务器，
   就是 Agent 连上的那台。
+- **它借用主 bundle 的 platform，绝不自己再装一个。** 两个 bundle 装在同一个 Node 进程里但是
+  分别构建的，各自带一份 platform 注册表；第二份装配必然失败，因为 `storageDomain.open()` 是独占的，
+  会直接回 `domain 'at_terminal_state' is already open`。所以这个入口只读取已安装的 platform
+  （宿主还在装配时先等它），没有就报「请启用 AT Terminal 并重启」——这也是本包把 AT Terminal
+  声明为 peer 的原因。
+
+真机验证（DSH 0.2.1-rc.2，macOS）：`terminal_open({type:'ssh', name:'99.90'})` 返回
+`started terminal session pty-1 (99.90) [type: ssh]`；`terminal_send` 发 `cd /tmp` 结算为
+`stdin_read` / `running`；下一次 `terminal_send` 发 `pwd` 打印 `/tmp`，`terminal_read` 里两条
+命令在同一条 shell 历史里——这就是这个 bundle 存在的意义（会话保持）。
 
 ## 安全行为
 

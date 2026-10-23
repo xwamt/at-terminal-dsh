@@ -10688,19 +10688,35 @@ import { readdir } from "node:fs/promises";
 import { join as join2 } from "node:path";
 
 // src/platform/current.ts
-var current;
+var SLOT = Symbol.for("at-terminal.platform");
+function slot() {
+  let store = globalThis, existing = store[SLOT];
+  return existing === void 0 && (existing = {}, store[SLOT] = existing), existing;
+}
 function setPlatform(value) {
-  current = value;
+  slot().current = value;
 }
 function clearPlatform(expected) {
-  expected !== void 0 && current !== expected || (current = void 0);
+  expected !== void 0 && slot().current !== expected || (slot().current = void 0);
 }
 function platform() {
+  let { current } = slot();
   if (current === void 0)
     throw new Error(
       "AT Terminal: platform not installed; extension activation must call setPlatform()"
     );
   return current;
+}
+function trackPlatformAssembly(assembly) {
+  let settled = assembly.then(
+    () => {
+    },
+    () => {
+    }
+  ), state = slot();
+  return state.pending = settled, settled.then(() => {
+    state.pending === settled && delete state.pending;
+  }), assembly;
 }
 
 // src/utils/redaction.ts
@@ -14311,6 +14327,9 @@ function createDshUriService() {
 
 // src/platform/dsh/index.ts
 async function createDshPlatform(deps) {
+  return trackPlatformAssembly(buildDshPlatform(deps));
+}
+async function buildDshPlatform(deps) {
   let logger = deps.logger ?? NOOP_DSH_LOGGER, state = await openDshStateStore({ storageDomain: deps.storageDomain, logger }), notifier = createDshNotifier({ logger }), platform2 = {
     notifier,
     prompter: createDshPrompter({ logger }),
@@ -15143,9 +15162,9 @@ var SFTP_WRITE_STEP_TIMEOUT_MS = 55e3, REMOTE_TEMP_CLEANUP_TIMEOUT_MS = 2e3, DIR
     await mkdirLocal(localDir, { recursive: !0 });
     let files = [], queue = [{ remote: remoteDir, local: localDir }];
     for (; queue.length > 0; ) {
-      let current2 = queue.shift(), entries = await this.listDirectory(current2.remote);
+      let current = queue.shift(), entries = await this.listDirectory(current.remote);
       for (let entry of entries) {
-        let localPath = joinLocalPath(current2.local, entry.name);
+        let localPath = joinLocalPath(current.local, entry.name);
         entry.type === "directory" ? (await mkdirLocal(localPath, { recursive: !0 }), queue.push({ remote: entry.path, local: localPath })) : (entry.type === "file" || entry.targetType === "file") && files.push({ remotePath: entry.path, localPath, size: entry.size ?? 0 });
       }
     }
@@ -15424,9 +15443,9 @@ async function fstatSize(sftp, handle2) {
 async function walkLocalDirectory(localDir) {
   let directories = [], files = [], queue = [{ local: localDir, relative: "" }];
   for (; queue.length > 0; ) {
-    let current2 = queue.shift(), entries = await readdirLocal(current2.local, { withFileTypes: !0 });
+    let current = queue.shift(), entries = await readdirLocal(current.local, { withFileTypes: !0 });
     for (let entry of entries) {
-      let localPath = joinLocalPath(current2.local, entry.name), relativePath = current2.relative ? `${current2.relative}/${entry.name}` : entry.name;
+      let localPath = joinLocalPath(current.local, entry.name), relativePath = current.relative ? `${current.relative}/${entry.name}` : entry.name;
       if (entry.isDirectory())
         directories.push(relativePath), queue.push({ local: localPath, relative: relativePath });
       else if (entry.isFile()) {
@@ -15720,13 +15739,13 @@ function createDshSftpApi({ platform: platform2, createSession }) {
         );
       let expected = Number.isFinite(Number(request.expectedSize)) && Number.isFinite(Number(request.expectedModifiedAt)) ? { size: Number(request.expectedSize), modifiedAt: Number(request.expectedModifiedAt) } : void 0;
       return await runTransfer(request?.terminalId, "write", path, async () => {
-        let current2 = await manager.stat(path);
-        if (current2.type === "directory")
+        let current = await manager.stat(path);
+        if (current.type === "directory")
           throw coded(SFTP_ERROR_NOT_A_FILE, `${path} is a directory, not a file.`);
-        if (request.overwrite !== !0 && expected !== void 0 && (current2.size !== expected.size || current2.modifiedAt !== expected.modifiedAt))
+        if (request.overwrite !== !0 && expected !== void 0 && (current.size !== expected.size || current.modifiedAt !== expected.modifiedAt))
           throw coded(
             SFTP_ERROR_CONFLICT,
-            `${path} changed on the server since it was opened (${expected.size} bytes / ${expected.modifiedAt} then, ${current2.size} bytes / ${current2.modifiedAt} now). Overwrite it, or reload and redo the edit.`
+            `${path} changed on the server since it was opened (${expected.size} bytes / ${expected.modifiedAt} then, ${current.size} bytes / ${current.modifiedAt} now). Overwrite it, or reload and redo the edit.`
           );
         await manager.writeFile(path, content);
         let after = await manager.stat(path);
@@ -18710,11 +18729,11 @@ var Emitter = class {
     let entry = { listener, thisArgs };
     listeners.push(entry);
     let subscription = toDisposable(() => {
-      let current2 = this.listeners;
-      if (current2 === void 0)
+      let current = this.listeners;
+      if (current === void 0)
         return;
-      let index = current2.indexOf(entry);
-      index >= 0 && current2.splice(index, 1);
+      let index = current.indexOf(entry);
+      index >= 0 && current.splice(index, 1);
     });
     return disposables && disposables.push(subscription), subscription;
   };
