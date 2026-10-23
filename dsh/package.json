@@ -9,7 +9,8 @@
     ".": "./index.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
-    "./client": "./client.js"
+    "./client": "./client.js",
+    "./terminal-backend": "./terminal.bundle.js"
   },
   "files": [
     "index.js",
@@ -20,6 +21,7 @@
     "client.js",
     "client.xterm.js",
     "host.bundle.js",
+    "terminal.bundle.js",
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",

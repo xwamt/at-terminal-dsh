@@ -2,7 +2,8 @@
 /**
  * Build the two committed dsh artifacts:
  *
- *   src/platform/dsh/entry.ts        →  dsh/host.bundle.js   (ESM, Node)
+ *   src/platform/dsh/entry.ts        →  dsh/host.bundle.js     (ESM, Node)
+ *   src/platform/dsh/terminalEntry.ts →  dsh/terminal.bundle.js (ESM, Node; opt-in bundle only)
  *   src/platform/dsh/client/main.ts  →  dsh/client.js        (ModuleLoader factory, browser)
  *
  * ## Why the dsh bundle needs a build at all
@@ -82,6 +83,19 @@ const checkOnly = process.argv.includes('--check');
 
 const HOST_ENTRY = join(REPO_DIR, 'src', 'platform', 'dsh', 'entry.ts');
 const HOST_OUTFILE = join(BUNDLE_DIR, 'host.bundle.js');
+
+/**
+ * The opt-in terminal bundle's plugin (S6).
+ *
+ * Separate from `host.bundle.js` because it is loaded as a **different cordis row**, inside a
+ * group that isolates `terminals`. It is self-contained rather than re-exporting from the host
+ * bundle: the two are loaded into different isolate scopes, and a shared module instance would
+ * put this backend next to the root registry instead of the isolated one. Tree-shaking keeps
+ * the duplicate down to what this entry actually reaches (165 kB, not the host's 1.1 MB), and
+ * only opt-in profiles pay for it at all.
+ */
+const TERMINAL_ENTRY = join(REPO_DIR, 'src', 'platform', 'dsh', 'terminalEntry.ts');
+const TERMINAL_OUTFILE = join(BUNDLE_DIR, 'terminal.bundle.js');
 
 const hostBanner = [
   '/*',
@@ -277,6 +291,10 @@ function compare(outfile, built) {
 const identity = (text) => text;
 const targets = [
   { outfile: HOST_OUTFILE, build: build(hostOptions, identity) },
+  {
+    outfile: TERMINAL_OUTFILE,
+    build: build({ ...hostOptions, entryPoints: [TERMINAL_ENTRY] }, identity)
+  },
   { outfile: CLIENT_OUTFILE, build: build(clientOptions, wrapClient) },
   {
     outfile: CLIENT_CHUNK_OUTFILE,

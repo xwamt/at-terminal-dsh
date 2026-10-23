@@ -1,0 +1,19 @@
+{
+  "name": "@at-series/dsh-at-terminal-ssh",
+  "description": "Keep an AT Terminal SSH shell alive across tool calls (optional, opt-in bundle).",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@at-series/dsh-at-terminal": "*"
+  }
+}

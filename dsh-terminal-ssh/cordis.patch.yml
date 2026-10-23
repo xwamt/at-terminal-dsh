@@ -1,0 +1,45 @@
+# Opt-in: persistent SSH terminals for the model (`terminal_open({ type: 'ssh', name: <server> })`).
+#
+# This bundle contributes **no tools of its own**. It composes three official rows inside an
+# isolated group, which is the structure `@deepseek-ai/dsh-experimental-terminal-bundle` uses
+# (read out of `app.asar`, 0.2.1-rc.2):
+#
+#   1. `dsh-terminal`        — the registry (`ctx.terminals`), owner-scoped, no PTY knowledge.
+#   2. our `ssh` backend     — the only new code: a backend that runs the shell over SSH.
+#   3. `dsh-tool-terminal`   — the six `terminal_*` tools the model calls.
+#
+# The order matters and is the official one: the registry provides the service the backend
+# registers into, and the tools consume a registry that already has a backend. A group is what
+# gives that order a shared scope.
+#
+# `isolate.terminals: true` is what makes this additive. Without it, this group's registry
+# would be the composition-root one; with it, the group gets a private `terminals` service, so:
+#
+#   - a profile that does not install this bundle has no `terminals` at all and behaves exactly
+#     as before (nothing here is imported by the main bundle);
+#   - a profile that does gets `terminal_*` tools that speak SSH, while anything else in the
+#     composition that happens to register a backend (the official local-shell bundle, another
+#     editor integration) keeps its own registry and is unaffected.
+#
+# Row ids are prefixed `at-terminal-` because a user may install the official
+# `dsh-experimental-terminal-bundle` at the same time: two rows with the same id collide in the
+# loader tree even though the isolate keeps their services apart.
+#
+# The backend is referenced by **subpath**, not by copying code: `@at-series/dsh-at-terminal`
+# exports `./terminal-backend` → `./terminal.bundle.js`. Both packages are `link:`-installed
+# siblings in the profile, so the loader resolves that specifier from `node_modules` like any
+# other, and the backend keeps living in the repository that owns the SSH layer.
+
+- insert:
+    - id: at-terminal-ssh-group
+      name: cordis:group
+      group: true
+      isolate:
+        terminals: true
+      config:
+        - id: at-terminal-ssh-registry
+          name: '@deepseek-ai/dsh-terminal'
+        - id: at-terminal-ssh-backend
+          name: '@at-series/dsh-at-terminal/terminal-backend'
+        - id: at-terminal-ssh-tools
+          name: '@deepseek-ai/dsh-tool-terminal'

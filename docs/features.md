@@ -109,6 +109,33 @@ chain, so a key is only forgettable from this page when a configured server's ow
 it. A jump-host key, or one left behind by a removed server, says so instead of showing a button
 that would silently do nothing.
 
+## Persistent SSH Terminal (opt-in)
+
+A second, **optional** bundle (`dsh-terminal-ssh/`) gives the model remote shells that survive
+across tool calls: `terminal_open`, `terminal_send`, `terminal_read`, `terminal_signal`,
+`terminal_close`. Nothing in the base bundle depends on it, and a profile that does not install
+it has none of these tools.
+
+```text
+terminal_open({ type: 'ssh', name: 'payment01' })   # name = server id or label
+terminal_send({ sessionId, text: 'cd /srv', submit: true })
+terminal_read({ sessionId, count: 50 })
+terminal_close({ sessionId })
+```
+
+- **The server is chosen by `name`**, because `terminal_open` has no `serverId` parameter. An id
+  or a label is accepted; a label shared by two servers is refused with both ids named, rather
+  than resolved to one of them.
+- **Readiness is prompt evidence.** A send settles as `stdin_read` only when the tail of the
+  output actually looks like a prompt; otherwise silence settles it as `inferred_idle`, and the
+  deadline as `timeout`. `inferred_idle` does not prove the command finished — the same warning
+  the host's own terminal tools print.
+- **Signals are refused.** `ssh2` has no pty-signal channel, so `terminal_signal` throws and
+  names the two things that work: send `Ctrl+C` (`\u0003`) through `terminal_send`, or close the
+  session. Reporting `delivered: true` with a made-up process group would be fabricated evidence.
+- The session opens with the same server record, credentials and host-key store the panel uses,
+  so a server edited in the AT Terminal tab is the server the agent connects to.
+
 ## Safety Behavior
 
 - SFTP agent writes are authorized one directory at a time. The prompt offers `Allow Once` (the default), `Allow This Folder For 15 Minutes`, and `Allow This Folder For The Session`; no answer ever covers a directory the user was not shown.

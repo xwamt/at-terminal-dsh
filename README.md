@@ -192,6 +192,11 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 - **不抢占终端语义**：macOS 上 `Ctrl+C` 仍是 SIGINT；`⌘V` 走浏览器原生 paste 事件，无需额外的剪贴板读权限。
 - **统一的主修饰键**：新建标签与页面切换通过 DSH 快捷键注册表的 `primary` 语义绑定，macOS 自动为 Command、其他平台为 Control。
 
+#### 10. 持久 SSH 终端（可选 bundle）
+- **跨调用存活的远端 shell**：另装 `dsh-terminal-ssh/` 后，模型可用 `terminal_open({type:'ssh', name:'<服务器 id 或名称>'})` 开一个会话，`terminal_send` / `terminal_read` / `terminal_close` 连续操作——适合需要保持 `cd`、REPL、长任务的场景。
+- **不装就没有**：第二个 bundle 用 `isolate.terminals` 起一个私有注册表再挂官方 `terminal_*` 工具家族，主 bundle 不依赖它，右栏终端也完全不受影响。
+- **诚实边界**：`name` 是唯一的服务器选择器（官方工具没有 `serverId` 位）；同名的两台服务器会报错列 id；就绪只认「看到提示符」，否则只能算 `inferred_idle`；`terminal_signal` 直接拒绝（`ssh2` 无 pty 信号通道，改用 `Ctrl+C` 或关闭会话）。
+
 ---
 
 ### 构建产物与 DSH 插件安装指引
@@ -210,7 +215,7 @@ This plugin is officially listed in [awesome-dsh-plugin / dsh-market](https://gi
 # 1. 编译构建宿主与客户端 Bundle
 npm run build
 
-# 2. 执行 DSH 官方规范契约校验 (10 项自动化合规规则全部检查)
+# 2. 执行 DSH 官方规范契约校验 (11 项自动化合规规则全部检查)
 npm run verify:dsh
 
 # 3. 执行仓库内核隔离校验 (4 项：src/core 自封闭 / 零 vscode / 零 @deepseek-ai 导入 / 组合根调 setPlatform)

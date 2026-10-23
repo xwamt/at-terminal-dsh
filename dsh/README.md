@@ -50,7 +50,7 @@ variants.
 node dsh/scripts/verify.mjs
 ```
 
-**Ten** independent checks; a non-zero exit fails the gate:
+**Eleven** independent checks; a non-zero exit fails the gate:
 
 1. **syntax** — every shipped JavaScript file parses.
 2. **manifest** — the documented bundle contract (name/version/`exports`/patch

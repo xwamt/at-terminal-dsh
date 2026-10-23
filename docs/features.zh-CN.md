@@ -106,6 +106,30 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 自己的地址与该密钥一致时，这里才能忘记它。跳板机的密钥、或已被删除服务器留下的密钥，页面会写明原因，
 而不是给一个按下去什么也不发生的按钮。
 
+## 持久 SSH 终端（可选）
+
+第二个**可选** bundle（`dsh-terminal-ssh/`）给模型提供跨工具调用存活的远端 shell：
+`terminal_open`、`terminal_send`、`terminal_read`、`terminal_signal`、`terminal_close`。
+主 bundle 不依赖它，没装这个 bundle 的 profile 里这些工具根本不存在。
+
+```text
+terminal_open({ type: 'ssh', name: 'payment01' })   # name = 服务器 id 或名称
+terminal_send({ sessionId, text: 'cd /srv', submit: true })
+terminal_read({ sessionId, count: 50 })
+terminal_close({ sessionId })
+```
+
+- **靠 `name` 选服务器**：官方的 `terminal_open` 没有 `serverId` 参数。id 与名称都接受；
+  两台服务器同名时**报错并列出两个 id**，不会替你选一个。
+- **就绪判断是「看到提示符」这种文本证据**：只有当输出尾部确实像提示符时才结算成 `stdin_read`；
+  否则静默结算为 `inferred_idle`，超过期限结算为 `timeout`。`inferred_idle` **不等于**命令已结束
+  —— 这与宿主自带终端工具的告警一致。
+- **信号一律拒绝**：`ssh2` 没有 pty 信号通道，所以 `terminal_signal` 直接报错，并给出两条可行路径：
+  用 `terminal_send` 发 `Ctrl+C`（`\u0003`），或 `terminal_close`。报一个编造的进程组
+  `delivered: true` 属于伪造证据。
+- 会话用的是与面板同一套服务器记录、凭据与主机密钥库，所以在 AT Terminal 面板里改过的服务器，
+  就是 Agent 连上的那台。
+
 ## 安全行为
 
 - `run_remote_command` 确认跟随服务器信任下拉（`Trust agent remote commands`）。**不信任**每条都弹窗。**有限信任**会加载 npm 精确依赖 `@at-series/command-policy@0.1.0`（禁止 `^`），对管道/链式命令的每一段检查变更状态黑名单：命中黑名单的阶段（写文件、改权限、装包、服务控制、`docker exec`、`iptables -F`）仍会弹窗；无法安全解析的命令（命令替换、文件重定向、未闭合引号）总是弹窗。**不在黑名单中的命令（包括未知命令）在有限信任下不弹窗直接运行。**`# Purpose:` 注释不授予权限；带引号的多行脚本以及静态 `sudo` / `python3 -c` / `sqlite3` 载荷会进入分析，而不是按包装命令名一刀切拦截。**完全信任**远程命令与 SFTP 写入都不弹窗。

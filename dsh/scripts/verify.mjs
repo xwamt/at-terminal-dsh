@@ -1761,6 +1761,98 @@ await check('policy', 'Every tool is classified, and every classification is a t
   return `${classified.length} classified tool(s), ${RISK_CATEGORIES.length} risk categories`
 })
 
+/* ------------------------- 11. opt-in terminal bundle (S6) ------------------------- */
+
+/**
+ * The opt-in bundle composes official rows around our backend, and every part of that is a
+ * claim that can silently stop being true:
+ *
+ * - the group must keep `isolate: { terminals: true }`, or our backend lands in the
+ *   composition-root registry and the feature stops being additive;
+ * - the rows must stay in the official order (registry → backend → tools), or the tools come
+ *   up against a registry with no backend and `terminal_open` fails at call time, not at load;
+ * - the ids must stay prefixed, because a user may also install the official
+ *   `dsh-experimental-terminal-bundle` and duplicate ids collide even inside an isolate;
+ * - `@at-series/dsh-at-terminal` must keep exporting `./terminal-backend`, or the row's `name`
+ *   is a specifier that resolves to nothing.
+ *
+ * None of that can be checked by importing the bundle (it needs a live cordis group and a
+ * Harness), so it is checked as data — which is what the patch file is.
+ */
+await check('opt-in terminal bundle', 'The SSH bundle isolates its registry, and composes it in order', async () => {
+  const repoRoot = path.resolve(HERE, '..', '..')
+  const bundleDir = path.join(repoRoot, 'dsh-terminal-ssh')
+  const manifestPath = path.join(bundleDir, 'package.json')
+  assert.ok(fs.existsSync(manifestPath), `the opt-in bundle is missing: ${manifestPath}`)
+  const optIn = readJson(manifestPath)
+  const patchRel = optIn?.dsh?.bundle?.patch
+  assert.equal(typeof patchRel, 'string', 'the opt-in bundle must declare dsh.bundle.patch')
+  const optInPatch = path.resolve(bundleDir, patchRel)
+  assert.ok(fs.existsSync(optInPatch), `opt-in patch not found: ${patchRel}`)
+
+  const yaml = await import('js-yaml')
+  const parsed = yaml.load(fs.readFileSync(optInPatch, 'utf8'))
+  assert.ok(Array.isArray(parsed), 'the opt-in patch must be a top-level YAML array')
+  const rows = parsed.flatMap((entry) => entry?.insert ?? [])
+  assert.equal(rows.length, 1, `the opt-in patch must insert exactly one group, found ${rows.length}`)
+
+  const group = rows[0]
+  assert.equal(group?.name, 'cordis:group', 'the single row must be a cordis group')
+  assert.equal(group?.group, true, 'the group row must declare group: true')
+  assert.equal(
+    group?.isolate?.terminals,
+    true,
+    'isolate.terminals must be true: without it this registry is the composition-root one and the backend is no longer opt-in'
+  )
+  assert.ok(
+    typeof group.id === 'string' && group.id.startsWith('at-terminal-'),
+    `the group id must be prefixed at-terminal- (found ${group.id})`
+  )
+
+  const inner = group.config
+  assert.ok(Array.isArray(inner) && inner.length >= 3, 'the group must compose at least three rows')
+  const names = inner.map((row) => row.name)
+  // Order is the official one and it is load-bearing: the registry provides what the backend
+  // registers into, and the tools consume a registry that already has a backend.
+  assert.equal(names[0], '@deepseek-ai/dsh-terminal', `first row must be the registry, found ${names[0]}`)
+  const backendIndex = names.findIndex((name) => typeof name === 'string' && name.endsWith('/terminal-backend'))
+  assert.ok(backendIndex > 0, `no row names our backend (found ${names.join(', ')})`)
+  assert.equal(
+    names[names.length - 1],
+    '@deepseek-ai/dsh-tool-terminal',
+    `last row must be the tool family, found ${names[names.length - 1]}`
+  )
+  for (const row of inner) {
+    assert.ok(
+      typeof row.id === 'string' && row.id.startsWith('at-terminal-'),
+      `inner row ids must be prefixed at-terminal- (found ${row.id})`
+    )
+  }
+
+  // The subpath the row names must exist and must ship.
+  const backendName = names[backendIndex]
+  const [packageName, subpath] = [backendName.slice(0, backendName.indexOf('/terminal-backend')), 'terminal-backend']
+  assert.equal(packageName, manifest.name, `the backend must live in this package (found ${packageName})`)
+  const exported = manifest.exports?.[`./${subpath}`]
+  assert.equal(typeof exported, 'string', `dsh/package.json must export ./${subpath}`)
+  const artifact = path.resolve(BUNDLE_DIR, exported)
+  assert.ok(fs.existsSync(artifact), `the backend entry is missing: ${exported}`)
+  assert.ok(
+    (manifest.files ?? []).includes(path.basename(exported)),
+    `${path.basename(exported)} must be listed in files, or an installed copy cannot load it`
+  )
+  // The artifact has to be the plugin, not just any file: `inject` is what keeps it out of a
+  // composition without a registry, and `apply` is the only entry the loader calls.
+  const source = fs.readFileSync(artifact, 'utf8')
+  assert.ok(/\bapply\b/.test(source), 'the backend artifact must export apply')
+  assert.ok(
+    /inject\s*=\s*\[[^\]]*['"]terminals['"]/.test(source),
+    'the backend artifact must declare inject including terminals'
+  )
+
+  return `isolated group of ${inner.length} rows: ${names.join(' -> ')}`
+})
+
 /* ----------------------------------- report ----------------------------------- */
 
 const failed = results.filter((result) => result.status === 'fail')
