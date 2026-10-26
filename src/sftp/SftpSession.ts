@@ -768,6 +768,16 @@ function createAggregatedProgress(totalBytes: number, target?: TransferProgress)
           }
         },
         complete() {
+          /*
+           * Fold this item into the completed total **before** re-reporting.
+           *
+           * `step` fires per chunk and its final call lands on the last byte, but it is not
+           * guaranteed to be the last thing that happens: on a slow or lossy link `fastPut`'s
+           * callback can run before the final `step`. Deleting the in-flight entry first and
+           * re-reporting then produced `completedBytes + 0` — the bar jumped *backwards* by the
+           * finished file's size and only recovered on the next file's first chunk. Accumulating
+           * first makes the reported figure monotonic either way.
+           */
           inFlightBytes.delete(key);
           completedBytes += sizeBytes;
           report();

@@ -191,7 +191,7 @@ export function createTerminalEngine(options: CreateTerminalEngineOptions): Term
   if (term.textarea !== undefined) {
     installTerminalClipboardPasteHandler(term, term.textarea);
   }
-  installTerminalFocusRecovery(term, {
+  const disposeFocusRecovery = installTerminalFocusRecovery(term, {
     container,
     document,
     setTimeout: window.setTimeout.bind(window)
@@ -277,6 +277,9 @@ export function createTerminalEngine(options: CreateTerminalEngineOptions): Term
       search.prev.removeEventListener('click', onPrev);
       search.next.removeEventListener('click', onNext);
       search.close.removeEventListener('click', onClose);
+      // Document-level copy/paste listeners: dropping these leaks two per engine rebuild and makes
+      // every later copy focus a disposed terminal.
+      disposeFocusRecovery();
       term.dispose();
     }
   };

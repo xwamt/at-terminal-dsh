@@ -190,6 +190,23 @@ export class RemoteCommandExecutor {
         if (settled) {
           return;
         }
+        /*
+         * A timeout is a **failure**, not a result.
+         *
+         * This used to call `finish(null)`, i.e. resolve with `exitCode: null` — the same shape a
+         * signal-killed process has. Callers branch on `exitCode`, so a command that overran its
+         * deadline was audited as `success` by `AgentToolService` (`recordActionEnd(actionId,
+         * 'success', …)`) and `HardwareMetricsCollector` read the empty stdout as "the probe
+         * failed, keep the cached numbers", which makes a wedged host look idle. Rejecting puts it
+         * on the same path as every other failure, where the audit and the tool error already
+         * describe what happened.
+         */
+        if (timedOut) {
+          settled = true;
+          detach();
+          reject(new RemoteCommandTimeoutError(timeoutMs ?? 0, stdout.text(), stderr.text()));
+          return;
+        }
         settled = true;
         detach();
         resolve({
@@ -201,11 +218,9 @@ export class RemoteCommandExecutor {
           exitCode,
           signal,
           stdout: stdout.text(),
-          // A timeout appends its notice instead of replacing stderr: whatever the
-          // command managed to print before it overran is usually the diagnosis.
-          // `timedOut` is only ever set by the timer, which only exists when
-          // `timeoutMs` does, so the fallback is unreachable rather than a real default.
-          stderr: timedOut ? appendTimeoutNotice(stderr.text(), timeoutMs ?? 0) : stderr.text(),
+          // `timedOut` is handled above (it rejects), so this resolve is always a completed
+          // command and `stderr` is what the command actually wrote.
+          stderr: stderr.text(),
           durationMs: Date.now() - started,
           timedOut,
           truncated: stdout.truncated || stderr.truncated
@@ -356,12 +371,33 @@ export class RemoteCommandExecutor {
   }
 }
 
-function appendTimeoutNotice(capturedStderr: string, timeoutMs: number): string {
-  const notice = `Command timed out after ${timeoutMs}ms.`;
-  if (!capturedStderr) {
-    return notice;
+/**
+ * A command that overran its deadline.
+ *
+ * A distinct class rather than a bare `Error`, because the two audiences need different things and
+ * both need to keep them:
+ *
+ * - The **model** reads `error.message`, so it says what happened in one line.
+ * - The **caller** (`AgentToolService`) audits the failure; the captured `stdout`/`stderr` are on
+ *   the error so the diagnosis is not thrown away with the rejection — whatever the command
+ *   printed before it overran is usually the reason it overran.
+ *
+ * Timeouts used to *resolve* with `exitCode: null` and a notice appended to stderr. That made an
+ * overrun indistinguishable from a signal-killed process for every `exitCode`-branching caller,
+ * and the tool wrapper recorded it as a success.
+ */
+export class RemoteCommandTimeoutError extends Error {
+  readonly timeoutMs: number;
+  readonly stdout: string;
+  readonly stderr: string;
+
+  constructor(timeoutMs: number, stdout: string, stderr: string) {
+    super(`Command timed out after ${timeoutMs}ms.`);
+    this.name = 'RemoteCommandTimeoutError';
+    this.timeoutMs = timeoutMs;
+    this.stdout = stdout;
+    this.stderr = stderr;
   }
-  return capturedStderr.endsWith('\n') ? `${capturedStderr}${notice}` : `${capturedStderr}\n${notice}`;
 }
 
 function clampPositiveInteger(value: number | undefined, fallback: number, max: number): number {

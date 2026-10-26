@@ -118,16 +118,30 @@ export function createTerminalKeyboardHandler(
   };
 }
 
+/**
+ * Installs the copy/paste focus recovery and returns the disposer that removes it.
+ *
+ * The disposer is not optional bookkeeping: these listeners live on the **document**, so a caller
+ * that drops the returned function leaks two listeners per installed terminal, and every copy or
+ * paste anywhere in the page then calls `focus()` on a terminal that has already been disposed —
+ * which either no-ops on a detached textarea or yanks the caret out of whatever field the user was
+ * actually in. The dsh client rebuilds its engine on every settings/encoding change, so this used
+ * to grow by two listeners per rebuild for the life of the page.
+ */
 export function installTerminalFocusRecovery(
   terminal: Pick<ClipboardTerminal, 'focus'>,
   options: FocusRecoveryOptions
-): void {
+): () => void {
   const scheduleFocus = () => {
     options.setTimeout(() => terminal.focus(), 0);
   };
 
   options.document.addEventListener('copy', scheduleFocus);
   options.document.addEventListener('paste', scheduleFocus);
+  return () => {
+    options.document.removeEventListener('copy', scheduleFocus);
+    options.document.removeEventListener('paste', scheduleFocus);
+  };
 }
 
 export function installTerminalClipboardPasteHandler(terminal: PasteTerminal, target: EventTarget): void {

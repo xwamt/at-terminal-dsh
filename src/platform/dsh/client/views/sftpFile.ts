@@ -261,6 +261,22 @@ function renderToolbar(t: Translate, props: SftpFileViewProps): El {
             type: 'button',
             className: 'att-btn primary',
             disabled: !canSave,
+            /*
+             * A disabled primary button owes the user a reason.
+             *
+             * The only explanation used to be `fileEditBlocked`, attached to the 编辑 button — so
+             * in the state where 保存 is greyed out because the pane is **pending** (a reload, or
+             * the read that failed), the control said nothing at all. It rendered as dead and,
+             * because the handler behind it returns early on a non-ready pane, clicking it did
+             * nothing visible either. Name the actual cause here, per state.
+             */
+            title: canSave
+              ? ''
+              : pane.kind !== 'ready'
+                ? t('sftp.fileNotReady')
+                : pane.save.kind === 'pending'
+                  ? t('sftp.fileSaving')
+                  : t('sftp.fileEditBlocked'),
             onClick: () => props.onSave(false),
             'data-at-terminal-action': 'sftp-file-save'
           },

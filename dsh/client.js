@@ -902,6 +902,7 @@ var NS = "atTerminal", zh = {
   "sftp.fileOverwrite": "\u8986\u76D6\u5E76\u4FDD\u5B58",
   "sftp.fileReload": "\u91CD\u65B0\u8BFB\u53D6",
   "sftp.fileEditBlocked": "\u53EA\u8BFB\uFF1A\u6587\u4EF6\u8D85\u51FA\u9762\u677F\u4E0A\u9650\u3002\u7F16\u8F91\u4F1A\u628A\u622A\u65AD\u540E\u7684\u5185\u5BB9\u5199\u56DE\uFF0C\u8986\u76D6\u6389\u5269\u4F59\u90E8\u5206\uFF0C\u56E0\u6B64\u8FD9\u91CC\u4E0D\u63D0\u4F9B\u7F16\u8F91\u3002",
+  "sftp.fileNotReady": "\u5185\u5BB9\u5C1A\u672A\u8BFB\u53D6\u5B8C\u6210\uFF0C\u6682\u65F6\u65E0\u6CD5\u4FDD\u5B58\uFF1B\u8BFB\u53D6\u5B8C\u6210\u540E\u91CD\u8BD5\u3002",
   "sftp.fileEditorLabel": "\u7F16\u8F91 {path}",
   "sftp.fileViewerLabel": "{path} \u7684\u5185\u5BB9",
   "error.sftpFileTooLarge": "\u6587\u4EF6\u8D85\u51FA\u9762\u677F\u4E00\u6B21\u80FD\u642C\u8FD0\u7684\u4E0A\u9650\u3002\u6587\u4EF6\u4F20\u8F93\u8BF7\u6539\u7528\u300C\u7EC8\u7AEF\u300D\u9875\uFF08scp / rsync\uFF09\uFF0C\u6216\u5206\u5757\u8BFB\u53D6\u3002",
@@ -930,6 +931,9 @@ var NS = "atTerminal", zh = {
   "monitor.hud.minimize": "\u6700\u5C0F\u5316\u4E3A\u60AC\u6D6E\u80F6\u56CA",
   "monitor.hud.openSidebar": "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00\u5B8C\u6574\u9762\u677F",
   "monitor.hud.dragTip": "\u6309\u4F4F\u6807\u9898\u680F\u62D6\u52A8 \xB7 \u53CC\u51FB\u6298\u53E0",
+  // The capsule's own hint. It names the six-dot handle, because that — not the pill — is the
+  // drag surface; the pill used to carry the header's hint and advertised dragging from anywhere.
+  "monitor.hud.gripTip": "\u6309\u4F4F\u62D6\u52A8",
   // The pill is a group of controls, not one button, so it needs its own name — the CPU/MEM
   // chips below each carry an action-and-value label of their own.
   "monitor.hud.pillLabel": "\u76D1\u63A7\u80F6\u56CA",
@@ -1312,6 +1316,7 @@ var NS = "atTerminal", zh = {
   "sftp.fileOverwrite": "Overwrite and save",
   "sftp.fileReload": "Reload",
   "sftp.fileEditBlocked": "Read-only: the file is larger than the panel limit. Editing would write the truncated text back and drop the rest, so editing is not offered here.",
+  "sftp.fileNotReady": "The file has not been read yet, so it cannot be saved; retry once the read completes.",
   "sftp.fileEditorLabel": "Edit {path}",
   "sftp.fileViewerLabel": "Contents of {path}",
   "error.sftpFileTooLarge": "The file is larger than this panel can move in one call. Use the Terminal page (scp / rsync) to transfer it, or read it in chunks.",
@@ -1340,6 +1345,7 @@ var NS = "atTerminal", zh = {
   "monitor.hud.minimize": "Minimize to Pill",
   "monitor.hud.openSidebar": "Open in Sidebar Pane",
   "monitor.hud.dragTip": "Drag header to move \xB7 Double-click to collapse",
+  "monitor.hud.gripTip": "Drag to move",
   "monitor.hud.pillLabel": "Monitor pill",
   "monitor.hud.cpuChip": "CPU at {percent}, open hardware metrics",
   "monitor.hud.memChip": "Memory at {percent}, open hardware metrics",
@@ -1583,7 +1589,11 @@ function unmarkSessionActive(key) {
   key && activeSessionKey === key && (activeSessionKey = null, notifyActiveTerminal());
 }
 function notify(session) {
-  for (let listener of session.listeners) listener();
+  for (let listener of [...session.listeners])
+    try {
+      listener();
+    } catch {
+    }
   notifyActiveTerminal();
 }
 var badges = /* @__PURE__ */ new Map(), badgeListeners = /* @__PURE__ */ new Set();
@@ -1630,6 +1640,8 @@ function createSession(key) {
     retained: [],
     retainedBytes: 0,
     truncated: !1,
+    replaying: !1,
+    replayBacklog: [],
     listeners: /* @__PURE__ */ new Set(),
     autoConnected: !1,
     confirmedOpen: !1,
@@ -1714,17 +1726,22 @@ function maybeAutoConnect(session, serverId) {
 }
 function disposeSession(key, notifyHost = !0, why = "unspecified") {
   let session = sessions.get(key);
-  if (session !== void 0) {
-    postDiagnostic(
-      "info",
-      `at-terminal dispose key=${key} why=${why} socket=${session.socket === null ? "none" : "open"} state=${session.state.kind} target=${session.serverId}`,
-      "session",
-      null,
-      null
-    ), sessions.delete(key), teardown(session, notifyHost), clearTabBadge(key);
-    for (let listener of session.listeners) listener();
-    session.listeners.clear(), notifyActiveTerminal();
-  }
+  if (session === void 0) return;
+  postDiagnostic(
+    "info",
+    `at-terminal dispose key=${key} why=${why} socket=${session.socket === null ? "none" : "open"} state=${session.state.kind} target=${session.serverId}`,
+    "session",
+    null,
+    null
+  ), sessions.delete(key), teardown(session, notifyHost), clearTabBadge(key);
+  let listeners = [...session.listeners];
+  session.listeners.clear();
+  for (let listener of listeners)
+    try {
+      listener();
+    } catch {
+    }
+  notifyActiveTerminal();
 }
 function disposeAllSessions(why = "unload") {
   for (let key of [...sessions.keys()]) disposeSession(key, !0, why);
@@ -1845,7 +1862,13 @@ function consume(session, bytes) {
     session.retainedBytes -= droppedBytes, dropRetainedHead(session, dropCount);
   }
   let engine = session.engine;
-  engine !== null && engine.writeOutput(bytes, (byteLength) => session.flow?.rendered(byteLength));
+  if (engine !== null) {
+    if (session.replaying) {
+      session.replayBacklog.push(bytes);
+      return;
+    }
+    engine.writeOutput(bytes, (byteLength) => session.flow?.rendered(byteLength));
+  }
 }
 function teardown(session, notifyHost) {
   session.opened = !1, session.hostTerminalId = "", session.flow?.reset(), session.flow = null;
@@ -1888,9 +1911,13 @@ async function connectSession(session) {
     session.state = { kind: "idle", text: "" }, session.connectError = "terminal.noWebSocket", notify(session);
     return;
   }
-  session.flow = createFlowController({
+  if (sessions.get(session.key) !== session) return;
+  if (session.flow = createFlowController({
     onPauseChange: (paused) => sendWs(session, { type: "terminal.pause", id: TERMINAL_ID, paused })
-  }), session.state = { kind: "connecting", text: "" }, notify(session);
+  }), session.state = { kind: "connecting", text: "" }, notify(session), sessions.get(session.key) !== session) {
+    session.flow?.reset(), session.flow = null;
+    return;
+  }
   let socket = new WebSocketImpl(url);
   session.socket = socket, socket.onopen = () => postDiagnostic("info", `at-terminal ws-open key=${session.key} url=${url}`, "session", null, null), socket.onmessage = (event) => session.frames.handle(event?.data), socket.onerror = () => {
     postDiagnostic("error", `at-terminal ws-error key=${session.key} url=${url}`, "session", null, null), session.opened = !1, session.failure = { code: "websocket-error", message: url, fingerprint: "" }, session.state = { kind: "disconnected", text: "" }, notify(session);
@@ -1910,6 +1937,14 @@ function disconnectSession(session) {
 function attachEngine(session, engine) {
   session.engine = engine;
   let { retained, truncated } = session;
+  session.replayBacklog = [], session.replaying = !0;
+  let drainBacklog = () => {
+    session.replaying = !1;
+    let held = session.replayBacklog;
+    session.replayBacklog = [];
+    for (let bytes of held)
+      engine.writeOutput(bytes, (byteLength) => session.flow?.rendered(byteLength));
+  };
   truncated && engine.writeOutput(RESET_BYTES, () => {
   });
   let BATCH_LIMIT = 64 * 1024, batchBuffer = [], batchBytes = 0, flushBatch = () => {
@@ -1928,7 +1963,7 @@ function attachEngine(session, engine) {
   };
   for (let bytes of retained)
     batchBuffer.push(bytes), batchBytes += bytes.length, batchBytes >= BATCH_LIMIT && flushBatch();
-  flushBatch(), postDiagnostic(
+  flushBatch(), drainBacklog(), postDiagnostic(
     "info",
     `at-terminal replay key=${session.key} chunks=${retained.length} bytes=${session.retainedBytes} truncated=${String(truncated)}`,
     "session",
@@ -1991,7 +2026,7 @@ function nextIndex(current, total, key) {
 function moveRowFocus(event, selector) {
   let doc = typeof document > "u" ? void 0 : document;
   if (doc === void 0) return !1;
-  let rows = Array.from(doc.querySelectorAll(selector));
+  let root = event.currentTarget?.closest?.('[role="listbox"],[role="tree"],[role="grid"]') ?? null, rows = Array.from((root ?? doc).querySelectorAll(selector));
   if (rows.length === 0) return !1;
   let at = rows.indexOf(event.currentTarget);
   if (at < 0) return !1;
@@ -2015,9 +2050,17 @@ function useMenuFocus(open, onClose) {
     (ref.current === null ? [] : Array.from(ref.current.querySelectorAll('[role="menuitem"]')))[0]?.focus?.();
     let close = () => closeRef.current(), onKeydown = (event) => {
       event.key === "Escape" && (closeRef.current(), trigger?.focus?.());
-    }, onScroll = () => closeRef.current();
-    return doc.addEventListener("click", close), doc.addEventListener("keydown", onKeydown), doc.addEventListener("scroll", onScroll, !0), () => {
-      doc.removeEventListener("click", close), doc.removeEventListener("keydown", onKeydown), doc.removeEventListener("scroll", onScroll, !0);
+    }, settle = !0, onScroll = (event) => {
+      if (settle) return;
+      let target = event?.target;
+      ref.current !== null && target instanceof Node && ref.current.contains(target) || closeRef.current();
+    }, closeClick = () => closeRef.current();
+    doc.addEventListener("click", closeClick), doc.addEventListener("keydown", onKeydown), doc.addEventListener("scroll", onScroll, !0);
+    let settled2 = typeof setTimeout == "function" ? setTimeout(() => {
+      settle = !1;
+    }, 0) : 0;
+    return () => {
+      settle = !0, typeof clearTimeout == "function" && settled2 !== 0 && clearTimeout(settled2), doc.removeEventListener("click", closeClick), doc.removeEventListener("keydown", onKeydown), doc.removeEventListener("scroll", onScroll, !0);
     };
   }, [open]), { ref, onKeyDown: (event) => {
     let host = event.currentTarget, nodes = Array.from(
@@ -4698,6 +4741,16 @@ function renderToolbar2(t, props) {
         type: "button",
         className: "att-btn primary",
         disabled: !canSave,
+        /*
+         * A disabled primary button owes the user a reason.
+         *
+         * The only explanation used to be `fileEditBlocked`, attached to the 编辑 button — so
+         * in the state where 保存 is greyed out because the pane is **pending** (a reload, or
+         * the read that failed), the control said nothing at all. It rendered as dead and,
+         * because the handler behind it returns early on a non-ready pane, clicking it did
+         * nothing visible either. Name the actual cause here, per state.
+         */
+        title: canSave ? "" : pane.kind !== "ready" ? t("sftp.fileNotReady") : pane.save.kind === "pending" ? t("sftp.fileSaving") : t("sftp.fileEditBlocked"),
         onClick: () => props.onSave(!1),
         "data-at-terminal-action": "sftp-file-save"
       },
@@ -6467,37 +6520,42 @@ function savePosition(pos) {
     }
 }
 function MonitorHudWidget(props) {
-  let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel, auditHistory } = props, [expanded, setExpanded] = (0, import_react11.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react11.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react11.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react11.useState)(!1), [armed, setArmed] = (0, import_react11.useState)(!1), suppressClickRef = (0, import_react11.useRef)(!1), posRef = (0, import_react11.useRef)(pos);
+  let { t, metrics, snapshot, onCloseHud, forceExpanded, capsuleRequest, initialSubtab, activeServerId, activeLabel, auditHistory } = props, [expanded, setExpanded] = (0, import_react11.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react11.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react11.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react11.useState)(!1), [armed, setArmed] = (0, import_react11.useState)(!1), suppressClickRef = (0, import_react11.useRef)(!1), posRef = (0, import_react11.useRef)(pos);
   posRef.current = pos;
-  let dragStateRef = (0, import_react11.useRef)(null);
+  let overlayRef = (0, import_react11.useRef)(null), dragStateRef = (0, import_react11.useRef)(null);
   (0, import_react11.useEffect)(() => {
     if (!armed) return;
-    let finish = (moved, pill) => {
-      setIsDragging(!1), moved ? (savePosition(posRef.current), suppressClickRef.current = !0) : pill && (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520))), dragStateRef.current = null, setArmed(!1);
+    let gesturePointerId = dragStateRef.current?.pointerId ?? -1, finish = (moved) => {
+      setIsDragging(!1), releasePointerCapture(gesturePointerId), moved && (savePosition(posRef.current), suppressClickRef.current = !0), dragStateRef.current = null, setArmed(!1);
     }, onMove = (e) => {
       let state = dragStateRef.current;
-      if (state === null || e.pointerId !== state.pointerId) return;
+      if (state === null || e.pointerId !== gesturePointerId) return;
       let dx = e.clientX - state.startX, dy = e.clientY - state.startY;
       if (!state.hasMoved) {
         if (Math.hypot(dx, dy) < 3) return;
         state.hasMoved = !0, setIsDragging(!0);
       }
-      setPos(clampPosition(state.initialX + dx, state.initialY + dy, state.width, state.height));
+      capturePointer(e.pointerId), setPos(clampPosition(state.initialX + dx, state.initialY + dy, state.width, state.height));
     }, onUp = (e) => {
       let state = dragStateRef.current;
-      state === null || e.pointerId !== state.pointerId || finish(state.hasMoved, state.isPill);
+      state === null || e.pointerId !== gesturePointerId || finish(state.hasMoved);
     };
-    return window.addEventListener("pointermove", onMove), window.addEventListener("pointerup", onUp), window.addEventListener("pointercancel", onUp), () => {
-      window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", onUp), window.removeEventListener("pointercancel", onUp);
+    return window.addEventListener("pointermove", onMove, !0), document.addEventListener("pointerup", onUp, !0), document.addEventListener("pointercancel", onUp, !0), () => {
+      window.removeEventListener("pointermove", onMove, !0), document.removeEventListener("pointerup", onUp, !0), document.removeEventListener("pointercancel", onUp, !0);
     };
   }, [armed]), (0, import_react11.useEffect)(() => {
     requestAnimationFrame(() => {
       let element = typeof document < "u" ? document.querySelector(".att-hud-overlay") : null, box = element ? element.getBoundingClientRect() : null, rect = box ? `${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)},${Math.round(box.height)}` : "none";
       postDiagnostic("info", `hud shown pos=${JSON.stringify(pos)} vw=${window.innerWidth} rect=${rect}`, "hud", null, null);
     });
-  }, []), (0, import_react11.useEffect)(() => {
-    forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
-  }, [forceExpanded]), (0, import_react11.useEffect)(() => {
+  }, []);
+  let appliedFormRef = (0, import_react11.useRef)(null);
+  (0, import_react11.useEffect)(() => {
+    let instruction = forceExpanded === !0 ? "expanded" : forceExpanded === !1 || capsuleRequest !== void 0 ? "capsule" : "initial", stamp = `${instruction}:${capsuleRequest ?? 0}`;
+    if (appliedFormRef.current === stamp) return;
+    let firstRun = appliedFormRef.current === null;
+    appliedFormRef.current = stamp, instruction === "expanded" ? (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520))) : instruction === "capsule" && !(firstRun && forceExpanded === void 0) && (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
+  }, [forceExpanded, capsuleRequest]), (0, import_react11.useEffect)(() => {
     initialSubtab && setActiveTab(initialSubtab);
   }, [initialSubtab]), (0, import_react11.useEffect)(() => {
     let onResize = () => {
@@ -6506,37 +6564,50 @@ function MonitorHudWidget(props) {
     };
     return window.addEventListener("resize", onResize), () => window.removeEventListener("resize", onResize);
   }, [expanded]);
-  let handlePointerDown = (e, isPill) => {
-    if (e.button !== 0) return;
-    let target = e.target;
-    !isPill && target?.closest && target.closest("button") || (dragStateRef.current = {
+  let capturePointer = (pointerId) => {
+    let node = overlayRef.current;
+    if (!(node === null || typeof node.setPointerCapture != "function"))
+      try {
+        node.setPointerCapture(pointerId);
+      } catch {
+      }
+  }, releasePointerCapture = (pointerId) => {
+    let node = overlayRef.current;
+    if (!(node === null || pointerId < 0 || typeof node.releasePointerCapture != "function"))
+      try {
+        node.hasPointerCapture?.(pointerId) === !0 && node.releasePointerCapture(pointerId);
+      } catch {
+      }
+  }, handlePointerDown = (e, isPill) => {
+    e.button === 0 && dragStateRef.current === null && (dragStateRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      initialX: pos.x,
-      initialY: pos.y,
+      initialX: posRef.current.x,
+      initialY: posRef.current.y,
       hasMoved: !1,
       width: isPill ? 280 : 400,
       height: isPill ? 40 : 520,
       isPill
-    }, suppressClickRef.current = !1, setArmed(!0));
-  }, gripRef = (0, import_react11.useRef)(null);
-  (0, import_react11.useEffect)(() => {
-    let node = gripRef.current;
-    if (node === null) return;
+    }, suppressClickRef.current = !1, capturePointer(e.pointerId), setArmed(!0));
+  }, gripPointerDown = (event) => {
+    let target = event.target;
+    return !(target instanceof Element) || target.closest("[data-hud-drag]") === null ? !1 : (event.button !== 0 || (event.preventDefault(), event.stopPropagation(), handlePointerDown(event, !0)), !0);
+  }, expandedRef = (0, import_react11.useRef)(expanded);
+  expandedRef.current = expanded, (0, import_react11.useEffect)(() => {
     let onDown = (event) => {
-      event.button === 0 && (event.preventDefault(), event.stopPropagation(), handlePointerDown(event, !0));
+      let overlay2 = overlayRef.current;
+      if (!(overlay2 === null || !(event.target instanceof Node) || !overlay2.contains(event.target)) && !gripPointerDown(event) && expandedRef.current) {
+        let target = event.target;
+        (!target?.closest || target.closest("button") === null) && (event.button === 0 && event.preventDefault(), handlePointerDown(event, !1));
+      }
     };
-    return node.addEventListener("pointerdown", onDown, { capture: !0 }), () => node.removeEventListener("pointerdown", onDown, { capture: !0 });
-  }, [expanded]);
+    return window.addEventListener("pointerdown", onDown, !0), () => window.removeEventListener("pointerdown", onDown, !0);
+  }, []);
   let handleHeaderDoubleClick = (e) => {
     let target = e.target;
     target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
-  }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0];
-  requestAnimationFrame(() => {
-    let el = typeof document < "u" ? document.querySelector(".att-hud-pill") : null, r = el ? el.getBoundingClientRect() : null;
-  });
-  let diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
+  }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
     setExpanded(!0), setActiveTab(tab), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
   }, collapse = () => {
     setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
@@ -6545,6 +6616,16 @@ function MonitorHudWidget(props) {
     "div",
     {
       className: `att-hud-overlay ${isDragging ? "is-dragging" : ""}`,
+      /**
+       * The root is the press's scope and the pointer-capture target.
+       *
+       * A callback ref rather than `useRef` + `ref: overlayRef`, because a callback is assigned
+       * with the node at attach time on every mount — no second render is needed before the
+       * listeners can see it.
+       */
+      ref: (node) => {
+        overlayRef.current = node;
+      },
       style: {
         left: `${pos.x}px`,
         top: `${pos.y}px`
@@ -6566,12 +6647,21 @@ function MonitorHudWidget(props) {
         className: `att-hud-pill ${isDragging ? "is-dragging" : ""}`,
         role: "group",
         "aria-label": t("monitor.hud.pillLabel"),
-        title: t("monitor.hud.dragTip"),
         /**
-         * Swallow the click a drag leaves behind.
+         * No `title` on the pill.
+         *
+         * It used to carry the drag hint, which advertised the whole capsule as a drag target —
+         * the opposite of the design, where the six dots are the only handle (the grip and the
+         * expand chevron carry `monitor.hud.gripTip` / `monitor.hud.expand` instead).
+         */
+        /**
+         * Swallow the one click a drag leaves behind.
          *
          * Capture phase, so it runs before the chip's own handler: releasing a drag over a chip
-         * must not also fire that chip.
+         * must not also fire that chip. The flag is cleared **unconditionally** — a stale `true`
+         * can outlive its gesture (a release the browser retargeted, a click that never arrived),
+         * and the next genuine click was then swallowed, which reads exactly as "the buttons
+         * stopped working". Every fresh press clears it as well, so the guard can never lock in.
          */
         onClickCapture: (e) => {
           suppressClickRef.current && (suppressClickRef.current = !1, e.stopPropagation(), e.preventDefault());
@@ -6580,15 +6670,18 @@ function MonitorHudWidget(props) {
       /**
        * The six-dot handle — the one and only place the capsule drags from.
        *
-       * It carries the pointerdown itself rather than the pill doing it: a 350px capsule is made
-       * of chips, and a press a few pixels below the handle belongs to the chip under it.
+       * `data-hud-drag` is the marker the window-level press handler looks for (see
+       * `gripPointerDown`). It is on the box *and* on the glyph so a press that lands on the SVG
+       * — which is `pointer-events: none` but is still the target while the browser routes a
+       * touch gesture — resolves to the same handle.
        */
       h(
         "span",
         {
           className: "att-floating-drag-grip",
+          "data-hud-drag": "pill",
           "aria-hidden": !0,
-          ref: gripRef
+          title: t("monitor.hud.gripTip")
         },
         gripRegular({ size: 14 })
       ),
@@ -6651,7 +6744,10 @@ function MonitorHudWidget(props) {
           "aria-label": t("monitor.hud.expand"),
           onClick: () => openExpanded(activeTab)
         },
-        chevronDownRegular({ size: 14 })
+        // Pointing **up**: the action opens the window out of the capsule, the same way the
+        // expanded window's own collapse button points **down**. This chevron was the down one,
+        // which reads as "fold this away" — the opposite of what the button does.
+        chevronUpRegular({ size: 14 })
       ),
       onCloseHud && h(
         "button",
@@ -6686,13 +6782,26 @@ function MonitorHudWidget(props) {
         {
           className: `att-floating-window-header ${isDragging ? "is-dragging" : ""}`,
           title: t("monitor.hud.dragTip"),
-          onPointerDown: (e) => handlePointerDown(e, !1),
+          /**
+           * No `onPointerDown` here any more.
+           *
+           * The drag is armed by the window-level press listener (see the mount effect below), which runs
+           * *before* React's delegated handlers and already exempts the header's own buttons. A
+           * second React handler on the same element was the "collapse and ✕ do nothing" report:
+           * it called `setPointerCapture` on the overlay for the press that started on a button,
+           * and a captured press retargets the release too — so the `click` never reached the
+           * button. One owner per gesture is the rule; this is the second one going away.
+           */
           onDoubleClick: handleHeaderDoubleClick
         },
         h(
           "div",
           { className: "att-floating-header-left" },
-          h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, gripRegular({ size: 14 })),
+          h(
+            "span",
+            { className: "att-floating-drag-grip", "data-hud-drag": "window", "aria-hidden": !0 },
+            gripRegular({ size: 14 })
+          ),
           h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
           h("span", { style: { fontWeight: 600, fontSize: "12px" } }, t("monitor.hud.title"))
         ),
@@ -7483,7 +7592,7 @@ function MonitorHeaderButton(props) {
   );
 }
 function MonitorHudContainer(props) {
-  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react14.useState)(null), [snapshot, setSnapshot] = (0, import_react14.useState)(null), [visible, setVisible] = (0, import_react14.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react14.useState)(null), [activeLabel, setActiveLabel] = (0, import_react14.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react14.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react14.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react14.useState)([]), connectedRef = (0, import_react14.useRef)(!1), connectionStartedAtRef = (0, import_react14.useRef)(0), seenAuditIdsRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), dismissedRef = (0, import_react14.useRef)(!1), visibleRef = (0, import_react14.useRef)(!1), visibilityListenersRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), publishVisibility = (next) => {
+  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react14.useState)(null), [snapshot, setSnapshot] = (0, import_react14.useState)(null), [visible, setVisible] = (0, import_react14.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react14.useState)(null), [activeLabel, setActiveLabel] = (0, import_react14.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react14.useState)(void 0), [capsuleRequest, setCapsuleRequest] = (0, import_react14.useState)(0), [initialSubtab, setInitialSubtab] = (0, import_react14.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react14.useState)([]), connectedRef = (0, import_react14.useRef)(!1), connectionStartedAtRef = (0, import_react14.useRef)(0), seenAuditIdsRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), dismissedRef = (0, import_react14.useRef)(!1), visibleRef = (0, import_react14.useRef)(!1), visibilityListenersRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), publishVisibility = (next) => {
     visibleRef.current = next, setVisible(next);
     for (let listener of visibilityListenersRef.current) listener(next);
   }, showHud = () => {
@@ -7494,8 +7603,15 @@ function MonitorHudContainer(props) {
   return (0, import_react14.useEffect)(() => {
     if (onRegisterController)
       return onRegisterController({
-        open: (target, serverId) => {
-          postDiagnostic("info", `hud open target=${target ?? "overview"} wasDismissed=${dismissedRef.current}`, "hud", null, null), showHud(), setForceExpanded(!0), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0 && serverId !== "" && setActiveServerId(serverId);
+        open: (target, serverId, options) => {
+          let expanded = options?.expanded === !0;
+          postDiagnostic(
+            "info",
+            `hud open target=${target ?? "overview"} expanded=${expanded} wasDismissed=${dismissedRef.current}`,
+            "hud",
+            null,
+            null
+          ), showHud(), expanded ? setForceExpanded(!0) : (setForceExpanded(!1), setCapsuleRequest((n) => n + 1)), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0 && serverId !== "" && setActiveServerId(serverId);
         },
         close: () => {
           hideHud(), setForceExpanded(!1);
@@ -7553,6 +7669,7 @@ function MonitorHudContainer(props) {
     metrics,
     snapshot,
     forceExpanded,
+    capsuleRequest,
     initialSubtab,
     activeServerId,
     activeLabel,
@@ -7605,7 +7722,7 @@ function apply(ctx) {
         return console.warn("at-terminal: could not open the monitor tab", error), !1;
       }
     try {
-      return hudController ? (hudController.open(target, options?.serverId), !0) : !1;
+      return hudController ? (hudController.open(target, options?.serverId, { expanded: options?.expanded === !0 }), !0) : !1;
     } catch (error) {
       return console.warn("at-terminal: could not open monitor floating window", error), !1;
     }
@@ -7621,7 +7738,7 @@ function apply(ctx) {
     "at-terminal: monitor shortcut"
   ), ctx.effect(
     () => listenMonitorEvents((msg) => {
-      msg.action === "open" ? msg.mode === "tab" ? openMonitorTab({ target: msg.target, serverId: msg.serverId, mode: "tab" }) : hudController?.open(msg.target, msg.serverId) : msg.action === "close" && msg.mode === "hud" && hudController?.close();
+      msg.action === "open" ? msg.mode === "tab" ? openMonitorTab({ target: msg.target, serverId: msg.serverId, mode: "tab" }) : hudController?.open(msg.target, msg.serverId, { expanded: !0 }) : msg.action === "close" && msg.mode === "hud" && hudController?.close();
     }),
     "at-terminal: monitor sse events"
   ), ctx.effect(

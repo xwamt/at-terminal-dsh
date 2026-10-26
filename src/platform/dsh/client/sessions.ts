@@ -151,6 +151,14 @@ export interface TerminalSession {
   retainedBytes: number;
   /** Set when the ring had to drop its head, so the replay can start from a clean screen. */
   truncated: boolean;
+  /**
+   * True while `attachEngine` is still writing the retained ring into the new engine.
+   *
+   * Live frames that arrive during that window are held in `replayBacklog` and written after it,
+   * so the screen cannot show new output and then paint history over it. See `consume`.
+   */
+  replaying: boolean;
+  replayBacklog: Uint8Array[];
   readonly listeners: Set<() => void>;
   /**
    * Whether this tab's open-time target has already been turned into a connect attempt.
@@ -251,9 +259,26 @@ export function unmarkSessionActive(key: string): void {
   }
 }
 
-/** Wake every mounted view of one session. Cheap; views that changed nothing re-render anyway. */
+/**
+ * Wake every mounted view of one session. Cheap; views that changed nothing re-render anyway.
+ *
+ * The listener set is **snapshotted** before the loop, and every call is isolated.
+ *
+ * A listener is `() => bump()` on a React component, so calling it synchronously flushes an update
+ * whose cleanup may unsubscribe (`session.listeners.delete(...)`) — mutating the very `Set` being
+ * iterated. A `for…of` over a Set that is modified mid-loop skips elements, and with a
+ * `clear()` (see `disposeSession`) the next step reads `undefined` and throws
+ * "listener is not a function", mid tab-close. One component throwing must also not stop the
+ * other views of the same session from hearing about the change.
+ */
 function notify(session: TerminalSession): void {
-  for (const listener of session.listeners) listener();
+  for (const listener of [...session.listeners]) {
+    try {
+      listener();
+    } catch {
+      // A view that throws on re-render must not take the registry down with it.
+    }
+  }
   notifyActiveTerminal();
 }
 
@@ -340,6 +365,8 @@ function createSession(key: string): TerminalSession {
     retained: [],
     retainedBytes: 0,
     truncated: false,
+    replaying: false,
+    replayBacklog: [],
     listeners: new Set(),
     autoConnected: false,
     confirmedOpen: false,
@@ -575,8 +602,17 @@ export function disposeSession(key: string, notifyHost = true, why = 'unspecifie
   sessions.delete(key);
   teardown(session, notifyHost);
   clearTabBadge(key);
-  for (const listener of session.listeners) listener();
+  // Snapshot, clear, then call: `disposeSession` is the one place that both notifies and empties
+  // the set, so iterating it live is guaranteed to race its own listeners' unsubscribe.
+  const listeners = [...session.listeners];
   session.listeners.clear();
+  for (const listener of listeners) {
+    try {
+      listener();
+    } catch {
+      // See `notify`: one broken view must not abort the teardown of the session.
+    }
+  }
   notifyActiveTerminal();
 }
 
@@ -851,9 +887,26 @@ export function consume(session: TerminalSession, bytes: Uint8Array): void {
     dropRetainedHead(session, dropCount);
   }
   const engine = session.engine;
-  if (engine !== null) {
-    engine.writeOutput(bytes, (byteLength) => session.flow?.rendered(byteLength));
+  if (engine === null) return;
+  /*
+   * A live chunk that arrives mid-replay is held until the replay has reached xterm.
+   *
+   * `attachEngine` writes the whole retained ring (up to 64 KB per call) and then returns; the
+   * frames that arrived while this tab was hidden keep coming the moment the socket is live again.
+   * xterm queues writes in call order, but the batch is composed *synchronously* only because
+   * `flushBatch` runs in one loop — the switch back to the tab re-runs the whole body, and a
+   * `terminal.output` frame can be dispatched between the last `writeOutput` of the replay and its
+   * acknowledgement callback. When that happened the new output was painted first and then typed
+   * over by history from an older cursor position, which looks like garbled text until the remote
+   * repaints. Holding the chunk here — and flushing in order from the replay's last
+   * acknowledgement — keeps the screen monotonic without buffering anything unbounded: the hold is
+   * only ever as long as the ring being written.
+   */
+  if (session.replaying) {
+    session.replayBacklog.push(bytes);
+    return;
   }
+  engine.writeOutput(bytes, (byteLength) => session.flow?.rendered(byteLength));
 }
 
 /**
@@ -962,11 +1015,30 @@ export async function connectSession(session: TerminalSession): Promise<void> {
     return;
   }
 
+  /*
+   * Re-check liveness immediately before opening the socket.
+   *
+   * The one check above sits after the endpoint `await`, and the work between it and this line is
+   * synchronous — but `notify()` below flushes React updates, and a flush is re-entrant: a cleanup
+   * that closes this tab runs `disposeSession`, which deletes the session from the map and nulls
+   * its socket. Without this second check that path still opened a WebSocket for a tab nobody can
+   * see any more; the host then minted a PTY whose only handle was this closure, so nothing ever
+   * closed it.
+   */
+  if (sessions.get(session.key) !== session) return;
+
   session.flow = createFlowController({
     onPauseChange: (paused) => sendWs(session, { type: 'terminal.pause', id: TERMINAL_ID, paused })
   });
   session.state = { kind: 'connecting', text: '' };
   notify(session);
+
+  // ...and once more after the flush: everything after this point acts on the socket.
+  if (sessions.get(session.key) !== session) {
+    session.flow?.reset();
+    session.flow = null;
+    return;
+  }
 
   const socket = new WebSocketImpl(url);
   session.socket = socket;
@@ -1033,6 +1105,18 @@ export function disconnectSession(session: TerminalSession): void {
 export function attachEngine(session: TerminalSession, engine: TerminalEngine): void {
   session.engine = engine;
   const { retained, truncated } = session;
+  // Whatever `consume` held from a previous attach is part of the ring now; it will be written by
+  // this replay in order, so the backlog starts empty.
+  session.replayBacklog = [];
+  session.replaying = true;
+  const drainBacklog = (): void => {
+    session.replaying = false;
+    const held = session.replayBacklog;
+    session.replayBacklog = [];
+    for (const bytes of held) {
+      engine.writeOutput(bytes, (byteLength) => session.flow?.rendered(byteLength));
+    }
+  };
   if (truncated) {
     engine.writeOutput(RESET_BYTES, () => undefined);
   }
@@ -1065,6 +1149,17 @@ export function attachEngine(session: TerminalSession, engine: TerminalEngine): 
     if (batchBytes >= BATCH_LIMIT) flushBatch();
   }
   flushBatch();
+  /*
+   * The replay ends here — the loop above is synchronous, so this is the first moment a live chunk
+   * may be written. `writeOutput` appends to xterm's queue in call order, which is exactly the
+   * ordering the backlog needs: every retained byte is queued before any held live byte.
+   *
+   * Draining synchronously (rather than on a microtask or the replay's last acknowledgement) is
+   * what keeps `consume` from silently swallowing frames that arrive after `attachEngine` returned
+   * — a later callback would make the backlog's lifetime depend on xterm's parse schedule, and a
+   * session detached in between would hold bytes nobody writes.
+   */
+  drainBacklog();
   postDiagnostic(
     'info',
     `at-terminal replay key=${session.key} chunks=${retained.length} bytes=${session.retainedBytes} truncated=${String(truncated)}`,

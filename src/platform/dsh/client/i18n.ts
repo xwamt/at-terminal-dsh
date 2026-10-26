@@ -308,6 +308,7 @@ export const zh: Record<string, string> = {
   'sftp.fileOverwrite': '覆盖并保存',
   'sftp.fileReload': '重新读取',
   'sftp.fileEditBlocked': '只读：文件超出面板上限。编辑会把截断后的内容写回，覆盖掉剩余部分，因此这里不提供编辑。',
+  'sftp.fileNotReady': '内容尚未读取完成，暂时无法保存；读取完成后重试。',
   'sftp.fileEditorLabel': '编辑 {path}',
   'sftp.fileViewerLabel': '{path} 的内容',
   'error.sftpFileTooLarge': '文件超出面板一次能搬运的上限。文件传输请改用「终端」页（scp / rsync），或分块读取。',
@@ -336,6 +337,9 @@ export const zh: Record<string, string> = {
   'monitor.hud.minimize': '最小化为悬浮胶囊',
   'monitor.hud.openSidebar': '在侧边栏打开完整面板',
   'monitor.hud.dragTip': '按住标题栏拖动 · 双击折叠',
+  // The capsule's own hint. It names the six-dot handle, because that — not the pill — is the
+  // drag surface; the pill used to carry the header's hint and advertised dragging from anywhere.
+  'monitor.hud.gripTip': '按住拖动',
   // The pill is a group of controls, not one button, so it needs its own name — the CPU/MEM
   // chips below each carry an action-and-value label of their own.
   'monitor.hud.pillLabel': '监控胶囊',
@@ -722,6 +726,7 @@ export const en: Record<string, string> = {
   'sftp.fileOverwrite': 'Overwrite and save',
   'sftp.fileReload': 'Reload',
   'sftp.fileEditBlocked': 'Read-only: the file is larger than the panel limit. Editing would write the truncated text back and drop the rest, so editing is not offered here.',
+  'sftp.fileNotReady': 'The file has not been read yet, so it cannot be saved; retry once the read completes.',
   'sftp.fileEditorLabel': 'Edit {path}',
   'sftp.fileViewerLabel': 'Contents of {path}',
   'error.sftpFileTooLarge': 'The file is larger than this panel can move in one call. Use the Terminal page (scp / rsync) to transfer it, or read it in chunks.',
@@ -750,6 +755,7 @@ export const en: Record<string, string> = {
   'monitor.hud.minimize': 'Minimize to Pill',
   'monitor.hud.openSidebar': 'Open in Sidebar Pane',
   'monitor.hud.dragTip': 'Drag header to move · Double-click to collapse',
+  'monitor.hud.gripTip': 'Drag to move',
   'monitor.hud.pillLabel': 'Monitor pill',
   'monitor.hud.cpuChip': 'CPU at {percent}, open hardware metrics',
   'monitor.hud.memChip': 'Memory at {percent}, open hardware metrics',

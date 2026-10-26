@@ -152,11 +152,10 @@ describe('RemoteCommandExecutor', () => {
     await flushPromises();
     vi.advanceTimersByTime(100);
 
-    await expect(promise).resolves.toMatchObject({
-      exitCode: null,
-      timedOut: true,
-      stderr: 'Command timed out after 100ms.'
-    });
+    // A timeout is a failure, not a result: it used to resolve with `exitCode: null`, which every
+    // `exitCode`-branching caller reads as "the command ran and was signal-killed".
+    await expect(promise).rejects.toThrow('Command timed out after 100ms.');
+    await expect(promise).rejects.toMatchObject({ timeoutMs: 100 });
     expect(stream.close).toHaveBeenCalledTimes(1);
     // A command that overran closes its own channel; the connection is still good.
     expect(end).not.toHaveBeenCalled();
@@ -181,10 +180,11 @@ describe('RemoteCommandExecutor', () => {
     stream.emit('data', Buffer.from('partial stdout'));
     vi.advanceTimersByTime(100);
 
-    await expect(promise).resolves.toMatchObject({
-      timedOut: true,
+    // The captured output is not thrown away with the rejection: it is on the error.
+    await expect(promise).rejects.toMatchObject({
+      message: 'Command timed out after 100ms.',
       stdout: 'partial stdout',
-      stderr: 'Job for app.service failed.\nCommand timed out after 100ms.'
+      stderr: 'Job for app.service failed.\n'
     });
   });
 
@@ -314,11 +314,7 @@ describe('RemoteCommandExecutor connection pool', () => {
     await flushPromises();
     vi.advanceTimersByTime(100);
 
-    await expect(promise).resolves.toMatchObject({
-      exitCode: null,
-      timedOut: true,
-      stderr: 'Command timed out after 100ms.'
-    });
+    await expect(promise).rejects.toThrow('Command timed out after 100ms.');
     expect(exec).not.toHaveBeenCalled();
   });
 

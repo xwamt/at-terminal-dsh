@@ -393,10 +393,11 @@ describe('HUD dismissal sticks', () => {
   it('treats ✕ as a decision and open as a request', () => {
     const close = controller.slice(controller.indexOf('close: () =>'));
     expect(close.slice(0, 200)).toContain('hideHud()');
-    const open = controller.slice(controller.indexOf('open: (target, serverId)'));
+    // The signal the user asked for the window is still `open`, whatever form it takes.
+    const open = controller.slice(controller.indexOf('open: (target, serverId, options)'));
     // The explicit request comes first in the body: it must clear the dismissal before anything
     // else decides whether the window is allowed on screen.
-    expect(open.slice(0, 600)).toContain('showHud()');
+    expect(open.slice(0, 700)).toContain('showHud()');
     // `toggle` reads the live state rather than a captured one.
     expect(controller).toContain('if (visibleRef.current) hideHud();');
   });
@@ -427,6 +428,62 @@ describe('HUD dismissal sticks', () => {
 });
 
 /**
+ * Clicking the monitor button gives the **capsule**, not the open window.
+ *
+ * Reported: on a fresh connection, pressing the monitor button dropped a fully expanded panel over
+ * the conversation. The behaviour was never chosen — `open()` unconditionally set
+ * `forceExpanded = true`, so every entry point (toolbar button, context menu, shortcut, the pane's
+ * switch) opened the window. The capsule is what the HUD is *for*: a small always-there readout,
+ * expanded only when asked for.
+ *
+ * The rule is now explicit. `open(target, serverId, { expanded })` carries the form, it defaults to
+ * the capsule, and exactly one caller asks for the window: the `monitor-control` channel, which
+ * exists for `open_monitor` and the commands — a model opening the window to read a number, or a
+ * user running `/ssh-metrics` — and names a sub-tab a capsule cannot show.
+ */
+describe('the monitor button opens the capsule', () => {
+  const controller = MAIN.slice(
+    MAIN.indexOf('onRegisterController({'),
+    MAIN.indexOf('  // Synchronize with active connected terminal session')
+  );
+
+  it('resolves the form from the request, defaulting to the capsule', () => {
+    expect(MAIN).toContain('expanded: options?.expanded === true');
+    // The controller reads the flag rather than always opening the window — the old line.
+    expect(controller).not.toMatch(/showHud\(\);\s*setForceExpanded\(true\);/);
+    expect(controller).toContain("const expanded = options?.expanded === true;");
+    expect(controller).toMatch(/if \(expanded\) \{\s*setForceExpanded\(true\);/);
+  });
+
+  it('re-collapses on a repeated capsule request', () => {
+    // `expanded` is the widget's own state, so `forceExpanded = false` twice is a React no-op and
+    // the window would stay expanded after collapsing it by hand in between.
+    expect(MAIN).toContain('setCapsuleRequest((n) => n + 1)');
+    expect(MAIN).toContain('capsuleRequest,');
+    expect(HUD).toContain('capsuleRequest?: number');
+    expect(HUD).toMatch(/\}, \[forceExpanded, capsuleRequest\]\)/);
+    // The instruction is consumed once per value, so a remount cannot re-apply a stale `false`.
+    expect(HUD).toContain('const appliedFormRef = useRef<string | null>(null);');
+    expect(HUD).toMatch(/if \(appliedFormRef\.current === stamp\) return;/);
+    expect(HUD).toMatch(/\} else if \(instruction === 'capsule'[\s\S]{0,120}setExpanded\(false\);/);
+  });
+
+  it('keeps the expanded window for the callers that ask for it', () => {
+    // The tool/command channel names a sub-tab, so it asks for the window.
+    expect(MAIN).toContain('hudController?.open(msg.target, msg.serverId, { expanded: true })');
+    // A button that merely reveals the HUD does not.
+    expect(MAIN).toContain('() => void openMonitorTab()');
+    expect(MAIN).toContain('openMonitorTab({ target: \'hardware\' })');
+  });
+
+  it('does not re-open the window through the show/hide switch', () => {
+    // Switching the HUD back on is a user-opened path like any other: it lands on the capsule.
+    const toggle = controller.slice(controller.indexOf('toggle: () =>'));
+    expect(toggle.slice(0, 200)).not.toContain('setForceExpanded(true)');
+  });
+});
+
+/**
  * The capsule drags by its six-dot handle — and only from there.
  *
  * Two earlier attempts are worth recording, because both looked reasonable and both were wrong:
@@ -437,6 +494,10 @@ describe('HUD dismissal sticks', () => {
  * 2. "Drag from anywhere", to compensate. That made the chips unreliable — a press a few pixels
  *    below the handle became a drag instead of the click it was meant to be — and the report was
  *    precise: "a little higher drags, a little lower does not".
+ *
+ * Which is why the pill's padding then *did* drag while the handle did not: `closest('button')`
+ * refused every chip, and the grip — the one element the design names — had no pointer handler of
+ * its own wired to a working sequence.
  *
  * What is asserted here is therefore the *design*: the handle carries the pointerdown, the pill
  * does not; the moving happens on `window` while a drag is armed; and the handle's hit area is
@@ -449,26 +510,69 @@ describe('the capsule drags by its handle', () => {
   const pill = HUD.slice(pillStart, HUD.indexOf('onClickCapture', pillStart));
   const grip = HUD.slice(HUD.indexOf("className: 'att-floating-drag-grip'"));
   const armEffect = HUD.slice(HUD.indexOf('if (!armed) return;'), HUD.indexOf('  // Sync forceExpanded prop'));
+  const pressEffect = HUD.slice(HUD.indexOf('const onDown = (event: PointerEvent): void => {'), HUD.indexOf('  const handleHeaderDoubleClick'));
 
-  it('puts the pointerdown on the handle, not on the pill', () => {
-    // The grip's own handler, inside the grip element's props.
-    // Native, capture-phase — not React's delegated handler, which the host's own document-level
-    // listeners can swallow before it ever reaches the plugin's root.
-    expect(grip.slice(0, 400)).toContain('ref: gripRef');
-    expect(HUD).toContain("addEventListener('pointerdown', onDown, { capture: true })");
-    // And the pill's props no longer start a drag: that was attempt 2, and it is what broke the
-    // chips. The pill keeps only the click-swallowing capture handler.
+  it('takes the press from a window-level capture listener, not from React', () => {
+    /**
+     * The regression this pins down: a **node** listener depends on nothing else having claimed the
+     * press first, and React's delegation — which listens at the renderer's root container inside
+     * the host page — plus the host's own capture listeners do exactly that. The press has to be
+     * captured at `window`, before anything else in the page.
+     */
+    expect(pressEffect).toContain("window.addEventListener('pointerdown', onDown, true)");
+    // A ref attached during render is `null` when a mount effect runs, which is how the handle
+    // silently ended up with no handler at all. The node is resolved from the document instead.
+    expect(HUD).not.toContain('gripRef');
+    expect(HUD).toContain("target.closest('[data-hud-drag]')");
+    // The overlay scope and the capture target both hang off a callback ref, which is assigned
+    // with the node at attach time.
+    expect(HUD).toMatch(/ref: \(node: HTMLElement \| null\) => \{\s*overlayRef\.current = node;/);
+  });
+
+  it('makes only the handle start a capsule drag', () => {
+    // The window branch of the press handler arms a drag only for the grip...
+    expect(HUD).toContain("'data-hud-drag': 'pill'");
+    expect(pressEffect).toContain('if (gripPointerDown(event)) return;');
+    // ...and the capsule branch below it is gated on `expanded`, so a press on the pill's padding
+    // arms nothing at all.
+    expect(pressEffect).toContain('if (expandedRef.current) {');
+    expect(pressEffect.indexOf('if (expandedRef.current) {')).toBeGreaterThan(
+      pressEffect.indexOf('if (gripPointerDown(event)) return;')
+    );
+    // The pill's props start no drag either: that was attempt 2, and it is what broke the chips.
     expect(pill).not.toContain('onPointerDown');
+    // Nor does the pill advertise a drag it no longer starts.
+    expect(pill).not.toContain("title: t('monitor.hud.dragTip')");
+    expect(grip.slice(0, 500)).toContain("title: t('monitor.hud.gripTip')");
     // The pill keeps the click-swallowing capture handler that goes with a drag.
     expect(HUD).toContain('onClickCapture');
   });
 
+  it('binds the press once per mount and reads the live state through refs', () => {
+    // A `[pos.x, pos.y]` dependency tore the listener down and rebuilt it on every move.
+    expect(pressEffect).toMatch(/\}, \[\]\);\s*\n/);
+    expect(HUD).toContain('const expandedRef = useRef(expanded);');
+    expect(HUD).toMatch(/expandedRef\.current = expanded;/);
+  });
+
   it('moves the window on window-level listeners while a drag is armed', () => {
-    expect(armEffect).toContain("window.addEventListener('pointermove'");
-    expect(armEffect).toContain("window.addEventListener('pointerup'");
-    // Capture on the element was attempt 1's mechanism and is gone with it (the identifier survives
-    // only inside the comment that explains why).
-    expect(HUD).not.toMatch(/setPointerCapture\(/);
+    expect(armEffect).toContain("window.addEventListener('pointermove', onMove, true)");
+    // The release is listened for on `document` in the capture phase: a chip under the pointer
+    // handles pointerup first when the gesture ends over one, and may stop it there.
+    expect(armEffect).toContain("document.addEventListener('pointerup', onUp, true)");
+    expect(armEffect).toContain("document.addEventListener('pointercancel', onUp, true)");
+  });
+
+  it('captures the pointer for the gesture and releases it on every exit', () => {
+    // Capturing at the press is what keeps a host `setPointerCapture` from retargeting the
+    // gesture; releasing is what keeps the capture from swallowing the next press on a chip.
+    expect(HUD).toMatch(/const capturePointer = \(pointerId: number\): void => \{/);
+    expect(HUD).toContain('capturePointer(e.pointerId);');
+    // The gesture owns its pointer id: it is captured in the effect and passed to the release, so a
+    // second press cannot strand the capture by overwriting the ref the release used to read.
+    expect(HUD).toMatch(/const gesturePointerId = dragStateRef\.current\?\.pointerId \?\? -1;/);
+    expect(HUD).toMatch(/const finish = \(moved: boolean\): void => \{\s*setIsDragging\(false\);\s*releasePointerCapture\(gesturePointerId\);/);
+    expect(HUD).toContain('if (dragStateRef.current !== null) return;');
   });
 
   it('gives the handle a hit area larger than its glyph', () => {
@@ -483,8 +587,36 @@ describe('the capsule drags by its handle', () => {
 
   it('keeps the expanded window draggable by its header', () => {
     // Unchanged behaviour, asserted so a future edit to the pill path does not quietly take it.
-    expect(HUD).toContain('handlePointerDown(e, false)');
+    expect(HUD).toContain('handlePointerDown(event, false)');
+    expect(HUD).toMatch(/const handlePointerDown = \(e: \{[^}]*\}, isPill: boolean\)/);
     // Its own buttons must not start a drag, or pressing ✕ would move the window instead.
-    expect(HUD).toMatch(/if \(!isPill && target\?\.closest && target\.closest\('button'\)\) return;/);
+    expect(HUD).toContain("if (!target?.closest || target.closest('button') === null) {");
+  });
+
+  /**
+   * Exactly one thing may arm a drag, and it must never arm one from a button.
+   *
+   * The regression: the header kept a React `onPointerDown` *next to* the window-level press
+   * listener. That listener exempts `button`, the React one did not — so pressing ✕ or the collapse
+   * chevron armed a drag, and `handlePointerDown` captured the pointer on the overlay. A captured
+   * press retargets the release, and the browser then delivers the `click` to the common ancestor
+   * of the press and release targets — the overlay, not the button. Both buttons went dead, and so
+   * did the capsule's chips, because the stale `suppressClickRef` guard swallowed the next click.
+   */
+  it('arms a drag from exactly one place, and never from a button', () => {
+    // The header carries no pointer handler of its own any more (the comment explaining why is
+    // not a handler, so the check is for a *property*, not for the word).
+    const header = HUD.slice(HUD.indexOf('att-floating-window-header'), HUD.indexOf('// Server Sub-bar'));
+    expect(header).not.toMatch(/^\s*onPointerDown:/m);
+    // Only the window-level listener calls handlePointerDown, and it is the only place that does.
+    expect(HUD.match(/handlePointerDown\(/g) ?? []).toHaveLength(2);
+    const pressEffect = HUD.slice(
+      HUD.indexOf('const onDown = (event: PointerEvent): void => {'),
+      HUD.indexOf('  const handleHeaderDoubleClick')
+    );
+    // A press on any button of the overlay arms nothing: the exemption is checked there, once.
+    expect(pressEffect).toContain("if (!target?.closest || target.closest('button') === null) {");
+    // And the click guard can never lock in: every press clears it, and it is consumed once.
+    expect(HUD).toContain('suppressClickRef.current = false;');
   });
 });

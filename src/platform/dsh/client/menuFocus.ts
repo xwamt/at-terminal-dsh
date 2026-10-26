@@ -58,12 +58,34 @@ export function useMenuFocus(
       closeRef.current();
       trigger?.focus?.();
     };
-    const onScroll = (): void => closeRef.current();
-    doc.addEventListener('click', close);
+    /*
+     * "The list scrolled away from the anchor" — with two exceptions.
+     *
+     * 1. A scroll **inside the menu itself** is not the anchor moving. Focusing the first item
+     *    (`items()[0]?.focus?.()` above) can scroll the menu's own scroll container, and on a menu
+     *    opened near the bottom of a panel that scroll arrives as a document-level scroll event in
+     *    the capture phase. Without this guard the menu closed itself the instant it opened, which
+     *    reads as "right-click does nothing".
+     * 2. The scroll fired by that same focus call must be ignored for one frame, because the
+     *    container being scrolled may be an *ancestor* of the menu rather than the menu.
+     */
+    let settle = true;
+    const onScroll = (event?: Event): void => {
+      if (settle) return;
+      const target = event?.target;
+      if (ref.current !== null && target instanceof Node && ref.current.contains(target)) return;
+      closeRef.current();
+    };
+    const closeClick = (): void => closeRef.current();
+    doc.addEventListener('click', closeClick);
     doc.addEventListener('keydown', onKeydown);
     doc.addEventListener('scroll', onScroll, true);
+    // Cleared after the focus-induced scroll has been dispatched, before any user scroll can be.
+    const settled = typeof setTimeout === 'function' ? setTimeout(() => { settle = false; }, 0) : 0;
     return () => {
-      doc.removeEventListener('click', close);
+      settle = true;
+      if (typeof clearTimeout === 'function' && settled !== 0) clearTimeout(settled);
+      doc.removeEventListener('click', closeClick);
       doc.removeEventListener('keydown', onKeydown);
       doc.removeEventListener('scroll', onScroll, true);
     };

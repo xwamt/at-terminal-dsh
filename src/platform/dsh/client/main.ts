@@ -526,10 +526,17 @@ interface HudController {
    * the active terminal session, which is the right default for a user-opened panel and the
    * wrong one for an explicit request (a tool call or `/ssh-metrics` naming a server).
    *
+   * `expanded` decides the **form**, and the default is the capsule — that default is the point.
+   * A button in the toolbar, a context-menu row or a shortcut key is a request to *show the
+   * monitor*; the same window landing on the page fully open covers the conversation the user was
+   * reading, and collapsing it again is a second gesture they never asked for. Only a caller that
+   * already names the panel it wants — the agent's `open_monitor`, which the model calls to *read*
+   * a number — asks for `expanded: true`.
+   *
    * An explicit `open` always wins, including over a dismissal: the user asking for the window is
    * the one case where "closed" must not apply.
    */
-  open(target?: 'hardware' | 'agent_execution', serverId?: string): void;
+  open(target?: 'hardware' | 'agent_execution', serverId?: string, options?: { expanded?: boolean }): void;
   close(): void;
   toggle(): void;
   /** Whether the window is on screen right now — the pane's toggle needs to render its state. */
@@ -549,6 +556,15 @@ function MonitorHudContainer(props: {
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [forceExpanded, setForceExpanded] = useState<boolean | undefined>(undefined);
+  /**
+   * Bumped on every `open()` that asks for the capsule.
+   *
+   * `expanded` is the widget's **own** state — collapsing it with the chevron is a local change —
+   * so "open as a capsule" cannot be expressed by `forceExpanded = false` twice in a row: the
+   * second value equals the first, React bails out of the re-render, and the window stays expanded.
+   * The counter is what makes the second request visible to the widget's sync effect.
+   */
+  const [capsuleRequest, setCapsuleRequest] = useState<number>(0);
   const [initialSubtab, setInitialSubtab] = useState<'overview' | 'hardware' | 'agent'>('overview');
   /**
    * Audits seen since the current connection started, newest first.
@@ -596,11 +612,30 @@ function MonitorHudContainer(props: {
   useEffect(() => {
     if (onRegisterController) {
       onRegisterController({
-        open: (target, serverId) => {
+        open: (target, serverId, options) => {
           // Explicit request: wins over a dismissal, because the caller is the user or their tool.
-          postDiagnostic('info', `hud open target=${target ?? 'overview'} wasDismissed=${dismissedRef.current}`, 'hud', null, null);
+          const expanded = options?.expanded === true;
+          postDiagnostic(
+            'info',
+            `hud open target=${target ?? 'overview'} expanded=${expanded} wasDismissed=${dismissedRef.current}`,
+            'hud',
+            null,
+            null
+          );
           showHud();
-          setForceExpanded(true);
+          /*
+           * The form is decided here, once, and it is the capsule unless the caller asked for the
+           * window. `showHud()` deliberately does not touch `forceExpanded`: a toolbar button that
+           * only re-shows a HUD the user collapsed earlier must not re-open it expanded.
+           */
+          if (expanded) {
+            setForceExpanded(true);
+          } else {
+            setForceExpanded(false);
+            // A distinct value every time, so a second "open as capsule" request is not a no-op
+            // when the widget was expanded by hand in between (see `capsuleRequest`).
+            setCapsuleRequest((n) => n + 1);
+          }
           if (target === 'hardware') setInitialSubtab('hardware');
           else if (target === 'agent_execution') setInitialSubtab('agent');
           else setInitialSubtab('overview');
@@ -615,6 +650,8 @@ function MonitorHudContainer(props: {
         },
         toggle: () => {
           if (visibleRef.current) hideHud();
+          // Switching it back on lands on the capsule, like every other user-opened path. The
+          // expanded request is only ever the agent's, and it goes through `open()`.
           else showHud();
         },
         isVisible: () => visibleRef.current,
@@ -742,6 +779,7 @@ function MonitorHudContainer(props: {
     metrics,
     snapshot,
     forceExpanded,
+    capsuleRequest,
     initialSubtab,
     activeServerId,
     activeLabel,
@@ -864,11 +902,17 @@ export function apply(ctx: ClientContext): void {
    * `navigation.params`, the HUD from its controller — so both are passed explicitly. The
    * `mode` argument used to be accepted and ignored, which made `open_monitor`'s `mode` a
    * promise the client broke without saying so.
+   *
+   * `expanded` is the HUD's **form**, and it defaults to the capsule here rather than in the
+   * controller, so every call site says what it means: a button that merely reveals the monitor
+   * omits it, and `open_monitor` asks for `expanded: true` because the model is opening the
+   * window to read a number out of it.
    */
   const openMonitorTab = (options?: {
     target?: 'hardware' | 'agent_execution';
     serverId?: string;
     mode?: 'hud' | 'tab';
+    expanded?: boolean;
   }): boolean => {
     const target = options?.target ?? 'hardware';
     if (options?.mode === 'tab') {
@@ -889,7 +933,7 @@ export function apply(ctx: ClientContext): void {
     }
     try {
       if (hudController) {
-        hudController.open(target, options?.serverId);
+        hudController.open(target, options?.serverId, { expanded: options?.expanded === true });
         return true;
       }
       return false;
@@ -929,7 +973,12 @@ export function apply(ctx: ClientContext): void {
           } else {
             // `msg.serverId` was dropped here, so a HUD opened by a tool call or a command
             // showed the active terminal's server — or "未选择服务器" when none was open.
-            hudController?.open(msg.target, msg.serverId);
+            //
+            // `expanded: true`: this channel exists for `open_monitor` and the commands, and both
+            // are a request to show the **window** — the model reading a number, or the user
+            // running `/ssh-metrics`. Those are also the callers that name a sub-tab, which a
+            // capsule cannot show. The mode's own default is the capsule.
+            hudController?.open(msg.target, msg.serverId, { expanded: true });
           }
         } else if (msg.action === 'close') {
           if (msg.mode === 'hud') {

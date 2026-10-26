@@ -8380,7 +8380,9 @@ function installTerminalFocusRecovery(terminal, options) {
   let scheduleFocus = () => {
     options.setTimeout(() => terminal.focus(), 0);
   };
-  options.document.addEventListener("copy", scheduleFocus), options.document.addEventListener("paste", scheduleFocus);
+  return options.document.addEventListener("copy", scheduleFocus), options.document.addEventListener("paste", scheduleFocus), () => {
+    options.document.removeEventListener("copy", scheduleFocus), options.document.removeEventListener("paste", scheduleFocus);
+  };
 }
 function installTerminalClipboardPasteHandler(terminal, target) {
   target.addEventListener(
@@ -8914,11 +8916,13 @@ function createTerminalEngine(options) {
     clipboard,
     sendInput: (data) => hooks.onInput(data)
   });
-  term.attachCustomKeyEventHandler((event) => isTerminalSearchShortcut(event) ? (searchController.open(), !1) : keyboardHandler(event)), term.textarea !== void 0 && installTerminalClipboardPasteHandler(term, term.textarea), installTerminalFocusRecovery(term, {
+  term.attachCustomKeyEventHandler((event) => isTerminalSearchShortcut(event) ? (searchController.open(), !1) : keyboardHandler(event)), term.textarea !== void 0 && installTerminalClipboardPasteHandler(term, term.textarea);
+  let disposeFocusRecovery = installTerminalFocusRecovery(term, {
     container,
     document,
     setTimeout: window.setTimeout.bind(window)
-  }), term.onData((data) => hooks.onInput(data));
+  });
+  term.onData((data) => hooks.onInput(data));
   let lastCols = 0, lastRows = 0, fitFrame = 0, fitAndNotify = (force) => {
     try {
       fitAddon.fit();
@@ -8964,7 +8968,7 @@ function createTerminalEngine(options) {
       return term.rows;
     },
     dispose() {
-      fitFrame !== 0 && cancelAnimationFrame(fitFrame), themeFrame !== 0 && cancelAnimationFrame(themeFrame), resizeObserver.disconnect(), window.removeEventListener("resize", onWindowResize), themeObserver.disconnect(), zebraWatcher?.dispose(), search.input.removeEventListener("keydown", onSearchKeydown), search.input.removeEventListener("input", onSearchInput), search.prev.removeEventListener("click", onPrev), search.next.removeEventListener("click", onNext), search.close.removeEventListener("click", onClose), term.dispose();
+      fitFrame !== 0 && cancelAnimationFrame(fitFrame), themeFrame !== 0 && cancelAnimationFrame(themeFrame), resizeObserver.disconnect(), window.removeEventListener("resize", onWindowResize), themeObserver.disconnect(), zebraWatcher?.dispose(), search.input.removeEventListener("keydown", onSearchKeydown), search.input.removeEventListener("input", onSearchInput), search.prev.removeEventListener("click", onPrev), search.next.removeEventListener("click", onNext), search.close.removeEventListener("click", onClose), disposeFocusRecovery(), term.dispose();
     }
   };
 }

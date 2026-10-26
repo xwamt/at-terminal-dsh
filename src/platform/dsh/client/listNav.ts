@@ -41,7 +41,23 @@ export function moveRowFocus(
 ): boolean {
   const doc = typeof document === 'undefined' ? undefined : document;
   if (doc === undefined) return false;
-  const rows = Array.from(doc.querySelectorAll(selector)) as unknown as Array<{
+  /*
+   * Scope the search to the list that received the key, never to the whole document.
+   *
+   * This used to be `doc.querySelectorAll(selector)` against a bare attribute such as
+   * `[data-at-terminal-row]`. Two things share that attribute across the page — a second mounted
+   * asset body (the frame keeps a background tab's body mounted once it has been visited) and the
+   * SFTP rows when both pages exist — so ArrowDown at the end of *this* list stepped into another
+   * container and fired **its** `onSelect`, changing a selection the user could not even see.
+   *
+   * `currentTarget` is the row that owns the handler; its nearest `[role="listbox"]` /
+   * `[role="tree"]` ancestor is exactly the list the arrow key is about. When no such ancestor
+   * exists (a caller outside a listbox) the current-target check below rejects the move, which is
+   * the same answer the old `at < 0` guard gave — just for the right reason.
+   */
+  const owner = event.currentTarget as { closest?: (selector: string) => Element | null } | undefined;
+  const root = (owner?.closest?.('[role="listbox"],[role="tree"],[role="grid"]') ?? null) as Element | null;
+  const rows = Array.from((root ?? doc).querySelectorAll(selector)) as unknown as Array<{
     focus?: () => void;
     click?: () => void;
   }>;

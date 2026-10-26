@@ -16433,7 +16433,7 @@ var AgentToolService = class {
         tool: "run_remote_command",
         serverId: result.serverId,
         command,
-        reasonCode: result.timedOut ? "command_timeout" : reasonCode,
+        reasonCode,
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         truncated: result.truncated,
@@ -16444,7 +16444,7 @@ var AgentToolService = class {
         tool: "run_remote_command",
         serverId: result.serverId,
         command,
-        reasonCode: result.timedOut ? "command_timeout" : reasonCode
+        reasonCode
       }), this.dependencies.executionBridge?.recordActionEnd(
         actionId,
         "success",
@@ -16790,7 +16790,7 @@ var AgentToolService = class {
 };
 function auditReasonForError(error, fallback) {
   let message = error instanceof Error ? error.message : String(error);
-  return message.includes("was cancelled") || message.includes("was aborted") ? "user_cancelled" : message.startsWith("Confirmation timed out") ? "confirmation_timeout" : message.includes("does not allow background connections") ? "background_denied" : fallback === "user_approved" || fallback === "auto_approved" ? "error" : fallback;
+  return message.includes("was cancelled") || message.includes("was aborted") ? "user_cancelled" : message.startsWith("Confirmation timed out") ? "confirmation_timeout" : message.startsWith("Command timed out after") ? "command_timeout" : message.includes("does not allow background connections") ? "background_denied" : fallback === "user_approved" || fallback === "auto_approved" ? "error" : fallback;
 }
 
 // src/agent/HardwareMetricsCollector.ts
@@ -17184,24 +17184,28 @@ var DEFAULT_TIMEOUT_MS = 3e4, MAX_TIMEOUT_MS = 12e4, DEFAULT_MAX_OUTPUT_BYTES = 
         }, request.signal.addEventListener("abort", abortListener, { once: !0 });
       }
       function finish(exitCode, signal) {
-        settled || (settled = !0, detach(), resolve({
-          serverId: server.id,
-          serverLabel: server.label,
-          host: server.host,
-          command,
-          cwd: request.cwd,
-          exitCode,
-          signal,
-          stdout: stdout.text(),
-          // A timeout appends its notice instead of replacing stderr: whatever the
-          // command managed to print before it overran is usually the diagnosis.
-          // `timedOut` is only ever set by the timer, which only exists when
-          // `timeoutMs` does, so the fallback is unreachable rather than a real default.
-          stderr: timedOut ? appendTimeoutNotice(stderr.text(), timeoutMs ?? 0) : stderr.text(),
-          durationMs: Date.now() - started,
-          timedOut,
-          truncated: stdout.truncated || stderr.truncated
-        }));
+        if (!settled) {
+          if (timedOut) {
+            settled = !0, detach(), reject(new RemoteCommandTimeoutError(timeoutMs ?? 0, stdout.text(), stderr.text()));
+            return;
+          }
+          settled = !0, detach(), resolve({
+            serverId: server.id,
+            serverLabel: server.label,
+            host: server.host,
+            command,
+            cwd: request.cwd,
+            exitCode,
+            signal,
+            stdout: stdout.text(),
+            // `timedOut` is handled above (it rejects), so this resolve is always a completed
+            // command and `stderr` is what the command actually wrote.
+            stderr: stderr.text(),
+            durationMs: Date.now() - started,
+            timedOut,
+            truncated: stdout.truncated || stderr.truncated
+          });
+        }
       }
       function rejectOnce(error) {
         settled || (settled = !0, detach(), reject(error));
@@ -17275,13 +17279,14 @@ var DEFAULT_TIMEOUT_MS = 3e4, MAX_TIMEOUT_MS = 12e4, DEFAULT_MAX_OUTPUT_BYTES = 
   evict(serverId, connection) {
     connection.closed || (connection.closed = !0, connection.idleTimer && (clearTimeout(connection.idleTimer), connection.idleTimer = void 0), this.pool.get(serverId) === connection && this.pool.delete(serverId), connection.client?.end(), connection.handle?.dispose());
   }
+}, RemoteCommandTimeoutError = class extends Error {
+  timeoutMs;
+  stdout;
+  stderr;
+  constructor(timeoutMs, stdout, stderr) {
+    super(`Command timed out after ${timeoutMs}ms.`), this.name = "RemoteCommandTimeoutError", this.timeoutMs = timeoutMs, this.stdout = stdout, this.stderr = stderr;
+  }
 };
-function appendTimeoutNotice(capturedStderr, timeoutMs) {
-  let notice = `Command timed out after ${timeoutMs}ms.`;
-  return capturedStderr ? capturedStderr.endsWith(`
-`) ? `${capturedStderr}${notice}` : `${capturedStderr}
-${notice}` : notice;
-}
 function clampPositiveInteger(value, fallback, max) {
   return typeof value != "number" || !Number.isInteger(value) || value <= 0 ? fallback : Math.min(value, max);
 }

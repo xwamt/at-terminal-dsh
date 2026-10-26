@@ -43,9 +43,31 @@ export const INLINE_TAIL = 4 * 1024
  * @returns {{ head: string, tail: string, omitted: number }}
  */
 export function splitForSpill(text) {
-  const headEnd = Math.min(INLINE_HEAD, text.length)
-  const tailStart = Math.max(headEnd, text.length - INLINE_TAIL)
+  const headEnd = safeCut(text, Math.min(INLINE_HEAD, text.length), true)
+  const tailStart = safeCut(text, Math.max(headEnd, text.length - INLINE_TAIL), false)
   return { head: text.slice(0, headEnd), tail: text.slice(tailStart), omitted: tailStart - headEnd }
+}
+
+/**
+ * Nudge a cut index off a lone surrogate, so neither half starts or ends mid-character.
+ *
+ * The budget is measured in characters because that is what the Host caps on, but a cut in the
+ * middle of a surrogate pair (an emoji, a rare CJK ideograph above U+FFFF) produces a lone
+ * surrogate — which renders as `�` and, worse, makes the "the complete result is at <path>"
+ * recovery pointer point at a file whose first character disagrees with what was shown.
+ *
+ * `forward` chooses which side gives way: the head keeps at most its budget, the tail starts at
+ * least at its budget, so the correction never goes back past the other half's cut.
+ */
+function safeCut(text, to, forward) {
+  // A cut at either end of the string cannot split anything, and `to === text.length` is the
+  // common case for a short tail — guarding it out handed back an empty half.
+  if (to <= 0 || to >= text.length) return to
+  const at = text.charCodeAt(to)
+  const before = text.charCodeAt(to - 1)
+  const splitsPair = before >= 0xd800 && before <= 0xdbff && at >= 0xdc00 && at <= 0xdfff
+  if (!splitsPair) return to
+  return forward ? to - 1 : to + 1
 }
 
 /** The per-session owner id, in either shape the Host has shipped. */
@@ -79,12 +101,24 @@ export async function spillIfOverBudget({
   budget = INLINE_BUDGET
 }) {
   const totalBytes = Buffer.byteLength(text, 'utf8')
-  if (text.length <= budget) {
+  /*
+   * Compared in **bytes**, because every limit in this system is a byte limit.
+   *
+   * This used to compare `text.length` — UTF-16 code units — against the budget. For ASCII the two
+   * agree, which is why it looked right; for a Chinese log (`ps`, `df`, a build log from a CN
+   * locale — the normal case here) three bytes hide behind one character. A 30 000-character result
+   * is 90 KB, sailed under the 32 KB check, was returned inline with `saved: false` and
+   * `truncated: false`, and was then cut by the host's own byte cap with nothing to point at the
+   * full text — precisely the state this file exists to prevent.
+   */
+  if (totalBytes <= budget) {
     return { text, spillPath: null, saved: false, totalBytes }
   }
 
   const { head, tail, omitted } = splitForSpill(text)
-  const marker = `… ${omitted} of ${text.length} characters omitted`
+  // Two units on purpose: the caller budgets in bytes, the marker counts what it removed in
+  // characters, and a line that states only one of them disagrees with the other number nearby.
+  const marker = `… ${omitted} characters (${totalBytes} bytes total) omitted`
   /** Note goes *between* head and tail, so the last lines a caller usually needs stay last. */
   const compose = (note) => `${head}\n\n${marker} — ${note}\n\n${tail}`
 

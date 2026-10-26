@@ -1586,11 +1586,17 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   border-radius: 20px;
   padding: 5px 12px;
   font-size: 12px;
-  cursor: grab;
+  /*
+   * Not a drag surface.
+   *
+   * The capsule moves by its six-dot handle only, so it shows the default cursor — it used to say
+   * grab on the whole pill, which advertised a drag that the pill's own pointerdown does not start
+   * (and before that, a drag that started *there* instead of on the handle). No touch-action: none
+   * either: a touch drag over the pill is the page's scroll, not a gesture.
+   */
   box-shadow: var(--dsw-shadow-lv2);
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
-  touch-action: none;
 }
 
 .att-hud-pill:hover {
@@ -1599,9 +1605,7 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   box-shadow: var(--dsw-shadow-lv3);
 }
 
-.att-hud-pill:active,
 .att-hud-pill.is-dragging {
-  cursor: grabbing;
   border-color: var(--dsw-alias-brand-primary);
 }
 
@@ -1714,12 +1718,28 @@ button.att-hud-pill-chip:hover {
   align-self: stretch;
   padding: 0 6px;
   margin: -5px -2px -5px -6px;
+  /*
+   * Claim the gesture for the pointer.
+   *
+   * On a touch screen the browser would otherwise read the downward movement as a scroll and fire
+   * pointercancel, which ends the drag before it starts; this is the CSS half of the
+   * preventDefault in monitorHud.ts. It belongs on the handle rather than on the pill, because
+   * only the handle is a drag surface.
+   */
+  touch-action: none;
 }
 .att-floating-drag-grip svg {
   pointer-events: none;
 }
-.att-hud-pill.is-dragging .att-floating-drag-grip {
-  cursor: grabbing;
+/*
+ * While a drag is in flight the cursor belongs to the **document**, not to whatever the pointer
+ * happens to be over: moving across a chip used to flip it back to pointer halfway through the
+ * gesture. The important flag is the honest tool here — the chips' own cursor rule is more
+ * specific.
+ */
+.att-hud-overlay.is-dragging,
+.att-hud-overlay.is-dragging * {
+  cursor: grabbing !important;
 }
 
 .att-floating-header-actions {

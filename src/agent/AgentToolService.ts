@@ -247,7 +247,7 @@ export class AgentToolService {
         tool: 'run_remote_command',
         serverId: result.serverId,
         command,
-        reasonCode: result.timedOut ? 'command_timeout' : reasonCode,
+        reasonCode,
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         truncated: result.truncated,
@@ -259,7 +259,7 @@ export class AgentToolService {
         tool: 'run_remote_command',
         serverId: result.serverId,
         command,
-        reasonCode: result.timedOut ? 'command_timeout' : reasonCode
+        reasonCode
       });
       this.dependencies.executionBridge?.recordActionEnd(
         actionId,
@@ -747,6 +747,11 @@ function auditReasonForError(error: unknown, fallback: string): string {
   }
   if (message.startsWith('Confirmation timed out')) {
     return 'confirmation_timeout';
+  }
+  // A command that overran its deadline used to be audited as a **success** (`exitCode: null`,
+  // resolved by the executor). It now rejects, and this is the reason code it records.
+  if (message.startsWith('Command timed out after')) {
+    return 'command_timeout';
   }
   if (message.includes('does not allow background connections')) {
     return 'background_denied';
