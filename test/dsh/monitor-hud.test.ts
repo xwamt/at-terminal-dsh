@@ -452,8 +452,10 @@ describe('the capsule drags by its handle', () => {
 
   it('puts the pointerdown on the handle, not on the pill', () => {
     // The grip's own handler, inside the grip element's props.
-    expect(grip.slice(0, 400)).toContain('onPointerDown');
-    expect(grip.slice(0, 400)).toContain('handlePointerDown(e, true)');
+    // Native, capture-phase — not React's delegated handler, which the host's own document-level
+    // listeners can swallow before it ever reaches the plugin's root.
+    expect(grip.slice(0, 400)).toContain('ref: gripRef');
+    expect(HUD).toContain("addEventListener('pointerdown', onDown, { capture: true })");
     // And the pill's props no longer start a drag: that was attempt 2, and it is what broke the
     // chips. The pill keeps only the click-swallowing capture handler.
     expect(pill).not.toContain('onPointerDown');
@@ -473,7 +475,9 @@ describe('the capsule drags by its handle', () => {
     // This is the half of the complaint that a source assertion can hold: the press has to be
     // forgiving. 14px of icon is not; the padded box is.
     expect(HUD).toContain("className: 'att-floating-drag-grip'");
-    expect(SHEET).toMatch(/\.att-floating-drag-grip \{[\s\S]{0,600}?padding: 7px 5px/);
+    expect(SHEET).toMatch(/\.att-floating-drag-grip \{[\s\S]{0,700}?align-self: stretch/);
+    // The glyph must not become the target, or the handler and the dots disagree about hit area.
+    expect(SHEET).toMatch(/\.att-floating-drag-grip svg \{[^}]*pointer-events: none/);
     expect(SHEET).toMatch(/\.att-floating-drag-grip \{[\s\S]{0,600}?cursor: grab/);
   });
 

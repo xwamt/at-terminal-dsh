@@ -6520,7 +6520,16 @@ function MonitorHudWidget(props) {
       height: isPill ? 40 : 520,
       isPill
     }, suppressClickRef.current = !1, setArmed(!0));
-  }, handleHeaderDoubleClick = (e) => {
+  }, gripRef = (0, import_react11.useRef)(null);
+  (0, import_react11.useEffect)(() => {
+    let node = gripRef.current;
+    if (node === null) return;
+    let onDown = (event) => {
+      event.button === 0 && (event.preventDefault(), event.stopPropagation(), handlePointerDown(event, !0));
+    };
+    return node.addEventListener("pointerdown", onDown, { capture: !0 }), () => node.removeEventListener("pointerdown", onDown, { capture: !0 });
+  }, [expanded]);
+  let handleHeaderDoubleClick = (e) => {
     let target = e.target;
     target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
   }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0];
@@ -6579,7 +6588,7 @@ function MonitorHudWidget(props) {
         {
           className: "att-floating-drag-grip",
           "aria-hidden": !0,
-          onPointerDown: (e) => handlePointerDown(e, !0)
+          ref: gripRef
         },
         gripRegular({ size: 14 })
       ),

@@ -2534,12 +2534,17 @@ button.att-hud-pill-chip:hover {
   user-select: none;
   /*
    * The handle is the only draggable spot on the capsule, so its *hit* area must be bigger than its
-   * glyph: a 14px icon meant the press had to land within a few pixels, and the report was exactly
-   * that \u2014 "a little higher drags, a little lower does not". Negative margins keep the dots where
-   * they were while the target grows to ~24x28 without moving the layout.
+   * glyph. A 14px icon meant the press had to land within a few pixels and the report was exactly
+   * that \u2014 "a little higher drags, a little lower does not". The box now spans the pill's full
+   * height (negative vertical margins cancel the pill's padding) instead of just the dots, and the
+   * glyph inside it is transparent to the pointer so the target is always this element.
    */
-  padding: 7px 5px;
-  margin: -7px -1px -7px -4px;
+  align-self: stretch;
+  padding: 0 6px;
+  margin: -5px -2px -5px -6px;
+}
+.att-floating-drag-grip svg {
+  pointer-events: none;
 }
 .att-hud-pill.is-dragging .att-floating-drag-grip {
   cursor: grabbing;

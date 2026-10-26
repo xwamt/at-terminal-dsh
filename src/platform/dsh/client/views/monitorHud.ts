@@ -242,6 +242,33 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     setArmed(true);
   };
 
+  /**
+   * The handle listens **natively**, in the capture phase.
+   *
+   * React's delegated `pointerdown` runs at the renderer's root container, which is *inside* the
+   * host app: any document-level handler the host installs for its own focus/drag management runs
+   * first, and one `stopPropagation()` there means the plugin never sees the press at all. A
+   * listener bound to the node itself with `capture: true` is the first thing to run and cannot be
+   * preempted, which is the difference between "the handle works" and "the handle does nothing
+   * while everything else does".
+   *
+   * `preventDefault` is part of the deal: without it the press starts a text selection / native
+   * drag from the SVG, and the selection is what the pointer then moves.
+   */
+  const gripRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const node = gripRef.current;
+    if (node === null) return;
+    const onDown = (event: PointerEvent): void => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handlePointerDown(event, true);
+    };
+    node.addEventListener('pointerdown', onDown, { capture: true });
+    return () => node.removeEventListener('pointerdown', onDown, { capture: true });
+  }, [expanded]);
+
   const handleHeaderDoubleClick = (e: any) => {
     const target = e.target as HTMLElement;
     if (target?.closest && target.closest('button')) return;
@@ -336,7 +363,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           {
             className: 'att-floating-drag-grip',
             'aria-hidden': true,
-            onPointerDown: (e: any) => handlePointerDown(e, true)
+            ref: gripRef
           },
           gripRegular({ size: 14 })
         ),
