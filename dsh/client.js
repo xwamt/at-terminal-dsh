@@ -917,6 +917,10 @@ var NS = "atTerminal", zh = {
   "monitor.guideDescription": "\u5B9E\u65F6\u67E5\u770B\u4E3B\u673A\u786C\u4EF6\u6307\u6807\u4E0E Agent \u6267\u884C\u5BA1\u8BA1",
   "monitor.tab.overview": "\u603B\u89C8",
   "monitor.tab.hardware": "\u786C\u4EF6\u6307\u6807",
+  // The probe failed. Two sentences because "collected a while ago" and "never collected" are
+  // different facts, and a single "stale" would let the second one read as the first.
+  "monitor.hardware.stale": "\u6570\u636E\u4E0D\u662F\u8FD9\u4E00\u8F6E\u91C7\u7684\uFF1A\u63A2\u9488\u81EA {time} \u4E4B\u540E\u6CA1\u6709\u6210\u529F\uFF0C\u4E0B\u9762\u662F\u90A3\u65F6\u7684\u8BFB\u6570\u3002",
+  "monitor.hardware.never": "\u63A2\u9488\u4ECE\u672A\u6210\u529F\u8FC7\uFF0C\u4E0B\u9762\u7684\u6570\u5B57\u662F\u5360\u4F4D\u503C\uFF0C\u4E0D\u662F\u8FD9\u53F0\u673A\u5668\u7684\u72B6\u6001\u3002",
   "monitor.tab.agent": "Agent \u6267\u884C",
   "monitor.server": "\u76EE\u6807\u670D\u52A1\u5668\uFF1A",
   "monitor.hud.paneShow": "\u5728\u60AC\u6D6E\u7A97\u4E2D\u663E\u793A",
@@ -1331,6 +1335,8 @@ var NS = "atTerminal", zh = {
   "monitor.guideDescription": "Real-time host hardware metrics and Agent execution audits",
   "monitor.tab.overview": "Overview",
   "monitor.tab.hardware": "Hardware Metrics",
+  "monitor.hardware.stale": "Not this reading: the probe has not succeeded since {time}, so these are the numbers from then.",
+  "monitor.hardware.never": "The probe has never succeeded \u2014 the values below are placeholders, not this host.",
   "monitor.tab.agent": "Agent Execution",
   "monitor.server": "Server: ",
   "monitor.hud.paneShow": "Show floating window",
@@ -5692,10 +5698,15 @@ function HardwareMonitorView(props) {
       { className: "att-monitor-card", role: "region", "aria-label": t("monitor.tab.hardware") },
       h("div", null, t("servers.pending"))
     );
-  let cpu = metrics?.cpu ?? { usagePercent: 0, cores: [0], loadAvg: [0, 0, 0] }, memory = metrics?.memory ?? { totalBytes: 0, usedBytes: 0, freeBytes: 0 }, disk = metrics?.disk ?? { mounts: [] }, network = metrics?.network ?? { rxBytesPerSec: 0, txBytesPerSec: 0 }, processes = metrics?.processes ?? [], memUsedPercent = memory.totalBytes > 0 ? Math.min(100, Math.round(memory.usedBytes / memory.totalBytes * 100)) : 0, cpuWarnLevel = cpu.usagePercent > 85 ? "error" : cpu.usagePercent > 70 ? "warn" : "normal", memWarnLevel = memUsedPercent > 85 ? "error" : memUsedPercent > 70 ? "warn" : "normal";
+  let cpu = metrics?.cpu ?? { usagePercent: 0, cores: [0], loadAvg: [0, 0, 0] }, memory = metrics?.memory ?? { totalBytes: 0, usedBytes: 0, freeBytes: 0 }, disk = metrics?.disk ?? { mounts: [] }, network = metrics?.network ?? { rxBytesPerSec: 0, txBytesPerSec: 0 }, processes = metrics?.processes ?? [], memUsedPercent = memory.totalBytes > 0 ? Math.min(100, Math.round(memory.usedBytes / memory.totalBytes * 100)) : 0, cpuWarnLevel = cpu.usagePercent > 85 ? "error" : cpu.usagePercent > 70 ? "warn" : "normal", memWarnLevel = memUsedPercent > 85 ? "error" : memUsedPercent > 70 ? "warn" : "normal", staleNote = metrics?.stale === !0 ? h(
+    "div",
+    { className: "att-monitor-stale", role: "status" },
+    metrics.fetchedAt > 0 ? t("monitor.hardware.stale", { time: new Date(metrics.fetchedAt).toLocaleTimeString() }) : t("monitor.hardware.never")
+  ) : null;
   return h(
     "div",
     { className: "att-monitor-grid", role: "region", "aria-label": t("monitor.tab.hardware") },
+    staleNote,
     // CPU Card
     h(
       "div",

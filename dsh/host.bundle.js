@@ -16551,6 +16551,10 @@ var AgentToolService = class {
       },
       network: { rxBytesPerSec: 1024 * 20, txBytesPerSec: 1024 * 5 },
       processes: [],
+      // No collector is composed in this build, so these numbers are placeholders. Marking them
+      // is the difference between "we cannot measure this host" and "this host is 12% busy".
+      stale: !0,
+      fetchedAt: 0,
       ...resolution
     };
   }
@@ -16835,7 +16839,18 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
       }
     } catch {
     }
-    return cached3 ? cached3.metrics : this.createFallbackMetrics(server.id);
+    return this.staleCopy(server.id, cached3);
+  }
+  /**
+   * The last numbers we had, marked as not-current.
+   *
+   * Two different failures share this: "we had numbers once and the probe has been failing since"
+   * (the cache entry) and "we have never had numbers" (the zero fallback). `fetchedAt` is what
+   * tells them apart downstream — `0` means the probe never succeeded, not that it succeeded at
+   * the epoch.
+   */
+  staleCopy(serverId, cached3) {
+    return cached3 === void 0 ? this.createFallbackMetrics(serverId) : { ...cached3.metrics, stale: !0, fetchedAt: cached3.fetchedAt };
   }
   parseProbeOutput(serverId, output, ts) {
     let sections = {}, regex = /===([A-Z]+)===\n([\s\S]*?)(?=(?:===[A-Z]+===|$))/g, match;
@@ -16849,7 +16864,10 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
       memory,
       disk,
       network,
-      processes
+      processes,
+      // Parsed from a probe that just answered, so it is current by construction.
+      stale: !1,
+      fetchedAt: ts
     };
   }
   parseCpu(serverId, statStr, uptimeStr, ts) {
@@ -17042,7 +17060,11 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
         rxBytesPerSec: 0,
         txBytesPerSec: 0
       },
-      processes: []
+      processes: [],
+      // Nothing was ever collected: the numbers are placeholders, and `fetchedAt: 0` says
+      // "never" rather than "at the epoch".
+      stale: !0,
+      fetchedAt: 0
     };
   }
   dispose() {

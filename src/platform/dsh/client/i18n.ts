@@ -323,6 +323,10 @@ export const zh: Record<string, string> = {
   'monitor.guideDescription': '实时查看主机硬件指标与 Agent 执行审计',
   'monitor.tab.overview': '总览',
   'monitor.tab.hardware': '硬件指标',
+  // The probe failed. Two sentences because "collected a while ago" and "never collected" are
+  // different facts, and a single "stale" would let the second one read as the first.
+  'monitor.hardware.stale': '数据不是这一轮采的：探针自 {time} 之后没有成功，下面是那时的读数。',
+  'monitor.hardware.never': '探针从未成功过，下面的数字是占位值，不是这台机器的状态。',
   'monitor.tab.agent': 'Agent 执行',
   'monitor.server': '目标服务器：',
   'monitor.hud.paneShow': '在悬浮窗中显示',
@@ -741,6 +745,9 @@ export const en: Record<string, string> = {
   'monitor.guideDescription': 'Real-time host hardware metrics and Agent execution audits',
   'monitor.tab.overview': 'Overview',
   'monitor.tab.hardware': 'Hardware Metrics',
+  'monitor.hardware.stale':
+    'Not this reading: the probe has not succeeded since {time}, so these are the numbers from then.',
+  'monitor.hardware.never': 'The probe has never succeeded — the values below are placeholders, not this host.',
   'monitor.tab.agent': 'Agent Execution',
   'monitor.server': 'Server: ',
   'monitor.hud.paneShow': 'Show floating window',

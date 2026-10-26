@@ -1046,6 +1046,21 @@ export interface HardwareMetrics {
   disk: DiskMetrics;
   network: NetworkMetrics;
   processes: ProcessMetrics[];
+  /**
+   * These numbers were not collected just now.
+   *
+   * The probe runs on a timer and can fail — a timeout, a refused connection, a host that stopped
+   * answering. The collector used to answer with its previous cache entry and nothing else, so a
+   * wedged host rendered exactly like an idle one: the same flat memory, the same low CPU. `stale`
+   * is the one bit that lets a surface say "this is what it looked like at 14:03" instead of
+   * implying it is what it looks like now.
+   */
+  stale: boolean;
+  /**
+   * When these numbers were last collected successfully, epoch ms. `0` when the probe has never
+   * succeeded, which is a different fact from "collected a while ago".
+   */
+  fetchedAt: number;
 }
 
 export type AgentActionStatus = 'running' | 'confirmation_waiting' | 'success' | 'denied';

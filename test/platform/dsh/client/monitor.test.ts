@@ -109,6 +109,75 @@ Inter-|   Receive                                                |  Transmit
       expect(m1).toBe(m2);
     });
 
+    it('marks the last reading stale when the probe fails, instead of passing it off as current', async () => {
+      let now = 1000;
+      const executeMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: '===UPTIME===\n 10:00:00 up 1 day, load average: 0.1, 0.2, 0.3\n'
+        })
+        .mockRejectedValueOnce(new Error('Command timed out after 4000ms.'));
+      const collector = new HardwareMetricsCollector({
+        executor: { execute: executeMock } as any,
+        now: () => now
+      });
+
+      const server: any = { id: 'srv-stale', host: '127.0.0.1' };
+      const fresh = await collector.getMetrics(server);
+      expect(fresh.stale).toBe(false);
+      expect(fresh.fetchedAt).toBe(1000);
+
+      // Past the 1500 ms cache window, and the probe now times out.
+      now = 5000;
+      const stale = await collector.getMetrics(server);
+      /*
+       * Before this, the caller got the previous entry with nothing marking it, so a wedged host
+       * rendered exactly like an idle one. The numbers are still the best answer available — but
+       * `stale` says they are not this reading, and `fetchedAt` says when they were.
+       */
+      expect(stale.stale).toBe(true);
+      expect(stale.fetchedAt).toBe(1000);
+      expect(stale.cpu).toEqual(fresh.cpu);
+    });
+
+    it('marks the zero fallback stale with fetchedAt 0 when the probe never succeeded', async () => {
+      const collector = new HardwareMetricsCollector({
+        executor: { execute: vi.fn().mockRejectedValue(new Error('Command timed out after 4000ms.')) } as any,
+        now: () => 7000
+      });
+
+      const metrics = await collector.getMetrics({ id: 'srv-never', host: '127.0.0.1' } as any);
+      expect(metrics.stale).toBe(true);
+      // "never" is a different fact from "at the epoch", so the marker is 0 and not the timestamp.
+      expect(metrics.fetchedAt).toBe(0);
+      expect(metrics.cpu.usagePercent).toBe(0);
+    });
+
+    it('marks a non-zero exit code stale too, not only a thrown probe', async () => {
+      let now = 1000;
+      const executeMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: '===UPTIME===\n 10:00:00 up 1 day, load average: 0.1, 0.2, 0.3\n'
+        })
+        .mockResolvedValueOnce({ exitCode: 255, stdout: '' });
+      const collector = new HardwareMetricsCollector({
+        executor: { execute: executeMock } as any,
+        now: () => now
+      });
+
+      const server: any = { id: 'srv-exit', host: '127.0.0.1' };
+      await collector.getMetrics(server);
+      now = 5000;
+      const stale = await collector.getMetrics(server);
+      // A refused connection exits non-zero rather than throwing; it is the same failure to the
+      // reader, so it has to carry the same marker.
+      expect(stale.stale).toBe(true);
+      expect(stale.fetchedAt).toBe(1000);
+    });
+
     it('calculates CPU percentage and per-core distribution from /proc/stat deltas', () => {
       let currentTime = 1000;
       const collector = new HardwareMetricsCollector({ now: () => currentTime });

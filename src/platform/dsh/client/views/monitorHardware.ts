@@ -35,10 +35,29 @@ export function HardwareMonitorView(props: HardwareMonitorViewProps): El {
     memory.totalBytes > 0 ? Math.min(100, Math.round((memory.usedBytes / memory.totalBytes) * 100)) : 0;
   const cpuWarnLevel = cpu.usagePercent > 85 ? 'error' : cpu.usagePercent > 70 ? 'warn' : 'normal';
   const memWarnLevel = memUsedPercent > 85 ? 'error' : memUsedPercent > 70 ? 'warn' : 'normal';
+  /*
+   * The probe failed, and these numbers are the last ones that worked.
+   *
+   * Without this line the page is indistinguishable from a healthy idle host — same flat memory,
+   * same low CPU — which is the exact misreading the collector's `stale` bit exists to prevent.
+   * `fetchedAt === 0` is a different sentence: nothing was ever collected, so the zeros below are
+   * placeholders rather than a reading.
+   */
+  const staleNote =
+    metrics?.stale === true
+      ? h(
+          'div',
+          { className: 'att-monitor-stale', role: 'status' },
+          metrics.fetchedAt > 0
+            ? t('monitor.hardware.stale', { time: new Date(metrics.fetchedAt).toLocaleTimeString() })
+            : t('monitor.hardware.never')
+        )
+      : null;
 
   return h(
     'div',
     { className: 'att-monitor-grid', role: 'region', 'aria-label': t('monitor.tab.hardware') },
+    staleNote,
     // CPU Card
     h(
       'div',

@@ -1377,6 +1377,24 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   gap: 12px;
 }
 
+/*
+ * The probe failed and the cards below are the last reading that worked.
+ *
+ * grid-column: 1 / -1 spans every column, so the sentence sits above the grid rather than
+ * becoming a card of its own. Border and background match .att-monitor-card on purpose: it is a
+ * banner, not an error state, and colouring it red would overstate a host that is merely
+ * unreachable for a moment.
+ */
+.att-monitor-stale {
+  grid-column: 1 / -1;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
 .att-monitor-card {
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);

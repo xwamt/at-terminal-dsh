@@ -74,11 +74,33 @@ export class HardwareMetricsCollector {
         return parsed;
       }
     } catch {
-      // Degrade gracefully on execution failure
+      /*
+       * The probe failed — a timeout, a refused connection, a host that stopped answering.
+       *
+       * This used to fall through to the cached entry with nothing marking it, so the surface
+       * rendered the previous reading as if it were current: a wedged host looked idle. The cache
+       * is still the best answer available (zeros would be a lie of a different kind), but it is
+       * handed back **marked** now, and `staleCopy` is the only path that does that.
+       */
     }
 
-    const fallback = cached ? cached.metrics : this.createFallbackMetrics(server.id);
-    return fallback;
+    return this.staleCopy(server.id, cached);
+  }
+
+  /**
+   * The last numbers we had, marked as not-current.
+   *
+   * Two different failures share this: "we had numbers once and the probe has been failing since"
+   * (the cache entry) and "we have never had numbers" (the zero fallback). `fetchedAt` is what
+   * tells them apart downstream — `0` means the probe never succeeded, not that it succeeded at
+   * the epoch.
+   */
+  private staleCopy(
+    serverId: string,
+    cached: { metrics: HardwareMetrics; fetchedAt: number } | undefined
+  ): HardwareMetrics {
+    if (cached === undefined) return this.createFallbackMetrics(serverId);
+    return { ...cached.metrics, stale: true, fetchedAt: cached.fetchedAt };
   }
 
   parseProbeOutput(serverId: string, output: string, ts: number): HardwareMetrics {
@@ -102,7 +124,10 @@ export class HardwareMetricsCollector {
       memory,
       disk,
       network,
-      processes
+      processes,
+      // Parsed from a probe that just answered, so it is current by construction.
+      stale: false,
+      fetchedAt: ts
     };
   }
 
@@ -409,7 +434,11 @@ export class HardwareMetricsCollector {
         rxBytesPerSec: 0,
         txBytesPerSec: 0
       },
-      processes: []
+      processes: [],
+      // Nothing was ever collected: the numbers are placeholders, and `fetchedAt: 0` says
+      // "never" rather than "at the epoch".
+      stale: true,
+      fetchedAt: 0
     };
   }
 

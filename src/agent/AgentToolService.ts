@@ -394,6 +394,10 @@ export class AgentToolService {
       },
       network: { rxBytesPerSec: 1024 * 20, txBytesPerSec: 1024 * 5 },
       processes: [],
+      // No collector is composed in this build, so these numbers are placeholders. Marking them
+      // is the difference between "we cannot measure this host" and "this host is 12% busy".
+      stale: true,
+      fetchedAt: 0,
       ...resolution
     };
   }
