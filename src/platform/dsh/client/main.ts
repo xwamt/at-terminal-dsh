@@ -525,10 +525,17 @@ interface HudController {
    * Show the HUD. `serverId` names whose numbers to show; without it the HUD keeps following
    * the active terminal session, which is the right default for a user-opened panel and the
    * wrong one for an explicit request (a tool call or `/ssh-metrics` naming a server).
+   *
+   * An explicit `open` always wins, including over a dismissal: the user asking for the window is
+   * the one case where "closed" must not apply.
    */
   open(target?: 'hardware' | 'agent_execution', serverId?: string): void;
   close(): void;
   toggle(): void;
+  /** Whether the window is on screen right now — the pane's toggle needs to render its state. */
+  isVisible(): boolean;
+  /** Fires when that answer changes, so the toggle is not a one-way switch. */
+  subscribe(listener: (visible: boolean) => void): () => void;
 }
 
 function MonitorHudContainer(props: {
@@ -555,12 +562,44 @@ function MonitorHudContainer(props: {
   const connectedRef = useRef(false);
   const connectionStartedAtRef = useRef(0);
   const seenAuditIdsRef = useRef<Set<string>>(new Set());
+  /**
+   * Has the user switched the floating window off?
+   *
+   * Read from storage at mount and written whenever ✕ or an explicit open flips it. This is what
+   * makes a dismissal survive a reconnect: the auto-show below used to fire on every new
+   * connection, which meant "closed" lasted exactly until the next terminal was opened — the one
+   * moment the user had already answered.
+   */
+  const dismissedRef = useRef<boolean>(false);
+  const visibleRef = useRef(false);
+  /** The pane's toggle listens here; a Set in a ref because re-registering effects is worse. */
+  const visibilityListenersRef = useRef<Set<(visible: boolean) => void>>(new Set());
+
+  /** Keep the outside view of the switch in step with the real one. */
+  const publishVisibility = (next: boolean): void => {
+    visibleRef.current = next;
+    setVisible(next);
+    for (const listener of visibilityListenersRef.current) listener(next);
+  };
+
+  /** Turning it on is itself a decision, so it cancels an earlier ✕. */
+  const showHud = (): void => {
+    dismissedRef.current = false;
+    publishVisibility(true);
+  };
+
+  const hideHud = (): void => {
+    dismissedRef.current = true;
+    publishVisibility(false);
+  };
 
   useEffect(() => {
     if (onRegisterController) {
       onRegisterController({
         open: (target, serverId) => {
-          setVisible(true);
+          // Explicit request: wins over a dismissal, because the caller is the user or their tool.
+          postDiagnostic('info', `hud open target=${target ?? 'overview'} wasDismissed=${dismissedRef.current}`, 'hud', null, null);
+          showHud();
           setForceExpanded(true);
           if (target === 'hardware') setInitialSubtab('hardware');
           else if (target === 'agent_execution') setInitialSubtab('agent');
@@ -570,11 +609,20 @@ function MonitorHudContainer(props: {
           if (serverId !== undefined && serverId !== '') setActiveServerId(serverId);
         },
         close: () => {
-          setVisible(false);
+          // ✕ is a decision, not a pause: remembered, and it outranks every automatic show.
+          hideHud();
           setForceExpanded(false);
         },
         toggle: () => {
-          setVisible((prev) => !prev);
+          if (visibleRef.current) hideHud();
+          else showHud();
+        },
+        isVisible: () => visibleRef.current,
+        subscribe: (listener) => {
+          visibilityListenersRef.current.add(listener);
+          return () => {
+            visibilityListenersRef.current.delete(listener);
+          };
         }
       });
       return () => {
@@ -604,15 +652,32 @@ function MonitorHudContainer(props: {
           setAuditHistory([]);
           setForceExpanded(false);
           setInitialSubtab('overview');
+          /**
+           * A brand-new connection opens as the capsule — unless the user has switched it off.
+           *
+           * Two rules meet here, in this order:
+           *
+           * 1. **The dismissal wins.** Pressing ✕ sets an in-memory flag, so a new connection no
+           *    longer resurrects a window the user closed: "I closed it" outranks "a terminal
+           *    connected", because the second thing is not a request. It is deliberately not
+           *    persisted — a restart brings the capsule back, which is the safety net that keeps a
+           *    forgotten dismissal from hiding the window forever.
+           * 2. Otherwise the transition is the honest trigger: `connectedRef` is false only while
+           *    nothing is connected, so this runs on 0 → 1 and not on every tab switch (which is
+           *    what used to make a just-closed HUD reappear).
+           */
+          postDiagnostic('info', `hud autoshow dismissed=${dismissedRef.current}`, 'hud', null, null);
+          if (!dismissedRef.current) showHud();
         }
-        setVisible(true);
       } else {
         connectedRef.current = false;
         connectionStartedAtRef.current = 0;
         seenAuditIdsRef.current = new Set();
         setAuditHistory([]);
         setForceExpanded(false);
-        setVisible(false);
+        // Hidden, not dismissed: losing the connection must not switch the window off for good,
+        // or a dropped link would silently cancel a preference the user never expressed.
+        publishVisibility(false);
       }
     };
     const unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
@@ -624,6 +689,16 @@ function MonitorHudContainer(props: {
 
   // Poll metrics for current activeServerId
   useEffect(() => {
+    /**
+     * A closed HUD is closed, including its polling.
+     *
+     * Hardware metrics is not a cheap local read: `at_terminal_get_hardware_metrics` runs commands
+     * on the remote host. While this effect ignored `visibility`, closing the ✕ only unmounted the
+     * UI — every four seconds the plugin kept a pty busy on the server for a window nobody was
+     * looking at. Gating on `visible` also makes the first frame after reopening fetch immediately,
+     * because the effect re-runs when it flips back.
+     */
+    if (!visible) return;
     let unmounted = false;
     const fetchLatest = () => {
       Promise.all([
@@ -658,7 +733,7 @@ function MonitorHudContainer(props: {
       unmounted = true;
       clearInterval(interval);
     };
-  }, [activeServerId]);
+  }, [activeServerId, visible]);
 
   if (!visible) return null;
 
@@ -671,7 +746,14 @@ function MonitorHudContainer(props: {
     activeServerId,
     activeLabel,
     auditHistory,
-    onCloseHud: () => setVisible(false)
+    /**
+     * The ✕ closes through `hideHud`, not through `setVisible(false)`.
+     *
+     * It used to call `setVisible` directly, which skipped the two things that make a close a
+     * decision: persisting it (so the next connection no longer resurrects the window) and telling
+     * the pane's switch (so the switch kept saying "on" for a window that was gone).
+     */
+    onCloseHud: () => hideHud()
   });
 }
 
@@ -981,7 +1063,19 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('sidebar.right.pane.tab', () =>
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID_MONITOR, locale: NS },
-          wrapWithLocale(withStyles(AtTerminalMonitorBody), t)
+          wrapWithLocale(withStyles(AtTerminalMonitorBody), t, {
+            /**
+             * The pane's HUD switch, resolved per call: `hudController` is assigned when the
+             * overlay mounts, which happens after this registration, so capturing its value here
+             * would hand the pane `null` forever.
+             */
+            hud: {
+              isVisible: () => hudController?.isVisible() ?? false,
+              subscribe: (listener: (visible: boolean) => void) =>
+                hudController?.subscribe(listener) ?? (() => {}),
+              toggle: () => hudController?.toggle()
+            }
+          })
         )
       ),
     'at-terminal: monitor pane body'

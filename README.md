@@ -3,7 +3,7 @@
 > **DeepSeek Harness (DSH) 原生 SSH 终端、SFTP 远程文件工作区与 Agent 直连运维套件。**  
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
-[![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.2_Verified-brightgreen.svg)](#installation--setup--安装与配置)
+[![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.3_Verified-brightgreen.svg)](#installation--setup--安装与配置)
 [![Test Coverage](https://img.shields.io/badge/tests-97%2F97%20passed%20(1312%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)

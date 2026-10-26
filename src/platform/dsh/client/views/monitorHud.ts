@@ -6,6 +6,7 @@ import { chevronDownRegular, closeRegular, gaugeRegular, gripRegular, serverRegu
 import { HardwareMonitorView } from './monitorHardware';
 import { AgentMonitorView } from './monitorAgent';
 import { h, type El } from './shared';
+import { postDiagnostic } from '../channel';
 
 const STORAGE_KEY = 'dsh.at-terminal.monitor.hud.pos';
 
@@ -86,8 +87,14 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
   const [activeTab, setActiveTab] = useState<'overview' | 'hardware' | 'agent'>(initialSubtab ?? 'overview');
   const [pos, setPos] = useState<{ x: number; y: number }>(() => loadSavedPosition());
   const [isDragging, setIsDragging] = useState(false);
+  /** Armed by a press, disarmed on release. Drives the window-level listeners below. */
+  const [armed, setArmed] = useState(false);
 
-  const isDraggingRef = useRef(false);
+  /** Set when a gesture turned out to be a drag; cleared by the click it has to swallow. */
+  const suppressClickRef = useRef(false);
+  /** Latest position, so the drag effect does not have to re-subscribe on every move. */
+  const posRef = useRef(pos);
+  posRef.current = pos;
   const dragStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -95,9 +102,83 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     initialX: number;
     initialY: number;
     hasMoved: boolean;
-    currentWidth: number;
-    currentHeight: number;
+    width: number;
+    height: number;
+    isPill: boolean;
   } | null>(null);
+
+  /**
+   * Listen on `window` for the duration of a drag, not on the element.
+   *
+   * This is the fix for "the capsule cannot be dragged", and the measurement is worth recording
+   * because the code looked right twice before it was: a press on the pill reached
+   * `handlePointerDown` (`hud down isPill=true`), the threshold branch ran (`hud move captured`),
+   * and the window still never moved. Element-level `pointermove` simply does not arrive once the
+   * pointer leaves a 40px-tall pill — and in this renderer it barely arrives even before that, so
+   * `Math.hypot(dx, dy) >= 3` never crossed and `setPointerCapture` was never reached. The expanded
+   * window felt draggable only because its header is big enough to keep the pointer inside it.
+   *
+   * A window listener is what every drag implementation uses, and it makes the capture call
+   * unnecessary: the events arrive regardless of what is under the pointer.
+   */
+  useEffect(() => {
+    if (!armed) return;
+    const finish = (moved: boolean, pill: boolean): void => {
+      setIsDragging(false);
+      if (moved) {
+        savePosition(posRef.current);
+        suppressClickRef.current = true;
+      } else if (pill) {
+        // A tap on the handle opens the window: the same gesture as a drag, without the movement.
+        setExpanded(true);
+        setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
+      }
+      dragStateRef.current = null;
+      setArmed(false);
+    };
+    const onMove = (e: PointerEvent): void => {
+      const state = dragStateRef.current;
+      if (state === null || e.pointerId !== state.pointerId) return;
+      const dx = e.clientX - state.startX;
+      const dy = e.clientY - state.startY;
+      if (!state.hasMoved) {
+        if (Math.hypot(dx, dy) < 3) return;
+        state.hasMoved = true;
+        setIsDragging(true);
+      }
+      setPos(clampPosition(state.initialX + dx, state.initialY + dy, state.width, state.height));
+    };
+    const onUp = (e: PointerEvent): void => {
+      const state = dragStateRef.current;
+      if (state === null || e.pointerId !== state.pointerId) return;
+      finish(state.hasMoved, state.isPill);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [armed]);
+
+  /**
+   * One line per mount: where the floating window actually is.
+   *
+   * The position lives in localStorage and is clamped to the viewport, so "the HUD is missing" can
+   * mean three different things — it is behind something, it is off the edge, or nobody asked for
+   * it — and no screenshot distinguishes them. One line makes it diagnosable from the log.
+   */
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      const element = typeof document !== 'undefined' ? document.querySelector('.att-hud-overlay') : null;
+      const box = element ? element.getBoundingClientRect() : null;
+      const rect = box ? `${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)},${Math.round(box.height)}` : 'none';
+      postDiagnostic('info', `hud shown pos=${JSON.stringify(pos)} vw=${window.innerWidth} rect=${rect}`, 'hud', null, null);
+    });
+    // Mount-only on purpose: a line per render would fire on every metrics poll.
+  }, []);
 
   // Sync forceExpanded prop
   useEffect(() => {
@@ -127,22 +208,25 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     return () => window.removeEventListener('resize', onResize);
   }, [expanded]);
 
-  // Pointer drag events with Pointer Capture API
+  /**
+   * Arm a drag from the six-dot handle. That handle is the **only** place a drag starts.
+   *
+   * Two attempts before this one got it wrong in opposite directions, and the user's report is the
+   * design brief: the capsule has a grip for exactly this, so dragging was never supposed to work
+   * from anywhere. Making the whole pill draggable also made the chips unreliable — a press that
+   * landed a few pixels lower turned into a drag instead of the click it was meant to be.
+   *
+   * So: the grip arms a drag, the chips keep their clicks, and nothing else takes the pointer. The
+   * **moving** still happens on window (see the effect above), because element-level pointermove
+   * does not reliably arrive once the pointer leaves a 40px-tall pill — which is what made an armed
+   * drag stand still even when the press was recognised.
+   */
   const handlePointerDown = (e: any, isPill: boolean) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (target?.closest && target.closest('button, input, select, textarea, a, .att-floating-subtabs')) {
-      return;
-    }
-
-    const currentWidth = isPill ? 280 : 400;
-    const currentHeight = isPill ? 40 : 520;
-
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {}
-
-    isDraggingRef.current = true;
+    // In the expanded window the whole header drags, so its own buttons must be excluded; the
+    // capsule's handle is a plain span and never needs the exemption.
+    if (!isPill && target?.closest && target.closest('button')) return;
     dragStateRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
@@ -150,55 +234,12 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
       initialX: pos.x,
       initialY: pos.y,
       hasMoved: false,
-      currentWidth,
-      currentHeight
+      width: isPill ? 280 : 400,
+      height: isPill ? 40 : 520,
+      isPill
     };
-    setIsDragging(true);
-  };
-
-  const handlePointerMove = (e: any) => {
-    if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId) {
-      return;
-    }
-    const dx = e.clientX - dragStateRef.current.startX;
-    const dy = e.clientY - dragStateRef.current.startY;
-    if (!dragStateRef.current.hasMoved && Math.hypot(dx, dy) >= 3) {
-      dragStateRef.current.hasMoved = true;
-    }
-    if (dragStateRef.current.hasMoved) {
-      const newPos = clampPosition(
-        dragStateRef.current.initialX + dx,
-        dragStateRef.current.initialY + dy,
-        dragStateRef.current.currentWidth,
-        dragStateRef.current.currentHeight
-      );
-      setPos(newPos);
-    }
-  };
-
-  const handlePointerUp = (e: any, isPill: boolean) => {
-    if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId) {
-      return;
-    }
-    const hadMoved = dragStateRef.current.hasMoved;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {}
-
-    isDraggingRef.current = false;
-    dragStateRef.current = null;
-    setIsDragging(false);
-
-    if (hadMoved) {
-      savePosition(pos);
-    } else if (isPill) {
-      // Direct click on pill toggles expanded
-      const nextExpanded = !expanded;
-      setExpanded(nextExpanded);
-      if (nextExpanded) {
-        setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-      }
-    }
+    suppressClickRef.current = false;
+    setArmed(true);
   };
 
   const handleHeaderDoubleClick = (e: any) => {
@@ -214,6 +255,14 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
   const memPercent = Math.min(100, Math.round((memUsedBytes / memTotalBytes) * 100));
   const memLevel = memPercent > 85 ? 'error' : memPercent > 70 ? 'warn' : 'normal';
   const primaryDisk = metrics?.disk.mounts?.[0];
+  // TEMPORARY instrument: rendered position, so an off-screen window is observable.
+  // TEMPORARY: the on-screen rectangle in CSS px, plus the viewport, so a synthetic drag can
+  // target the pill instead of guessing from a screenshot.
+  requestAnimationFrame(() => {
+    const el = typeof document !== 'undefined' ? document.querySelector('.att-hud-pill') : null;
+    const r = el ? el.getBoundingClientRect() : null;
+  });
+
   const diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? 'error' : (primaryDisk?.usePercent ?? 0) > 70 ? 'warn' : 'normal';
   const rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0);
   const txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0);
@@ -263,12 +312,34 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           role: 'group',
           'aria-label': t('monitor.hud.pillLabel'),
           title: t('monitor.hud.dragTip'),
-          onPointerDown: (e: any) => handlePointerDown(e, true),
-          onPointerMove: handlePointerMove,
-          onPointerUp: (e: any) => handlePointerUp(e, true),
-          onPointerCancel: (e: any) => handlePointerUp(e, true)
+          /**
+           * Swallow the click a drag leaves behind.
+           *
+           * Capture phase, so it runs before the chip's own handler: releasing a drag over a chip
+           * must not also fire that chip.
+           */
+          onClickCapture: (e: any) => {
+            if (!suppressClickRef.current) return;
+            suppressClickRef.current = false;
+            e.stopPropagation();
+            e.preventDefault();
+          }
         },
-        h('span', { className: 'att-floating-drag-grip', 'aria-hidden': true }, gripRegular({ size: 14 })),
+        /**
+         * The six-dot handle — the one and only place the capsule drags from.
+         *
+         * It carries the pointerdown itself rather than the pill doing it: a 350px capsule is made
+         * of chips, and a press a few pixels below the handle belongs to the chip under it.
+         */
+        h(
+          'span',
+          {
+            className: 'att-floating-drag-grip',
+            'aria-hidden': true,
+            onPointerDown: (e: any) => handlePointerDown(e, true)
+          },
+          gripRegular({ size: 14 })
+        ),
         h('span', { 'aria-hidden': true }, gaugeRegular({ size: 14 })),
         (activeLabel || activeServerId) &&
           h(
@@ -373,9 +444,6 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             className: `att-floating-window-header ${isDragging ? 'is-dragging' : ''}`,
             title: t('monitor.hud.dragTip'),
             onPointerDown: (e: any) => handlePointerDown(e, false),
-            onPointerMove: handlePointerMove,
-            onPointerUp: (e: any) => handlePointerUp(e, false),
-            onPointerCancel: (e: any) => handlePointerUp(e, false),
             onDoubleClick: handleHeaderDoubleClick
           },
           h(

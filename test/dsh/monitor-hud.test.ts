@@ -309,3 +309,178 @@ describe('floating HUD behaviour', () => {
     expect(HARDWARE).not.toContain("justifyContent: 'space-between'");
   });
 });
+
+/**
+ * The HUD's visibility is the user's decision once they have made one.
+ *
+ * Reported: closing the capsule with its ✕ and then switching terminal tabs brought it back. The
+ * cause was an unconditional `setVisible(true)` in the handler that follows the active terminal —
+ * and that handler fires on every tab switch, not only on a new connection. The fix moved the
+ * `true` inside the `if (!connectedRef.current)` transition, so "something is connected" no longer
+ * means "show the HUD".
+ *
+ * A closed HUD also stopped polling. Hardware metrics is not a local read — the tool runs commands
+ * on the remote host — so a dismissed window that kept its 4-second interval was still holding a
+ * pty busy on the server for nobody.
+ *
+ * Asserted on the source, like the rest of this file: the node-side React stand-in throws on every
+ * hook by design, so a render here would prove nothing about either behaviour.
+ */
+/**
+ * The HUD's visibility is the user's decision once they have made one, and its whole surface drags.
+ *
+ * Two reports, both fixed here:
+ *
+ * 1. Closing the capsule with its ✕ and switching terminal tabs brought it back — the handler that
+ *    follows the active terminal called `setVisible(true)` on every change, not on the 0 → 1
+ *    transition.
+ * 2. Closing it and then connecting a new terminal brought it back too. That one was *design*: a
+ *    new connection always opened the capsule. From the user's side it is the same complaint — "I
+ *    closed it, I did not ask for it" — so the dismissal is now persisted and outranks every
+ *    automatic show. What remains for reopening is an explicit request: the agent's
+ *    `open_monitor`, or the switch the monitor pane now carries.
+ * 3. The capsule could not be dragged: `handlePointerDown` refused to start a drag on any
+ *    `button`, and a 280px capsule is almost entirely buttons (server chip, CPU, memory, both
+ *    chevrons, the ✕). Only the 14px grip and the gauge were draggable.
+ *
+ * Asserted on the source, like the rest of this file: the node-side React stand-in throws on every
+ * hook by design, so a render here would prove nothing about any of the three.
+ */
+describe('HUD dismissal sticks', () => {
+  const sync = MAIN.slice(
+    MAIN.indexOf('const handleActiveTerminal'),
+    MAIN.indexOf('const unsubscribe = subscribeActiveTerminal')
+  );
+  const controller = MAIN.slice(
+    MAIN.indexOf('onRegisterController({'),
+    MAIN.indexOf('  // Synchronize with active connected terminal session')
+  );
+
+  it('shows the HUD on the 0 → 1 connection transition only, and only when not dismissed', () => {
+    /**
+     * Inside the `if`, by brace matching — "before the else" was this assertion's first version and
+     * **passed with the bug restored**: a call moved to just above `} else {` is still before the
+     * else while no longer inside the guard.
+     */
+    const marker = 'if (!connectedRef.current) {';
+    const guard = sync.indexOf(marker);
+    expect(guard).toBeGreaterThan(-1);
+    const open = guard + marker.length;
+    let depth = 1;
+    let close = open;
+    while (close < sync.length && depth > 0) {
+      const ch = sync[close];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      close += 1;
+    }
+    const show = sync.indexOf('showHud()');
+    expect(show).toBeGreaterThan(open);
+    expect(show).toBeLessThan(close - 1);
+    // And the dismissal gate is part of the same statement: without it, a persisted ✕ would be
+    // ignored the moment a terminal connects.
+    expect(sync).toContain('if (!dismissedRef.current) showHud();');
+    expect(sync.match(/showHud\(\)/g) ?? []).toHaveLength(1);
+  });
+
+  it('hides without dismissing when the last connection goes away', () => {
+    const elseBranch = sync.slice(sync.indexOf('} else {'));
+    // Hidden, not dismissed: a dropped link must not cancel a preference the user never expressed.
+    expect(elseBranch).toContain('publishVisibility(false)');
+    expect(elseBranch).not.toContain('hideHud()');
+  });
+
+  it('treats ✕ as a decision and open as a request', () => {
+    const close = controller.slice(controller.indexOf('close: () =>'));
+    expect(close.slice(0, 200)).toContain('hideHud()');
+    const open = controller.slice(controller.indexOf('open: (target, serverId)'));
+    // The explicit request comes first in the body: it must clear the dismissal before anything
+    // else decides whether the window is allowed on screen.
+    expect(open.slice(0, 600)).toContain('showHud()');
+    // `toggle` reads the live state rather than a captured one.
+    expect(controller).toContain('if (visibleRef.current) hideHud();');
+  });
+
+  it('remembers the dismissal for this session, and never across a restart', () => {
+    /**
+     * In memory on purpose.
+     *
+     * Persisting it looked friendlier — "I closed it, keep it closed" — and turned out to be a
+     * trap: the state outlives the reason for it, the window stops appearing after a restart, and
+     * the only way back is a switch the user has never seen. A restart restoring the capsule is the
+     * safety net that makes offering a dismissal safe at all.
+     */
+    expect(MAIN).toContain('useRef<boolean>(false)');
+    expect(MAIN).toContain('dismissedRef.current = true');
+    expect(MAIN).toContain('dismissedRef.current = false');
+    // No storage key: that is the assertion, not an implementation detail.
+    expect(HUD).not.toContain('hud.dismissed');
+    expect(MAIN).not.toContain('loadHudDismissed');
+  });
+
+  it('offers a way back in the pane, because a persisted ✕ would otherwise be a trap', () => {
+    expect(MAIN).toContain('hud: {');
+    expect(MAIN).toMatch(/isVisible: \(\) => hudController\?\.isVisible\(\) \?\? false/);
+    expect(PANE).toContain("t('monitor.hud.paneShow')");
+    expect(PANE).toContain("'aria-pressed': hudVisible ? 'true' : 'false'");
+  });
+});
+
+/**
+ * The capsule drags by its six-dot handle — and only from there.
+ *
+ * Two earlier attempts are worth recording, because both looked reasonable and both were wrong:
+ *
+ * 1. The handle alone, with element-level `pointermove`. The press was recognised, the threshold
+ *    branch ran, and the window still never moved: `pointermove` does not reliably arrive once the
+ *    pointer leaves a 40px-tall pill.
+ * 2. "Drag from anywhere", to compensate. That made the chips unreliable — a press a few pixels
+ *    below the handle became a drag instead of the click it was meant to be — and the report was
+ *    precise: "a little higher drags, a little lower does not".
+ *
+ * What is asserted here is therefore the *design*: the handle carries the pointerdown, the pill
+ * does not; the moving happens on `window` while a drag is armed; and the handle's hit area is
+ * larger than its glyph, because a 14px icon is not a target.
+ */
+describe('the capsule drags by its handle', () => {
+  const pillStart = HUD.indexOf('className: `att-hud-pill');
+  // The pill's *own* props only: the handle lives among its children, so a slice that ran to the
+  // first child would contain the very call this test says must not be there.
+  const pill = HUD.slice(pillStart, HUD.indexOf('onClickCapture', pillStart));
+  const grip = HUD.slice(HUD.indexOf("className: 'att-floating-drag-grip'"));
+  const armEffect = HUD.slice(HUD.indexOf('if (!armed) return;'), HUD.indexOf('  // Sync forceExpanded prop'));
+
+  it('puts the pointerdown on the handle, not on the pill', () => {
+    // The grip's own handler, inside the grip element's props.
+    expect(grip.slice(0, 400)).toContain('onPointerDown');
+    expect(grip.slice(0, 400)).toContain('handlePointerDown(e, true)');
+    // And the pill's props no longer start a drag: that was attempt 2, and it is what broke the
+    // chips. The pill keeps only the click-swallowing capture handler.
+    expect(pill).not.toContain('onPointerDown');
+    // The pill keeps the click-swallowing capture handler that goes with a drag.
+    expect(HUD).toContain('onClickCapture');
+  });
+
+  it('moves the window on window-level listeners while a drag is armed', () => {
+    expect(armEffect).toContain("window.addEventListener('pointermove'");
+    expect(armEffect).toContain("window.addEventListener('pointerup'");
+    // Capture on the element was attempt 1's mechanism and is gone with it (the identifier survives
+    // only inside the comment that explains why).
+    expect(HUD).not.toMatch(/setPointerCapture\(/);
+  });
+
+  it('gives the handle a hit area larger than its glyph', () => {
+    // This is the half of the complaint that a source assertion can hold: the press has to be
+    // forgiving. 14px of icon is not; the padded box is.
+    expect(HUD).toContain("className: 'att-floating-drag-grip'");
+    expect(SHEET).toMatch(/\.att-floating-drag-grip \{[\s\S]{0,600}?padding: 7px 5px/);
+    expect(SHEET).toMatch(/\.att-floating-drag-grip \{[\s\S]{0,600}?cursor: grab/);
+  });
+
+  it('keeps the expanded window draggable by its header', () => {
+    // Unchanged behaviour, asserted so a future edit to the pill path does not quietly take it.
+    expect(HUD).toContain('handlePointerDown(e, false)');
+    // Its own buttons must not start a drag, or pressing ✕ would move the window instead.
+    expect(HUD).toMatch(/if \(!isPill && target\?\.closest && target\.closest\('button'\)\) return;/);
+  });
+});

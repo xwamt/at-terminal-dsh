@@ -918,6 +918,8 @@ var NS = "atTerminal", zh = {
   "monitor.tab.hardware": "\u786C\u4EF6\u6307\u6807",
   "monitor.tab.agent": "Agent \u6267\u884C",
   "monitor.server": "\u76EE\u6807\u670D\u52A1\u5668\uFF1A",
+  "monitor.hud.paneShow": "\u5728\u60AC\u6D6E\u7A97\u4E2D\u663E\u793A",
+  "monitor.hud.paneHide": "\u5173\u95ED\u60AC\u6D6E\u7A97",
   "monitor.refresh": "\u5237\u65B0\u6307\u6807",
   "monitor.float": "\u72EC\u7ACB\u60AC\u6D6E",
   "monitor.dock": "\u5438\u9644\u505C\u9760",
@@ -1326,6 +1328,8 @@ var NS = "atTerminal", zh = {
   "monitor.tab.hardware": "Hardware Metrics",
   "monitor.tab.agent": "Agent Execution",
   "monitor.server": "Server: ",
+  "monitor.hud.paneShow": "Show floating window",
+  "monitor.hud.paneHide": "Hide floating window",
   "monitor.refresh": "Refresh Metrics",
   "monitor.float": "Float Window",
   "monitor.dock": "Dock to Sidebar",
@@ -6073,8 +6077,11 @@ function AgentMonitorView(props) {
 
 // src/platform/dsh/client/views/monitorPane.ts
 function AtTerminalMonitorBody(props) {
-  let { t, useTabInfo } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react9.useState)(initialTarget), [servers, setServers] = (0, import_react9.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react9.useState)(initialServerId), [metrics, setMetrics] = (0, import_react9.useState)(null), [snapshot, setSnapshot] = (0, import_react9.useState)(null), [loading, setLoading] = (0, import_react9.useState)(!0);
+  let { t, useTabInfo } = props, tabInfo = useTabInfo ? useTabInfo() : void 0, initialTarget = tabInfo?.tab?.navigation?.params?.target ?? "hardware", initialServerId = tabInfo?.tab?.navigation?.params?.serverId ?? "", [activeTab, setActiveTab] = (0, import_react9.useState)(initialTarget), [servers, setServers] = (0, import_react9.useState)([]), [selectedServerId, setSelectedServerId] = (0, import_react9.useState)(initialServerId), [metrics, setMetrics] = (0, import_react9.useState)(null), [snapshot, setSnapshot] = (0, import_react9.useState)(null), [loading, setLoading] = (0, import_react9.useState)(!0), hud = props.hud, [hudVisible, setHudVisible] = (0, import_react9.useState)(() => hud?.isVisible() ?? !1);
   (0, import_react9.useEffect)(() => {
+    if (hud)
+      return setHudVisible(hud.isVisible()), hud.subscribe(setHudVisible);
+  }, [hud]), (0, import_react9.useEffect)(() => {
     let unmounted = !1;
     return callRpc("servers.list", {}).then((res) => {
       !unmounted && res?.servers && (setServers(res.servers), !selectedServerId && res.servers.length > 0 && setSelectedServerId(res.servers[0].id));
@@ -6192,6 +6199,24 @@ function AtTerminalMonitorBody(props) {
             onClick: () => void refresh()
           },
           refreshRegular({ size: 16 })
+        ),
+        /**
+         * The floating window, on or off.
+         *
+         * `aria-pressed` rather than a changing label alone: screen readers announce the state, and
+         * the title says what the click will do — both, because a tooltip that only appears on
+         * hover is not a state.
+         */
+        hud && h(
+          "button",
+          {
+            className: `att-nav-btn att-icon-btn${hudVisible ? " is-active" : ""}`,
+            title: t(hudVisible ? "monitor.hud.paneHide" : "monitor.hud.paneShow"),
+            "aria-label": t(hudVisible ? "monitor.hud.paneHide" : "monitor.hud.paneShow"),
+            "aria-pressed": hudVisible ? "true" : "false",
+            onClick: () => hud.toggle()
+          },
+          gaugeRegular({ size: 16 })
         )
       )
     ),
@@ -6442,8 +6467,35 @@ function savePosition(pos) {
     }
 }
 function MonitorHudWidget(props) {
-  let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel, auditHistory } = props, [expanded, setExpanded] = (0, import_react11.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react11.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react11.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react11.useState)(!1), isDraggingRef = (0, import_react11.useRef)(!1), dragStateRef = (0, import_react11.useRef)(null);
+  let { t, metrics, snapshot, onCloseHud, forceExpanded, initialSubtab, activeServerId, activeLabel, auditHistory } = props, [expanded, setExpanded] = (0, import_react11.useState)(!!forceExpanded), [activeTab, setActiveTab] = (0, import_react11.useState)(initialSubtab ?? "overview"), [pos, setPos] = (0, import_react11.useState)(() => loadSavedPosition()), [isDragging, setIsDragging] = (0, import_react11.useState)(!1), [armed, setArmed] = (0, import_react11.useState)(!1), suppressClickRef = (0, import_react11.useRef)(!1), posRef = (0, import_react11.useRef)(pos);
+  posRef.current = pos;
+  let dragStateRef = (0, import_react11.useRef)(null);
   (0, import_react11.useEffect)(() => {
+    if (!armed) return;
+    let finish = (moved, pill) => {
+      setIsDragging(!1), moved ? (savePosition(posRef.current), suppressClickRef.current = !0) : pill && (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520))), dragStateRef.current = null, setArmed(!1);
+    }, onMove = (e) => {
+      let state = dragStateRef.current;
+      if (state === null || e.pointerId !== state.pointerId) return;
+      let dx = e.clientX - state.startX, dy = e.clientY - state.startY;
+      if (!state.hasMoved) {
+        if (Math.hypot(dx, dy) < 3) return;
+        state.hasMoved = !0, setIsDragging(!0);
+      }
+      setPos(clampPosition(state.initialX + dx, state.initialY + dy, state.width, state.height));
+    }, onUp = (e) => {
+      let state = dragStateRef.current;
+      state === null || e.pointerId !== state.pointerId || finish(state.hasMoved, state.isPill);
+    };
+    return window.addEventListener("pointermove", onMove), window.addEventListener("pointerup", onUp), window.addEventListener("pointercancel", onUp), () => {
+      window.removeEventListener("pointermove", onMove), window.removeEventListener("pointerup", onUp), window.removeEventListener("pointercancel", onUp);
+    };
+  }, [armed]), (0, import_react11.useEffect)(() => {
+    requestAnimationFrame(() => {
+      let element = typeof document < "u" ? document.querySelector(".att-hud-overlay") : null, box = element ? element.getBoundingClientRect() : null, rect = box ? `${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)},${Math.round(box.height)}` : "none";
+      postDiagnostic("info", `hud shown pos=${JSON.stringify(pos)} vw=${window.innerWidth} rect=${rect}`, "hud", null, null);
+    });
+  }, []), (0, import_react11.useEffect)(() => {
     forceExpanded !== void 0 && (setExpanded(forceExpanded), forceExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520)));
   }, [forceExpanded]), (0, import_react11.useEffect)(() => {
     initialSubtab && setActiveTab(initialSubtab);
@@ -6457,54 +6509,25 @@ function MonitorHudWidget(props) {
   let handlePointerDown = (e, isPill) => {
     if (e.button !== 0) return;
     let target = e.target;
-    if (target?.closest && target.closest("button, input, select, textarea, a, .att-floating-subtabs"))
-      return;
-    let currentWidth = isPill ? 280 : 400, currentHeight = isPill ? 40 : 520;
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-    }
-    isDraggingRef.current = !0, dragStateRef.current = {
+    !isPill && target?.closest && target.closest("button") || (dragStateRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       initialX: pos.x,
       initialY: pos.y,
       hasMoved: !1,
-      currentWidth,
-      currentHeight
-    }, setIsDragging(!0);
-  }, handlePointerMove = (e) => {
-    if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId)
-      return;
-    let dx = e.clientX - dragStateRef.current.startX, dy = e.clientY - dragStateRef.current.startY;
-    if (!dragStateRef.current.hasMoved && Math.hypot(dx, dy) >= 3 && (dragStateRef.current.hasMoved = !0), dragStateRef.current.hasMoved) {
-      let newPos = clampPosition(
-        dragStateRef.current.initialX + dx,
-        dragStateRef.current.initialY + dy,
-        dragStateRef.current.currentWidth,
-        dragStateRef.current.currentHeight
-      );
-      setPos(newPos);
-    }
-  }, handlePointerUp = (e, isPill) => {
-    if (!isDraggingRef.current || !dragStateRef.current || dragStateRef.current.pointerId !== e.pointerId)
-      return;
-    let hadMoved = dragStateRef.current.hasMoved;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-    }
-    if (isDraggingRef.current = !1, dragStateRef.current = null, setIsDragging(!1), hadMoved)
-      savePosition(pos);
-    else if (isPill) {
-      let nextExpanded = !expanded;
-      setExpanded(nextExpanded), nextExpanded && setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
-    }
+      width: isPill ? 280 : 400,
+      height: isPill ? 40 : 520,
+      isPill
+    }, suppressClickRef.current = !1, setArmed(!0));
   }, handleHeaderDoubleClick = (e) => {
     let target = e.target;
     target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
-  }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
+  }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0];
+  requestAnimationFrame(() => {
+    let el = typeof document < "u" ? document.querySelector(".att-hud-pill") : null, r = el ? el.getBoundingClientRect() : null;
+  });
+  let diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
     setExpanded(!0), setActiveTab(tab), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
   }, collapse = () => {
     setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
@@ -6535,12 +6558,31 @@ function MonitorHudWidget(props) {
         role: "group",
         "aria-label": t("monitor.hud.pillLabel"),
         title: t("monitor.hud.dragTip"),
-        onPointerDown: (e) => handlePointerDown(e, !0),
-        onPointerMove: handlePointerMove,
-        onPointerUp: (e) => handlePointerUp(e, !0),
-        onPointerCancel: (e) => handlePointerUp(e, !0)
+        /**
+         * Swallow the click a drag leaves behind.
+         *
+         * Capture phase, so it runs before the chip's own handler: releasing a drag over a chip
+         * must not also fire that chip.
+         */
+        onClickCapture: (e) => {
+          suppressClickRef.current && (suppressClickRef.current = !1, e.stopPropagation(), e.preventDefault());
+        }
       },
-      h("span", { className: "att-floating-drag-grip", "aria-hidden": !0 }, gripRegular({ size: 14 })),
+      /**
+       * The six-dot handle — the one and only place the capsule drags from.
+       *
+       * It carries the pointerdown itself rather than the pill doing it: a 350px capsule is made
+       * of chips, and a press a few pixels below the handle belongs to the chip under it.
+       */
+      h(
+        "span",
+        {
+          className: "att-floating-drag-grip",
+          "aria-hidden": !0,
+          onPointerDown: (e) => handlePointerDown(e, !0)
+        },
+        gripRegular({ size: 14 })
+      ),
       h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
       (activeLabel || activeServerId) && h(
         "span",
@@ -6636,9 +6678,6 @@ function MonitorHudWidget(props) {
           className: `att-floating-window-header ${isDragging ? "is-dragging" : ""}`,
           title: t("monitor.hud.dragTip"),
           onPointerDown: (e) => handlePointerDown(e, !1),
-          onPointerMove: handlePointerMove,
-          onPointerUp: (e) => handlePointerUp(e, !1),
-          onPointerCancel: (e) => handlePointerUp(e, !1),
           onDoubleClick: handleHeaderDoubleClick
         },
         h(
@@ -7435,30 +7474,42 @@ function MonitorHeaderButton(props) {
   );
 }
 function MonitorHudContainer(props) {
-  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react14.useState)(null), [snapshot, setSnapshot] = (0, import_react14.useState)(null), [visible, setVisible] = (0, import_react14.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react14.useState)(null), [activeLabel, setActiveLabel] = (0, import_react14.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react14.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react14.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react14.useState)([]), connectedRef = (0, import_react14.useRef)(!1), connectionStartedAtRef = (0, import_react14.useRef)(0), seenAuditIdsRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set());
+  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react14.useState)(null), [snapshot, setSnapshot] = (0, import_react14.useState)(null), [visible, setVisible] = (0, import_react14.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react14.useState)(null), [activeLabel, setActiveLabel] = (0, import_react14.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react14.useState)(void 0), [initialSubtab, setInitialSubtab] = (0, import_react14.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react14.useState)([]), connectedRef = (0, import_react14.useRef)(!1), connectionStartedAtRef = (0, import_react14.useRef)(0), seenAuditIdsRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), dismissedRef = (0, import_react14.useRef)(!1), visibleRef = (0, import_react14.useRef)(!1), visibilityListenersRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), publishVisibility = (next) => {
+    visibleRef.current = next, setVisible(next);
+    for (let listener of visibilityListenersRef.current) listener(next);
+  }, showHud = () => {
+    dismissedRef.current = !1, publishVisibility(!0);
+  }, hideHud = () => {
+    dismissedRef.current = !0, publishVisibility(!1);
+  };
   return (0, import_react14.useEffect)(() => {
     if (onRegisterController)
       return onRegisterController({
         open: (target, serverId) => {
-          setVisible(!0), setForceExpanded(!0), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0 && serverId !== "" && setActiveServerId(serverId);
+          postDiagnostic("info", `hud open target=${target ?? "overview"} wasDismissed=${dismissedRef.current}`, "hud", null, null), showHud(), setForceExpanded(!0), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0 && serverId !== "" && setActiveServerId(serverId);
         },
         close: () => {
-          setVisible(!1), setForceExpanded(!1);
+          hideHud(), setForceExpanded(!1);
         },
         toggle: () => {
-          setVisible((prev) => !prev);
-        }
+          visibleRef.current ? hideHud() : showHud();
+        },
+        isVisible: () => visibleRef.current,
+        subscribe: (listener) => (visibilityListenersRef.current.add(listener), () => {
+          visibilityListenersRef.current.delete(listener);
+        })
       }), () => {
         onRegisterController(null);
       };
   }, [onRegisterController]), (0, import_react14.useEffect)(() => {
     let handleActiveTerminal = (state) => {
-      setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? (connectedRef.current || (connectedRef.current = !0, connectionStartedAtRef.current = Date.now(), seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setInitialSubtab("overview")), setVisible(!0)) : (connectedRef.current = !1, connectionStartedAtRef.current = 0, seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setVisible(!1));
+      setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? connectedRef.current || (connectedRef.current = !0, connectionStartedAtRef.current = Date.now(), seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setInitialSubtab("overview"), postDiagnostic("info", `hud autoshow dismissed=${dismissedRef.current}`, "hud", null, null), dismissedRef.current || showHud()) : (connectedRef.current = !1, connectionStartedAtRef.current = 0, seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), publishVisibility(!1));
     }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
     return handleActiveTerminal(getActiveTerminalState()), () => {
       unsubscribe();
     };
   }, []), (0, import_react14.useEffect)(() => {
+    if (!visible) return;
     let unmounted = !1, fetchLatest = () => {
       Promise.all([
         getHardwareMetricsRpc(activeServerId || void 0).catch(() => null),
@@ -7488,7 +7539,7 @@ function MonitorHudContainer(props) {
     return () => {
       unmounted = !0, clearInterval(interval);
     };
-  }, [activeServerId]), visible ? h(MonitorHudWidget, {
+  }, [activeServerId, visible]), visible ? h(MonitorHudWidget, {
     t,
     metrics,
     snapshot,
@@ -7497,7 +7548,14 @@ function MonitorHudContainer(props) {
     activeServerId,
     activeLabel,
     auditHistory,
-    onCloseHud: () => setVisible(!1)
+    /**
+     * The ✕ closes through `hideHud`, not through `setVisible(false)`.
+     *
+     * It used to call `setVisible` directly, which skipped the two things that make a close a
+     * decision: persisting it (so the next connection no longer resurrects the window) and telling
+     * the pane's switch (so the switch kept saying "on" for a window that was gone).
+     */
+    onCloseHud: () => hideHud()
   }) : null;
 }
 var inject = ["slots", "sidebarRightTabs", "locale", "shortcuts", "sidebarRight"];
@@ -7609,7 +7667,19 @@ function apply(ctx) {
       "sidebar.right.pane.tab",
       () => ctx.slots.register(
         { name: "sidebar.right.pane.tab", key: ID_MONITOR, locale: NS },
-        wrapWithLocale(withStyles(AtTerminalMonitorBody), t)
+        wrapWithLocale(withStyles(AtTerminalMonitorBody), t, {
+          /**
+           * The pane's HUD switch, resolved per call: `hudController` is assigned when the
+           * overlay mounts, which happens after this registration, so capturing its value here
+           * would hand the pane `null` forever.
+           */
+          hud: {
+            isVisible: () => hudController?.isVisible() ?? !1,
+            subscribe: (listener) => hudController?.subscribe(listener) ?? (() => {
+            }),
+            toggle: () => hudController?.toggle()
+          }
+        })
       )
     ),
     "at-terminal: monitor pane body"

@@ -8,6 +8,19 @@ import { h, type El } from './shared';
 
 export interface AtTerminalMonitorBodyProps {
   t: Translate;
+  /**
+   * The floating window's switch, so the pane can turn it back on.
+   *
+   * Closing the capsule is remembered (a new connection no longer brings it back), which makes a
+   * visible way to reopen it a requirement rather than a nicety: without this the only ways back
+   * were a restart or asking the agent. The pane is where a user looking for the monitor already
+   * is, so the switch lives in its header next to refresh.
+   */
+  hud?: {
+    isVisible(): boolean;
+    subscribe(listener: (visible: boolean) => void): () => void;
+    toggle(): void;
+  };
   useTabInfo?: () => {
     sidebar?: { expanded: boolean; fullscreen: boolean };
     panel?: { id: string };
@@ -31,6 +44,16 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
   const [metrics, setMetrics] = useState<HardwareMetrics | null>(null);
   const [snapshot, setSnapshot] = useState<AgentExecutionSnapshot | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
+  const hud = props.hud;
+  const [hudVisible, setHudVisible] = useState<boolean>(() => hud?.isVisible() ?? false);
+  useEffect(() => {
+    if (!hud) return;
+    // Read once on mount, then follow the controller: the ✕ in the capsule and this button are two
+    // handles on one state, and each has to render what the other did.
+    setHudVisible(hud.isVisible());
+    return hud.subscribe(setHudVisible);
+  }, [hud]);
 
   // Load server list
   useEffect(() => {
@@ -196,7 +219,26 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
             onClick: () => void refresh()
           },
           refreshRegular({ size: 16 })
-        )
+        ),
+        /**
+         * The floating window, on or off.
+         *
+         * `aria-pressed` rather than a changing label alone: screen readers announce the state, and
+         * the title says what the click will do — both, because a tooltip that only appears on
+         * hover is not a state.
+         */
+        hud &&
+          h(
+            'button',
+            {
+              className: `att-nav-btn att-icon-btn${hudVisible ? ' is-active' : ''}`,
+              title: hudVisible ? t('monitor.hud.paneHide') : t('monitor.hud.paneShow'),
+              'aria-label': hudVisible ? t('monitor.hud.paneHide') : t('monitor.hud.paneShow'),
+              'aria-pressed': hudVisible ? 'true' : 'false',
+              onClick: () => hud.toggle()
+            },
+            gaugeRegular({ size: 16 })
+          )
       )
     ),
     // Tab Body Content

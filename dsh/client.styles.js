@@ -2532,6 +2532,17 @@ button.att-hud-pill-chip:hover {
   line-height: 1;
   cursor: grab;
   user-select: none;
+  /*
+   * The handle is the only draggable spot on the capsule, so its *hit* area must be bigger than its
+   * glyph: a 14px icon meant the press had to land within a few pixels, and the report was exactly
+   * that \u2014 "a little higher drags, a little lower does not". Negative margins keep the dots where
+   * they were while the target grows to ~24x28 without moving the layout.
+   */
+  padding: 7px 5px;
+  margin: -7px -1px -7px -4px;
+}
+.att-hud-pill.is-dragging .att-floating-drag-grip {
+  cursor: grabbing;
 }
 
 .att-floating-header-actions {

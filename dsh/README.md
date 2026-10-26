@@ -6,7 +6,7 @@ Harness loads as a plugin; it does **not** touch the VS Code extension code
 path, and building or installing it must never change the `base` / `mcp`
 variants.
 
-- **Verified against:** DeepSeek Harness Desktop `0.2.1-rc.2` (the version this
+- **Verified against:** DeepSeek Harness Desktop `0.2.1-rc.3` (the version this
   machine has installed; the tool DSL is re-checked against that install on
   every `verify` run, and the sandbox is re-extracted whenever the install
   changes — a cached sandbox from a previous release is discarded, not reused).
@@ -632,7 +632,7 @@ analysis in `docs/research/2026-09-28-at-terminal-迁移为DSH插件-可行性�
 Corrections that plan made on contact with the installed Harness (it assumed
 `0.1.1-rc.2` and a `dsh web` CLI):
 
-- the installed product is the **Desktop** app (`0.2.1-rc.2` as of this revision; it was
+- the installed product is the **Desktop** app (`0.2.1-rc.3` as of this revision; it was
   an earlier `rc` when the plan was written), and installs go
   through the Desktop Plugin Manager, not `dsh plugin --profile web add`;
 - the settings API is a schemastery `Config` export plus `.volatile()` fields,
