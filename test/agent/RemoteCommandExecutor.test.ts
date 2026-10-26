@@ -114,6 +114,62 @@ describe('RemoteCommandExecutor', () => {
     expect(disposeHandle).not.toHaveBeenCalled();
   });
 
+  it('cuts truncated output on a UTF-8 boundary instead of producing a replacement character', async () => {
+    const stream = createExecStream();
+    exec.mockImplementation((_command: string, callback: Function) => callback(undefined, stream));
+    const executor = new RemoteCommandExecutor({ getPassword: async () => 'secret' } as never, hostKeyVerifier);
+
+    /*
+     * 400 Chinese characters are 1 200 bytes; a 1 000-byte cap keeps 999 of them (333 whole
+     * characters) and one byte of the 334th. Measured on a live host before this test existed:
+     * the model received `汉汉…汉\uFFFD`, because `toString('utf8')` turns the half character into
+     * a replacement character. Two chunks on purpose — a real pty never delivers one buffer.
+     */
+    const promise = executor.execute(server(), {
+      command: 'cat cn.log',
+      timeoutMs: 5_000,
+      maxOutputBytes: 1_000
+    });
+
+    await flushPromises();
+    clients[0].emit('ready');
+    await flushPromises();
+    const whole = Buffer.from('汉'.repeat(400), 'utf8');
+    stream.emit('data', whole.subarray(0, 700));
+    stream.emit('data', whole.subarray(700));
+    stream.emit('close', 0, undefined);
+
+    const result = await promise;
+    expect(result.truncated).toBe(true);
+    expect(result.stdout).not.toContain('\uFFFD');
+    // 333 whole characters, not 334 and not 333 plus a replacement character.
+    expect(result.stdout).toBe('汉'.repeat(333));
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(999);
+  });
+
+  it('keeps every byte when the cap lands on a character boundary', async () => {
+    const stream = createExecStream();
+    exec.mockImplementation((_command: string, callback: Function) => callback(undefined, stream));
+    const executor = new RemoteCommandExecutor({ getPassword: async () => 'secret' } as never, hostKeyVerifier);
+
+    // 300 characters = 900 bytes, and the cap is exactly 900: nothing to drop, nothing to trim.
+    const promise = executor.execute(server(), {
+      command: 'cat cn.log',
+      timeoutMs: 5_000,
+      maxOutputBytes: 900
+    });
+
+    await flushPromises();
+    clients[0].emit('ready');
+    await flushPromises();
+    stream.emit('data', Buffer.from('汉'.repeat(300), 'utf8'));
+    stream.emit('close', 0, undefined);
+
+    const result = await promise;
+    expect(result.truncated).toBe(false);
+    expect(result.stdout).toBe('汉'.repeat(300));
+  });
+
   it('wraps cwd with a POSIX cd before command execution', async () => {
     const stream = createExecStream();
     exec.mockImplementation((_command: string, callback: Function) => callback(undefined, stream));

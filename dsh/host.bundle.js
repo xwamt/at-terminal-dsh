@@ -16778,7 +16778,7 @@ var AgentToolService = class {
   requireBackgroundConnectionAllowed(server) {
     if (server.backgroundConnectionAllowed !== !0)
       throw new Error(
-        `SSH server "${server.id}" does not allow background connections. Ask the user to enable "Allow background connections" on the AT Terminal server edit form, or connect an AT Terminal session to that server.`
+        `SSH server "${server.id}" does not allow background connections. Ask the user to enable "Allow background connections" on the AT Terminal server edit form, or open a terminal tab for that server in the AT Terminal panel. A \`terminal_*\` session does not count: the check reads the panel's own terminal tabs.`
       );
     return server;
   }
@@ -17310,9 +17310,22 @@ var OutputBuffer = class {
     this.chunks.push(data), this.size += data.length;
   }
   text() {
-    return Buffer.concat(this.chunks).toString("utf8");
+    let buffer = Buffer.concat(this.chunks);
+    return buffer.subarray(0, utf8SafeEnd(buffer)).toString("utf8");
   }
 };
+function utf8SafeEnd(buffer) {
+  let length = buffer.length, index = length - 1;
+  for (let scanned = 0; scanned < 4 && index >= 0; scanned += 1) {
+    let byte = buffer[index];
+    if ((byte & 192) !== 128) {
+      let needed = byte < 128 ? 1 : byte >= 240 ? 4 : byte >= 224 ? 3 : byte >= 192 ? 2 : 1;
+      return length - index >= needed ? length : index;
+    }
+    index -= 1;
+  }
+  return length;
+}
 
 // src/agent/SftpAgentService.ts
 var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
@@ -17623,7 +17636,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         throw new Error(`SSH server "${input.serverId}" was not found.`);
       if (server.backgroundConnectionAllowed !== !0)
         throw new Error(
-          `SSH server "${server.id}" does not allow background connections. Ask the user to enable "Allow background connections" on the AT Terminal server edit form, or connect an AT Terminal session to that server.`
+          `SSH server "${server.id}" does not allow background connections. Ask the user to enable "Allow background connections" on the AT Terminal server edit form, or open a terminal tab for that server in the AT Terminal panel. A \`terminal_*\` session does not count: the check reads the panel's own terminal tabs.`
         );
       return { server, resolvedBy: "explicit" };
     }

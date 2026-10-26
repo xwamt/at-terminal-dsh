@@ -726,7 +726,8 @@ export class AgentToolService {
       throw new Error(
         `SSH server "${server.id}" does not allow background connections. ` +
           'Ask the user to enable "Allow background connections" on the AT Terminal server edit form, ' +
-          'or connect an AT Terminal session to that server.'
+          'or open a terminal tab for that server in the AT Terminal panel. ' +
+          'A `terminal_*` session does not count: the check reads the panel\'s own terminal tabs.'
       );
     }
     return server;

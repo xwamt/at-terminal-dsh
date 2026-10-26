@@ -433,6 +433,42 @@ class OutputBuffer {
   }
 
   text(): string {
-    return Buffer.concat(this.chunks).toString('utf8');
+    /*
+     * The cut is a **byte** limit, so it lands wherever byte 64 000 happens to be — which, for a
+     * Chinese log (`ps`, `df`, a build log from a CN locale), is inside a three-byte character.
+     * `toString('utf8')` turns that half character into `U+FFFD`, and the model reads `汉汉�`.
+     *
+     * Measured on a live host: `print('汉'*30000)` is 90 000 bytes, the cap is 64 000, and
+     * 64 000 / 3 = 21 333.3 — a cut inside a character every single time. The spill path has
+     * `safeCut()` for exactly this; the truncation path is the other half of the same defect.
+     *
+     * Dropping at most three bytes is the whole cost, and it is cheaper than a replacement
+     * character the caller cannot interpret.
+     */
+    const buffer = Buffer.concat(this.chunks);
+    return buffer.subarray(0, utf8SafeEnd(buffer)).toString('utf8');
   }
+}
+
+/**
+ * The largest prefix length of `buffer` that does not end inside a UTF-8 character.
+ *
+ * Walks back over continuation bytes (`10xxxxxx`) to the lead byte of the last character and
+ * keeps it only when all of its bytes arrived. A buffer that ends on a character boundary is
+ * returned unchanged, which is the common case: the cap usually lands between ASCII lines.
+ */
+function utf8SafeEnd(buffer: Buffer): number {
+  const length = buffer.length;
+  let index = length - 1;
+  // A UTF-8 character is at most four bytes, so at most three continuation bytes precede a lead.
+  for (let scanned = 0; scanned < 4 && index >= 0; scanned += 1) {
+    const byte = buffer[index];
+    if ((byte & 0xc0) !== 0x80) {
+      const needed = byte < 0x80 ? 1 : byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+      // `available >= needed` means the last character is whole; otherwise it was cut.
+      return length - index >= needed ? length : index;
+    }
+    index -= 1;
+  }
+  return length;
 }

@@ -151,9 +151,20 @@ describe('AgentToolService', () => {
       executor: { execute } as unknown as RemoteCommandExecutor
     });
 
-    await expect(service.runRemoteCommand({ serverId: 'server-1', command: 'uptime' })).rejects.toThrow(
-      'SSH server "server-1" does not allow background connections.'
-    );
+    const error = await service
+      .runRemoteCommand({ serverId: 'server-1', command: 'uptime' })
+      .then(() => undefined)
+      .catch((thrown: unknown) => thrown as Error);
+    expect(error?.message).toContain('SSH server "server-1" does not allow background connections.');
+    /*
+     * The old wording offered "connect an AT Terminal session to that server" as the way out.
+     * Measured on a live host: `terminal_open` produced a working pty for that server and the
+     * very next `run_remote_command` was refused with this same message, because the check reads
+     * the panel's own terminal tabs. A message that names a dead end costs a model two turns and
+     * a user a bug report, so the dead end is asserted against, not just the replacement.
+     */
+    expect(error?.message).toContain('open a terminal tab for that server in the AT Terminal panel');
+    expect(error?.message).not.toContain('connect an AT Terminal session to that server');
     expect(mockConfirmation.confirmCommand).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
   });

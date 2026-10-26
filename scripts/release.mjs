@@ -115,7 +115,33 @@ for (const item of plan) {
   say(`  ${item.published ? 'on registry ' : 'to publish  '} ${item.name}@${item.version}`)
 }
 
+/**
+ * Is the release tag already there?
+ *
+ * Shared by the plan and the tag step so the dry run cannot describe a tag the real run would
+ * skip — the whole point of printing a plan is that the plan is what happens.
+ */
+function tagExists(name) {
+  try {
+    run('git', ['rev-parse', '--verify', `refs/tags/${name}`], { capture: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
 if (!publish) {
+  /*
+   * The tag is part of the plan, so the dry run has to print it.
+   *
+   * `--tag` used to be invisible here: this branch exits before the tag step, so a user reading
+   * the plan saw two packages and no mention of the tag they asked for. Saying it up front is
+   * what makes `--tag --dry-run` answerable — "would tag v0.2.0" or "tag exists".
+   */
+  if (tag) {
+    const name = `v${plugin.version}`
+    say(tagExists(name) ? `  tag exists    ${name}` : `  would tag     ${name}`)
+  }
   say('release: dry run — nothing was published. Re-run with --publish when the plan looks right.')
   process.exit(0)
 }
@@ -159,10 +185,9 @@ for (const item of plan) {
 
 if (tag) {
   const name = `v${plugin.version}`
-  try {
-    run('git', ['rev-parse', '--verify', `refs/tags/${name}`], { capture: true })
+  if (tagExists(name)) {
     say(`release: tag ${name} already exists, leaving it alone`)
-  } catch {
+  } else {
     run('git', ['tag', '-a', name, '-m', `AT Terminal ${plugin.version}`])
     say(`release: tagged ${name} (push it with: git push origin ${name})`)
   }
