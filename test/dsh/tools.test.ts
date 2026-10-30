@@ -467,6 +467,98 @@ describe('dsh/tools.js createTools', () => {
     expect(remove.parameters.properties).not.toHaveProperty('recursive');
   });
 
+  /**
+   * P0 from `at-pc/docs/testing/2026-10-27-sftp-large-binary-upload-gap.md`: `content` was the
+   * only source, so a 7.3 MB binary meant ~10 MB of base64 through the model's context (~2.5M
+   * tokens) — a call that cannot happen, no matter what SFTP can do. `localPath` moves the read
+   * to the Host: the model names a file, the Host streams it, and its bytes never enter a prompt.
+   * The panel upload always worked for exactly this reason.
+   */
+  describe('at_terminal_sftp_write_file takes a local file instead of inlining it', () => {
+    const UPLOAD = {
+      serverId: 's1',
+      path: '/opt/at-pc/at-pc-server',
+      bytesWritten: 7_692_224,
+      overwritten: false,
+      localPath: '/Users/clkj/at-pc/target/at-pc-server'
+    };
+    const writeTool = (service: Record<string, unknown> = {}) =>
+      createTools({ version: '0.1.0', resolveAgentService: () => service }).find(
+        (t: any) => t.name === 'at_terminal_sftp_write_file'
+      )!;
+
+    it('declares localPath and stops requiring content', () => {
+      const write = writeTool();
+      expect(write.parameters.properties.localPath.type).toBe('string');
+      // The description is the only place a model learns this door exists for binaries; "streamed,
+      // never enters context" is the fact that makes it different from a second way to inline.
+      expect(write.parameters.properties.localPath.description).toMatch(/streamed/i);
+      expect(write.parameters.properties.localPath.description).toMatch(/never enters context/i);
+      expect(write.parameters.required).toEqual(['path']);
+      // A `oneOf` on the pair would be a host-side schema experiment; the rule lives in execute()
+      // where the message can say what to do about it.
+      expect(write.parameters).not.toHaveProperty('oneOf');
+    });
+
+    it('asks for exactly one source, before any service call', async () => {
+      const sftpWriteFile = vi.fn();
+      const write = writeTool({ sftpWriteFile });
+
+      await expect(write.execute({ path: '/x' })).rejects.toThrow(/provide either "content"/);
+      await expect(write.execute({ path: '/x', content: 'a', localPath: '/tmp/a' })).rejects.toThrow(
+        /pass either "content" or "localPath", not both/
+      );
+      await expect(write.execute({ path: '/x', localPath: '   ' })).rejects.toThrow(
+        /"localPath" is required/
+      );
+      await expect(write.execute({ path: '/x', content: 42 })).rejects.toThrow(/"content" must be a string/);
+      // Every one of those is the caller's mistake; none of them may reach a host.
+      expect(sftpWriteFile).not.toHaveBeenCalled();
+    });
+
+    it('forwards localPath untouched and renders the upload as an upload', async () => {
+      const sftpWriteFile = vi.fn().mockResolvedValue(UPLOAD);
+      const write = writeTool({ sftpWriteFile });
+      const call = { serverId: 's1', path: UPLOAD.path, localPath: UPLOAD.localPath };
+
+      const result = await write.execute(call);
+
+      // Untouched: the service decides how to read the file, and a field rewritten here would be
+      // a second source of truth that disagrees with the one the confirmation names.
+      expect(sftpWriteFile).toHaveBeenCalledWith(call);
+      expect(result).toMatchObject({ localPath: UPLOAD.localPath, bytesWritten: 7_692_224 });
+      // "Wrote N bytes" would hide that a local file was the source; the render is the model's
+      // evidence of what happened, so an upload has to say so.
+      expect(write.output.render({}, result)[0].text).toBe(
+        'Uploaded 7692224 bytes from /Users/clkj/at-pc/target/at-pc-server to /opt/at-pc/at-pc-server (overwritten=false)'
+      );
+    });
+
+    it('keeps the text-write wording and reports a null localPath for it', async () => {
+      const sftpWriteFile = vi
+        .fn()
+        .mockResolvedValue({ serverId: 's1', path: '/x', bytesWritten: 4, overwritten: true });
+      const write = writeTool({ sftpWriteFile });
+
+      const result = await write.execute({ path: '/x', content: 'test', overwrite: true });
+
+      expect(result.localPath).toBeNull();
+      expect(write.output.render({}, result)[0].text).toBe('Wrote 4 bytes to /x (overwritten=true)');
+      // Both shapes have to satisfy the declared schema: a text write returns null here.
+      expect(write.output.schema.properties.localPath).toEqual({
+        oneOf: [{ type: 'string' }, { type: 'null' }]
+      });
+    });
+
+    it('bounds the call outside the service timers, so a slow upload is never cut short', () => {
+      // The service's own worst case is ~360 s before connect, realpath and stat are counted
+      // (60 s for the authorization, 300 s for the transfer). A tool bound equal to that sum
+      // would fire first on a slow link and turn the service's "transfer aborted, the file may
+      // be incomplete" into a generic TOOL_TIMEOUT — the message the operator cannot act on.
+      expect(writeTool().timeoutMs).toBe(480_000);
+    });
+  });
+
   it('opens the monitor through the service, and reports a no-client refusal instead of a false success', async () => {
     // The broadcast moved into the service (it is the only place that knows whether a client
     // is listening); this asserts the tool forwards and renders both outcomes.
@@ -594,7 +686,7 @@ describe('dsh/tools.js createTools', () => {
       /"path" is required/
     );
     await expect(byName('at_terminal_sftp_write_file').execute({ path: '/x' })).rejects.toThrow(
-      /"content" is required/
+      /provide either "content" \(text\) or "localPath"/
     );
     await expect(byName('at_terminal_sftp_rename').execute({ path: '/a' })).rejects.toThrow(
       /"newPath" is required/

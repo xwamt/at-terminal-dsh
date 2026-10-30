@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir as mkdirLocal, readdir as readdirLocal, stat as statLocal } from 'node:fs/promises';
+import {
+  mkdir as mkdirLocal,
+  readdir as readdirLocal,
+  realpath as realpathLocal,
+  stat as statLocal
+} from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join as joinLocalPath } from 'node:path';
 import type { Client, ClientChannel, FileEntryWithStats, SFTPWrapper, Stats } from 'ssh2';
 import type { ServerConfig } from '../config/schema';
@@ -276,6 +282,46 @@ export class SftpSession {
       }
       await this.uploadFileWithSudo(localPath, remotePath, progress, error);
     }
+  }
+
+  /**
+   * Size, type and real location of a file on the machine running the Host.
+   *
+   * The realpath is not a nicety. The sensitive-source rule the upload authorizer applies is
+   * lexical, because it must not touch the disk of a path that has not been authorized yet —
+   * so a symlink named `payload.bin` pointing at `~/.ssh/id_rsa` would pass it and produce one
+   * innocuous prompt while a private key left the machine. Resolving here means the check, the
+   * dialog, the audit row and the returned result all name the file that actually moves.
+   *
+   * `~` is expanded because the model types it: the SFTP side has expanded it since S6 (the
+   * subsystem does no shell expansion, so `~` there is a literal directory name), and a local
+   * path that silently does not is the same surprise in the other direction. `~user` is not
+   * expanded — another account's home needs a passwd lookup, which is a different question.
+   *
+   * A missing path rejects with ENOENT and is left as-is: the caller owns the wording of
+   * "Local file was not found".
+   */
+  async statLocalFile(localPath: string): Promise<{ size: number; isFile: boolean; realPath: string }> {
+    const realPath = await realpathLocal(expandLocalHome(localPath));
+    const stats = await statLocal(realPath);
+    return { size: stats.size, isFile: stats.isFile(), realPath };
+  }
+
+  /**
+   * Streams a local file to a remote path for the agent upload path.
+   *
+   * `overwrite` is passed through rather than forced. The caller checks the remote path before
+   * the prompt, but a file can appear between that check and this transfer (or while the user
+   * is reading the dialog), and `uploadFile` re-checks: with `overwrite: false` the late arrival
+   * raises {@link SftpConflictError} instead of clobbering a file the dialog promised to leave
+   * alone.
+   */
+  async uploadLocalFile(
+    localPath: string,
+    remotePath: string,
+    options: { overwrite: boolean; progress?: TransferProgress }
+  ): Promise<void> {
+    await this.uploadFile(localPath, remotePath, options.progress, { overwrite: options.overwrite });
   }
 
   /**
@@ -704,6 +750,24 @@ interface LocalDirectoryPlan {
   /** Relative directory paths using '/' separators, parents before children. */
   directories: string[];
   files: Array<{ localPath: string; relativePath: string; size: number }>;
+}
+
+/**
+ * Expand a leading `~` on a *local* path.
+ *
+ * The counterpart of the remote `expandHome` in `SftpAgentService`, and it exists for the same
+ * reason: the tilde is what a person types, and a path that quietly means something else is
+ * worse than a refusal. Windows' `~\` is accepted alongside `~/` because a model writing a
+ * Windows path uses that separator.
+ */
+function expandLocalHome(path: string): string {
+  if (path === '~') {
+    return homedir();
+  }
+  if (path.startsWith('~/') || path.startsWith('~\\')) {
+    return joinLocalPath(homedir(), path.slice(2));
+  }
+  return path;
 }
 
 /**

@@ -751,6 +751,80 @@ describe('dsh Host half — wiring', () => {
     expect(after.map((line) => JSON.parse(line).reasonCode)).toEqual(['builtin_probe', 'completed']);
   });
 
+  it('names the local source of an upload in the generic row, in the service\'s own wording', async () => {
+    // `path` names one end of an upload. `SftpAgentService` writes `upload <local> -> <remote>`
+    // into its own row, so the observer writing only the remote path would put two spellings of
+    // one transfer in one trail — and would drop the local end, which is the file on the
+    // operator's own machine and the half an incident review asks about first.
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const file = joinPath(process.env.DSH_HOME as string, 'at-terminal', 'agent-audit.jsonl');
+    const agent = { session: { id: 'sess-1' } };
+    const upload = {
+      serverId: 'srv-1',
+      path: '/opt/at-pc/at-pc-server',
+      localPath: '/Users/clkj/at-pc/target/at-pc-server'
+    };
+
+    fire(
+      harness,
+      'tools/result',
+      { name: 'at_terminal_sftp_write_file', callId: 'call-upload', arguments: upload, agent },
+      { isError: false, value: { ...upload, bytesWritten: 7_692_224, overwritten: false } }
+    );
+
+    const lines = await readWhenReady(file);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      tool: 'sftp_write_file',
+      command: 'upload /Users/clkj/at-pc/target/at-pc-server -> /opt/at-pc/at-pc-server',
+      path: '/opt/at-pc/at-pc-server',
+      serverId: 'srv-1',
+      reasonCode: 'completed'
+    });
+
+    // A text write has one end and no source to name: the row keeps `path` alone rather than
+    // inventing an `upload` line for a call that never read the local disk.
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_sftp_write_file',
+        callId: 'call-write',
+        arguments: { serverId: 'srv-1', path: '/srv/app.conf', content: 'a=1' },
+        agent
+      },
+      {
+        isError: false,
+        value: { serverId: 'srv-1', path: '/srv/app.conf', bytesWritten: 4, overwritten: true, localPath: null }
+      }
+    );
+    const textWrite = JSON.parse((await readWhenReady(file, 2))[1]);
+    expect(textWrite).toMatchObject({ tool: 'sftp_write_file', path: '/srv/app.conf' });
+    expect(textWrite.command).toBeUndefined();
+
+    // A refused upload still names its source. "The agent tried to send this file to that box and
+    // the user said no" is the row a review is looking for, and it is the only place that
+    // attempt is recorded at all — the call itself ended in an error and left no other trace.
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_sftp_write_file',
+        callId: 'call-refused',
+        arguments: { serverId: 'srv-1', path: '/root/.ssh/authorized_keys', localPath: '/Users/clkj/.ssh/id_rsa' },
+        agent
+      },
+      { isError: true, error: { message: 'SFTP upload was cancelled.' }, content: [] }
+    );
+    expect(JSON.parse((await readWhenReady(file, 3))[2])).toMatchObject({
+      tool: 'sftp_write_file',
+      command: 'upload /Users/clkj/.ssh/id_rsa -> /root/.ssh/authorized_keys',
+      reasonCode: 'runtime_error'
+    });
+  });
+
   it('records a failed call as runtime_error, and keeps the tool result untouched when the audit fails', async () => {
     const harness = createHarness();
     hostHalf.apply(harness.ctx, {});

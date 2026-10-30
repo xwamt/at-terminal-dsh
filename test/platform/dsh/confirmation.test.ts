@@ -19,6 +19,37 @@ function createDummyServer(): ServerConfig {
   };
 }
 
+/**
+ * A confirmation with every field filled in, so each test states only what it is about.
+ *
+ * `Object.assign` rather than a spread: spreading `Partial<…>` widens each optional field to
+ * `T | undefined`, which the required `sensitiveLocal` rejects, and a cast would hide a real
+ * omission the next time the interface grows a field.
+ */
+function sftpConfirmation(
+  overrides: Partial<SftpWriteConfirmation> = {}
+): SftpWriteConfirmation {
+  return Object.assign(
+    {
+      server: createDummyServer(),
+      request: {
+        operation: 'write_file',
+        path: '/srv/app/config.yml',
+        overwrite: true,
+        workspaceRoot: '/srv/app'
+      },
+      parentDirectory: '/srv/app',
+      workspaceRoot: '/srv/app',
+      outsideWorkspace: false,
+      sensitive: false,
+      sensitiveLocal: false,
+      allowedScopes: ['once', 'directory', 'session'],
+      stage: 'primary'
+    } satisfies SftpWriteConfirmation,
+    overrides
+  );
+}
+
 describe('DshAgentConfirmation', () => {
   it('delegates command confirmation to dsh approval provider when present', async () => {
     const mockApproval = {
@@ -107,6 +138,7 @@ describe('DshAgentConfirmation', () => {
       workspaceRoot: '/tmp',
       outsideWorkspace: false,
       sensitive: false,
+      sensitiveLocal: false,
       allowedScopes: ['once', 'directory', 'session'],
       stage: 'primary'
     };
@@ -142,6 +174,7 @@ describe('DshAgentConfirmation', () => {
       workspaceRoot: '/tmp',
       outsideWorkspace: false,
       sensitive: false,
+      sensitiveLocal: false,
       allowedScopes: ['once'],
       stage: 'primary'
     };
@@ -168,6 +201,7 @@ describe('DshAgentConfirmation', () => {
       workspaceRoot: '/tmp',
       outsideWorkspace: false,
       sensitive: false,
+      sensitiveLocal: false,
       allowedScopes: ['once'],
       stage: 'primary'
     };
@@ -220,6 +254,7 @@ describe('DshAgentConfirmation', () => {
       workspaceRoot: '/tmp',
       outsideWorkspace: false,
       sensitive: false,
+      sensitiveLocal: false,
       allowedScopes: ['once'],
       stage: 'primary'
     };
@@ -250,6 +285,7 @@ describe('DshAgentConfirmation', () => {
       workspaceRoot: '/home/user',
       outsideWorkspace: true,
       sensitive: true,
+      sensitiveLocal: false,
       allowedScopes: ['once'],
       stage: 'sensitive-double-check'
     };
@@ -349,25 +385,6 @@ describe('buildCommandApprovalCopy', () => {
 describe('the SFTP write scope question', () => {
   const agent = { id: 'agent-1', session: { id: 'session-1' } };
 
-  function sftpWrite(overrides: Partial<SftpWriteConfirmation> = {}): SftpWriteConfirmation {
-    return {
-      server: createDummyServer(),
-      request: {
-        operation: 'write_file',
-        path: '/srv/app/config.yml',
-        overwrite: true,
-        workspaceRoot: '/srv/app'
-      },
-      parentDirectory: '/srv/app',
-      workspaceRoot: '/srv/app',
-      outsideWorkspace: false,
-      sensitive: false,
-      allowedScopes: ['once', 'directory', 'session'],
-      stage: 'primary',
-      ...overrides
-    };
-  }
-
   it('offers every grant the authorizer allows, and returns the chosen one', async () => {
     const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
     const questions = {
@@ -379,7 +396,7 @@ describe('the SFTP write scope question', () => {
       getCurrentCallContext: () => ({ agent, callId: 'call-9' })
     });
 
-    const scope = await confirmation.confirmSftpWrite(sftpWrite());
+    const scope = await confirmation.confirmSftpWrite(sftpConfirmation());
 
     expect(scope).toBe('directory');
     // The yes/no dialog is not a second step: one question, one answer.
@@ -406,7 +423,7 @@ describe('the SFTP write scope question', () => {
     });
 
     const scope = await confirmation.confirmSftpWrite(
-      sftpWrite({ outsideWorkspace: true, allowedScopes: ['once', 'directory'] })
+      sftpConfirmation({ outsideWorkspace: true, allowedScopes: ['once', 'directory'] })
     );
 
     expect(scope).toBe('directory');
@@ -427,7 +444,7 @@ describe('the SFTP write scope question', () => {
     });
 
     const scope = await confirmation.confirmSftpWrite(
-      sftpWrite({ sensitive: true, allowedScopes: ['once'] })
+      sftpConfirmation({ sensitive: true, allowedScopes: ['once'] })
     );
 
     expect(scope).toBe('once');
@@ -450,7 +467,7 @@ describe('the SFTP write scope question', () => {
     // `session` was not on offer (outside the folder). Whatever a UI sends back must not widen
     // what the authorizer allowed, and an invalid answer is not consent.
     const scope = await confirmation.confirmSftpWrite(
-      sftpWrite({ outsideWorkspace: true, allowedScopes: ['once', 'directory'] })
+      sftpConfirmation({ outsideWorkspace: true, allowedScopes: ['once', 'directory'] })
     );
 
     expect(scope).toBeUndefined();
@@ -469,8 +486,8 @@ describe('the SFTP write scope question', () => {
       getCurrentCallContext: () => ({ agent })
     });
 
-    expect(await confirmation.confirmSftpWrite(sftpWrite())).toBe('once');
-    expect(await confirmation.confirmSftpWrite(sftpWrite())).toBe('once');
+    expect(await confirmation.confirmSftpWrite(sftpConfirmation())).toBe('once');
+    expect(await confirmation.confirmSftpWrite(sftpConfirmation())).toBe('once');
 
     expect(approval.request).toHaveBeenCalledTimes(2);
     expect(logger.warn).toHaveBeenCalledTimes(1);
@@ -490,7 +507,7 @@ describe('the SFTP write scope question', () => {
       getCurrentCallContext: () => ({ agent })
     });
 
-    const scope = await confirmation.confirmSftpWrite(sftpWrite());
+    const scope = await confirmation.confirmSftpWrite(sftpConfirmation());
 
     expect(scope).toBe('once');
     expect(approval.request).toHaveBeenCalledTimes(1);
@@ -509,7 +526,7 @@ describe('the SFTP write scope question', () => {
       getCurrentCallContext: () => ({ agent })
     });
 
-    expect(await confirmation.confirmSftpWrite(sftpWrite())).toBeUndefined();
+    expect(await confirmation.confirmSftpWrite(sftpConfirmation())).toBeUndefined();
     expect(approval.request).not.toHaveBeenCalled();
   });
 });
@@ -557,5 +574,203 @@ describe('choosing a write grant', () => {
     now += 16 * 60_000;
     await authorizer.requireWrite(server, write('/srv/app/d.yml'));
     expect(questions.ask).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * The upload dialog.
+ *
+ * A write confirmation names the remote path, and until now that was the whole question. An
+ * upload has two ends, and the interesting one is the *local* end: a human approving "send this
+ * to the server" has to be able to see which file on their own machine is about to leave it, and
+ * a credential on either side has to ask twice. These cases pin the copy, not just the presence
+ * of a warning.
+ */
+describe('the upload confirmation', () => {
+  const agent = { id: 'agent-1', session: { id: 'session-1' } };
+
+  function uploadConfirmation(
+    overrides: Partial<SftpWriteConfirmation> = {}
+  ): SftpWriteConfirmation {
+    return sftpConfirmation({
+      request: {
+        operation: 'upload_local_file',
+        path: '/opt/at-pc/at-pc-server',
+        overwrite: true,
+        workspaceRoot: '/opt/at-pc',
+        localPath: '/Users/clkj/dist/at-pc-server',
+        localBytes: 7_692_224
+      },
+      parentDirectory: '/opt/at-pc',
+      workspaceRoot: '/opt/at-pc',
+      allowedScopes: ['once'],
+      ...overrides
+    });
+  }
+
+  it('names the local source and its size, and never asks how long the grant lasts', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const questions = { ask: vi.fn() };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      resolveUserQuestions: () => questions,
+      getCurrentCallContext: () => ({ agent, callId: 'call-upload' })
+    });
+
+    const scope = await confirmation.confirmSftpWrite(uploadConfirmation());
+
+    expect(scope).toBe('once');
+    // An upload cannot be remembered, so offering "15 minutes" or "this session" would offer a
+    // grant the authorizer refuses to honor.
+    expect(questions.ask).not.toHaveBeenCalled();
+    const [request] = approval.request.mock.calls[0];
+    expect(request.toolName).toBe('upload_local_file');
+    // The reason is the half of the approval event a log or a notification keeps — the body is
+    // not rendered everywhere — so it has to name both ends on its own.
+    expect(request.reason).toBe(
+      'SFTP upload requested: /Users/clkj/dist/at-pc-server -> /opt/at-pc/at-pc-server'
+    );
+    expect(request.displayReason).toBe(
+      [
+        'Allow AT Terminal agent SFTP upload on Production Server (1.2.3.4)?',
+        '',
+        'Operation: upload_local_file',
+        'Path: /opt/at-pc/at-pc-server',
+        'Folder: /opt/at-pc',
+        'Local source: /Users/clkj/dist/at-pc-server (7.3 MB)',
+        'Overwrite: yes'
+      ].join('\n')
+    );
+  });
+
+  it('warns when the local source is a credential', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    await confirmation.confirmSftpWrite(
+      uploadConfirmation({
+        request: {
+          operation: 'upload_local_file',
+          path: '/opt/app/key',
+          overwrite: true,
+          workspaceRoot: '/opt/app',
+          localPath: '/Users/clkj/.ssh/id_rsa',
+          localBytes: 1_675
+        },
+        sensitiveLocal: true
+      })
+    );
+
+    expect(approval.request.mock.calls[0][0].displayReason).toContain(
+      'WARNING: sensitive local file (SSH keys, cloud credentials, or environment secrets).'
+    );
+  });
+
+  it('double-checks a sensitive local source on its own, naming the file that would leave', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    await confirmation.confirmSftpWrite(
+      uploadConfirmation({
+        request: {
+          operation: 'upload_local_file',
+          path: '/opt/app/key',
+          overwrite: true,
+          workspaceRoot: '/opt/app',
+          localPath: '/Users/clkj/.ssh/id_rsa',
+          localBytes: 1_675
+        },
+        sensitive: false,
+        sensitiveLocal: true,
+        stage: 'sensitive-double-check'
+      })
+    );
+
+    const [request] = approval.request.mock.calls[0];
+    // The remote path is ordinary here; a dialog that only names it would describe a harmless
+    // write while a private key is what actually moves.
+    expect(request.reason).toBe(
+      'Double confirmation required for sensitive local file: /Users/clkj/.ssh/id_rsa'
+    );
+    expect(request.displayReason).toBe(
+      [
+        'Double confirmation required for sensitive local file: /Users/clkj/.ssh/id_rsa',
+        '',
+        'This upload sends the contents of a local file to the server, where the remote account and anything watching it can read them.',
+        '',
+        'Local source: /Users/clkj/.ssh/id_rsa (1.6 KB)',
+        'Path: /opt/app/key',
+        '',
+        'Confirm to allow this single operation.'
+      ].join('\n')
+    );
+  });
+
+  it('shows both ends when the remote path is the sensitive one', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    await confirmation.confirmSftpWrite(
+      uploadConfirmation({
+        request: {
+          operation: 'upload_local_file',
+          path: '/root/.ssh/authorized_keys',
+          overwrite: true,
+          workspaceRoot: '/root/.ssh',
+          localPath: '/Users/clkj/.ssh/id_rsa.pub',
+          localBytes: 400
+        },
+        parentDirectory: '/root/.ssh',
+        workspaceRoot: '/root/.ssh',
+        outsideWorkspace: true,
+        sensitive: true,
+        sensitiveLocal: true,
+        stage: 'sensitive-double-check'
+      })
+    );
+
+    const [request] = approval.request.mock.calls[0];
+    expect(request.reason).toBe(
+      'Double confirmation required for sensitive path: /root/.ssh/authorized_keys'
+    );
+    const lines = request.displayReason.split('\n');
+    expect(lines[0]).toBe(
+      'Double confirmation required: /root/.ssh/authorized_keys is a sensitive system path on Production Server (1.2.3.4).'
+    );
+    expect(request.displayReason).toContain('Local source: /Users/clkj/.ssh/id_rsa.pub (400 B)');
+    expect(request.displayReason).toContain('Path: /root/.ssh/authorized_keys');
+  });
+
+  it('leaves the text-write dialog exactly as it was', async () => {
+    const approval = { request: vi.fn().mockResolvedValue('allowed-once') };
+    const confirmation = new DshAgentConfirmation({
+      resolveApproval: () => approval,
+      getCurrentCallContext: () => ({ agent })
+    });
+
+    await confirmation.confirmSftpWrite(sftpConfirmation());
+
+    const [request] = approval.request.mock.calls[0];
+    expect(request.reason).toBe('SFTP write requested: /srv/app/config.yml');
+    expect(request.displayReason).toBe(
+      [
+        'Allow AT Terminal agent SFTP write on Production Server (1.2.3.4)?',
+        '',
+        'Operation: write_file',
+        'Path: /srv/app/config.yml',
+        'Folder: /srv/app',
+        'Overwrite: yes'
+      ].join('\n')
+    );
+    expect(request.displayReason).not.toContain('Local source');
   });
 });

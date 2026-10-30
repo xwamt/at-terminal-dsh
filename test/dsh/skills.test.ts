@@ -43,6 +43,14 @@ describe('the runtime skill catalog', () => {
     expect(new Set(RUNTIME_SKILLS.map((skill: { name: string }) => skill.name)).size).toBe(RUNTIME_SKILLS.length);
   });
 
+  it('sends a binary or a large file through localPath, where text editing is the wrong tool', () => {
+    // The procedure is what the model reads when it has decided to change a file; a binary that
+    // reaches `content` from here is the ~2.5M-token call this line exists to prevent.
+    const edit = RUNTIME_SKILLS.find((skill: { name: string }) => skill.name === 'at-terminal-remote-edit')!;
+    expect(edit.content).toContain('localPath');
+    expect(edit.content).toContain('never pass through you');
+  });
+
   it('registers every skill, and the catalog agrees', async () => {
     recordSkillStatus('reset for test');
     const skills = fakeSkills();

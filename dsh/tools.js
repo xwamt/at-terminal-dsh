@@ -281,7 +281,7 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
     description:
-      'Report plugin liveness, version, capabilities and effective settings. Reaches no host.',
+      'Report plugin liveness, version, capabilities and settings. Reaches no host.',
     parameters: EMPTY_PARAMETERS,
     output: {
       schema: {
@@ -658,7 +658,7 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 30000,
     description:
-      'List a remote directory, paged; returns entries plus total and truncation flags.',
+      'List a remote directory, paged; returns entries, total and truncation flags.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -885,21 +885,28 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext, reso
 export function createSftpWriteFileTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
   return {
     name: 'at_terminal_sftp_write_file',
-    // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
-    // TOOL_TIMEOUT. A second timer inside the tool would double-count.
-    timeoutMs: 120000,
+    // A streamed upload is bounded by link speed, not by the context budget: the service's own
+    // timers have to be the ones that fire. Their worst case is already ~360 s (60 s for the
+    // authorization, 300 s for the transfer) before connect, realpath and stat are counted, so
+    // this bound sits outside all of it — it ends a call stuck somewhere the service is not
+    // watching, and must never cut a slow upload short into a generic TOOL_TIMEOUT.
+    timeoutMs: 480000,
     description:
-      'Write UTF-8 text after confirmation; overwrite replaces it.',
+      'Write UTF-8 text or upload a local file after confirmation; overwrite replaces it.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string', description: 'Remote POSIX file path.' },
+        path: { type: 'string' },
         content: { type: 'string' },
+        // The one source a 7.3 MB binary can travel through: the Host reads the file and streams
+        // it, so its bytes never enter the model's context. `content` is for text the model
+        // already holds; both at once is ambiguous, so `execute()` refuses it.
+        localPath: { type: 'string', description: 'Local file on this machine; streamed, never enters context.' },
         overwrite: { type: 'boolean' }
       },
-      required: ['path', 'content']
+      required: ['path']
     },
     output: {
       schema: {
@@ -910,10 +917,21 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
           serverId: { type: 'string' },
           path: { type: 'string' },
           bytesWritten: { type: 'integer' },
-          overwritten: { type: 'boolean' }
+          overwritten: { type: 'boolean' },
+          localPath: { oneOf: [{ type: 'string' }, { type: 'null' }] }
         }
       },
       render(_args, val) {
+        // Two wordings because the model reads this line as evidence of what happened: an upload
+        // that rendered as "Wrote N bytes" would hide the fact that a local file was the source.
+        if (typeof val.localPath === 'string') {
+          return [
+            {
+              type: 'text',
+              text: `Uploaded ${val.bytesWritten} bytes from ${val.localPath} to ${val.path} (overwritten=${val.overwritten})`
+            }
+          ]
+        }
         return [
           {
             type: 'text',
@@ -926,8 +944,22 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
       if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
       const input = argsOf('at_terminal_sftp_write_file', args)
       requireNonEmptyString('at_terminal_sftp_write_file', input, 'path')
-      if (typeof input.content !== 'string') {
-        throw new Error('at_terminal_sftp_write_file: "content" is required and must be a string.')
+      // Exactly one source. Neither is a default for the other — a text write and an upload are
+      // authorized differently — so both present is an ambiguity to refuse, not to resolve.
+      const hasContent = input.content !== undefined && input.content !== null
+      const hasLocalPath = input.localPath !== undefined && input.localPath !== null
+      if (hasContent && hasLocalPath) {
+        throw new Error('at_terminal_sftp_write_file: pass either "content" or "localPath", not both.')
+      }
+      if (!hasContent && !hasLocalPath) {
+        throw new Error(
+          'at_terminal_sftp_write_file: provide either "content" (text) or "localPath" (a file on the machine running the Host).'
+        )
+      }
+      if (hasLocalPath) {
+        requireNonEmptyString('at_terminal_sftp_write_file', input, 'localPath')
+      } else if (typeof input.content !== 'string') {
+        throw new Error('at_terminal_sftp_write_file: "content" must be a string.')
       }
       const callCtx = {
         agent: exec?.agent ?? 'default',
@@ -948,7 +980,10 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
           serverId: res.serverId,
           path: res.path,
           bytesWritten: typeof res.bytesWritten === 'number' ? res.bytesWritten : 0,
-          overwritten: Boolean(res.overwritten)
+          overwritten: Boolean(res.overwritten),
+          // Null for a text write: the field is in the schema for both shapes so the renderer
+          // can branch on it without guessing from `args`, which a retry may have changed.
+          localPath: typeof res.localPath === 'string' ? res.localPath : null
         }
       })
     }
@@ -1219,8 +1254,7 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
           description: '"hardware" for resources, "agent_execution" for agent activity.'
         },
         serverId: {
-          type: 'string',
-          description: 'Defaults to the active server.'
+          type: 'string'
         },
         mode: {
           type: 'string',
@@ -1291,7 +1325,7 @@ export function createGetHardwareMetricsTool({ resolveAgentService, runInContext
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 8000,
-    description: 'Live CPU, memory, disk, network and top processes; the probe bypasses the command policy engine and the call is still audited.',
+    description: 'Live CPU, memory, disk, network and top processes; the probe bypasses the command policy engine and is still audited.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -1612,7 +1646,7 @@ export function createJobKillTool({ resolveJobs } = {}) {
     // into TOOL_TIMEOUT. The kill itself is one SSH round trip with its own 15 s budget.
     timeoutMs: 60000,
     description:
-      'Stop a background job by signalling the remote process group; killed means it is gone.',
+      'Stop a background job; killed means the remote process group is gone.',
     parameters: {
       type: 'object',
       additionalProperties: false,

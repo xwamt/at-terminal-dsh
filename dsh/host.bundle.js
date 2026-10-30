@@ -14785,7 +14785,13 @@ var SftpManager = class {
 
 // src/sftp/SftpSession.ts
 import { randomUUID } from "node:crypto";
-import { mkdir as mkdirLocal, readdir as readdirLocal, stat as statLocal } from "node:fs/promises";
+import {
+  mkdir as mkdirLocal,
+  readdir as readdirLocal,
+  realpath as realpathLocal,
+  stat as statLocal
+} from "node:fs/promises";
+import { homedir } from "node:os";
 import { join as joinLocalPath } from "node:path";
 
 // src/ssh/KeyboardInteractive.ts
@@ -15131,6 +15137,39 @@ var SFTP_WRITE_STEP_TIMEOUT_MS = 55e3, REMOTE_TEMP_CLEANUP_TIMEOUT_MS = 2e3, DIR
     }
   }
   /**
+   * Size, type and real location of a file on the machine running the Host.
+   *
+   * The realpath is not a nicety. The sensitive-source rule the upload authorizer applies is
+   * lexical, because it must not touch the disk of a path that has not been authorized yet —
+   * so a symlink named `payload.bin` pointing at `~/.ssh/id_rsa` would pass it and produce one
+   * innocuous prompt while a private key left the machine. Resolving here means the check, the
+   * dialog, the audit row and the returned result all name the file that actually moves.
+   *
+   * `~` is expanded because the model types it: the SFTP side has expanded it since S6 (the
+   * subsystem does no shell expansion, so `~` there is a literal directory name), and a local
+   * path that silently does not is the same surprise in the other direction. `~user` is not
+   * expanded — another account's home needs a passwd lookup, which is a different question.
+   *
+   * A missing path rejects with ENOENT and is left as-is: the caller owns the wording of
+   * "Local file was not found".
+   */
+  async statLocalFile(localPath) {
+    let realPath = await realpathLocal(expandLocalHome(localPath)), stats = await statLocal(realPath);
+    return { size: stats.size, isFile: stats.isFile(), realPath };
+  }
+  /**
+   * Streams a local file to a remote path for the agent upload path.
+   *
+   * `overwrite` is passed through rather than forced. The caller checks the remote path before
+   * the prompt, but a file can appear between that check and this transfer (or while the user
+   * is reading the dialog), and `uploadFile` re-checks: with `overwrite: false` the late arrival
+   * raises {@link SftpConflictError} instead of clobbering a file the dialog promised to leave
+   * alone.
+   */
+  async uploadLocalFile(localPath, remotePath, options) {
+    await this.uploadFile(localPath, remotePath, options.progress, { overwrite: options.overwrite });
+  }
+  /**
    * Recursively uploads a local directory. Remote directories are created parents-first, then
    * files transfer with {@link DIRECTORY_TRANSFER_CONCURRENCY} in flight; `progress` receives
    * byte totals aggregated across the whole tree. Local symlinks and special files are
@@ -15439,6 +15478,9 @@ async function fstatSize(sftp, handle2) {
   return (await new Promise((resolve, reject) => {
     sftp.fstat(handle2, (error, result) => error ? reject(error) : resolve(result));
   })).size;
+}
+function expandLocalHome(path) {
+  return path === "~" ? homedir() : path.startsWith("~/") || path.startsWith("~\\") ? joinLocalPath(homedir(), path.slice(2)) : path;
 }
 async function walkLocalDirectory(localDir) {
   let directories = [], files = [], queue = [{ local: localDir, relative: "" }];
@@ -16641,27 +16683,45 @@ var AgentToolService = class {
     }
   }
   async sftpWriteFile(input) {
-    let transferId = `write-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, filename = input.path.split("/").pop() || input.path;
+    let transferId = `write-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, filename = input.path.split("/").pop() || input.path, isUpload = input.localPath !== void 0, auditCommand = isUpload ? `upload ${input.localPath} -> ${input.path}` : `write ${input.path}`, startedAt = Date.now();
     this.dependencies.executionBridge?.updateTransfer({
       id: transferId,
       filename,
       type: "upload",
-      progressPercent: 50,
-      bytesPerSec: 1024 * 50
+      progressPercent: isUpload ? 0 : 50,
+      bytesPerSec: isUpload ? 0 : 1024 * 50
     });
+    let onProgress = isUpload ? (transferredBytes, totalBytes) => {
+      this.dependencies.executionBridge?.updateTransfer({
+        id: transferId,
+        filename,
+        type: "upload",
+        progressPercent: totalBytes > 0 ? Math.min(100, Math.round(transferredBytes / totalBytes * 100)) : 0,
+        // Cumulative average, not the delta between two 32 KiB steps: those arrive
+        // unevenly, and a delta-derived rate flickers between 0 and tens of MB/s.
+        bytesPerSec: Math.round(transferredBytes / Math.max(1, Date.now() - startedAt) * 1e3)
+      });
+    } : void 0;
     try {
-      let res = await this.requireSftp().writeFile(input);
+      let res = await this.requireSftp().writeFile(
+        onProgress === void 0 ? input : { ...input, onProgress }
+      );
       return this.dependencies.executionBridge?.completeTransfer(transferId), this.dependencies.executionBridge?.recordAudit({
         tool: "at_terminal_sftp_write_file",
-        command: `write ${input.path}`,
+        // The service reports the resolved source, which is the file that actually moved: a
+        // symlink named `payload.bin` is not what the operator needs to see in the HUD row.
+        command: typeof res.localPath == "string" ? `upload ${res.localPath} -> ${input.path}` : auditCommand,
         reasonCode: "policy_allowed",
         serverId: input.serverId
       }), res;
     } catch (error) {
       throw this.dependencies.executionBridge?.completeTransfer(transferId), this.dependencies.executionBridge?.recordAudit({
         tool: "at_terminal_sftp_write_file",
-        command: `write ${input.path}`,
-        reasonCode: "denied",
+        command: auditCommand,
+        // Not `denied`: a dead link, a missing local file or an expired deadline was never a
+        // policy decision, and labelling them all "denied" made every failure look like the
+        // agent tried something the user refused.
+        reasonCode: sftpWriteFailureReason(error),
         serverId: input.serverId
       }), error;
     }
@@ -16795,6 +16855,10 @@ var AgentToolService = class {
 function auditReasonForError(error, fallback) {
   let message = error instanceof Error ? error.message : String(error);
   return message.includes("was cancelled") || message.includes("was aborted") ? "user_cancelled" : message.startsWith("Confirmation timed out") ? "confirmation_timeout" : message.startsWith("Command timed out after") ? "command_timeout" : message.includes("does not allow background connections") ? "background_denied" : fallback === "user_approved" || fallback === "auto_approved" ? "error" : fallback;
+}
+function sftpWriteFailureReason(error) {
+  let message = error instanceof Error ? error.message : String(error);
+  return message.includes("was cancelled") ? "user_cancelled" : message.startsWith("Timed out uploading") ? "upload_timeout" : "error";
 }
 
 // src/agent/HardwareMetricsCollector.ts
@@ -17349,8 +17413,19 @@ function utf8SafeEnd(buffer) {
   return length;
 }
 
+// src/sftp/FileSize.ts
+var UNITS = ["B", "KB", "MB", "GB", "TB"];
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0)
+    return "0 B";
+  let value = bytes, unitIndex = 0;
+  for (; value >= 1024 && unitIndex < UNITS.length - 1; )
+    value /= 1024, unitIndex += 1;
+  return `${Number.isInteger(value) ? value.toString() : value.toFixed(1).replace(/\.0$/, "")} ${UNITS[unitIndex]}`;
+}
+
 // src/agent/SftpAgentService.ts
-var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
+var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, UPLOAD_TIMEOUT_MS = 3e5, MAX_LOCAL_UPLOAD_BYTES = 1024 * 1024 * 1024, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
   constructor(options) {
     this.options = options;
   }
@@ -17440,32 +17515,44 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
       }
     });
   }
+  /**
+   * Writes a remote file from one of two sources.
+   *
+   * `content` is the original shape and still the right one for text: the bytes are already in
+   * the caller's hands. `localPath` exists because the alternative for a binary was to base64
+   * it through the model's context — 7.3 MB became ~2.5M tokens, so the call could not happen
+   * at all. With `localPath` the Host reads its own disk and streams the file, and the payload
+   * never becomes a string.
+   */
   async writeFile(input) {
     return await this.withAudit("sftp_write_file", input, async () => {
-      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
+      let source = resolveWriteSource(input), target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
       try {
-        let { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path), exists = await pathExists(lease.session, path);
+        let writable = await this.resolveWritablePath(lease, input.path);
+        if (source.kind === "local")
+          return await this.uploadLocalSource(source.localPath, input, target2, lease, writable);
+        let exists = await pathExists(lease.session, writable.path);
         if (exists && !input.overwrite)
           throw new Error("Remote file already exists. Pass overwrite: true to replace it.");
         await withTimeout2(
           this.options.authorizer.requireWrite(target2.server, {
             operation: "write_file",
-            path,
+            path: writable.path,
             overwrite: !!exists,
-            workspaceRoot
+            workspaceRoot: writable.workspaceRoot
           }),
           WRITE_TIMEOUT_MS,
-          `Timed out waiting for SFTP write authorization for ${path}.`
+          `Timed out waiting for SFTP write authorization for ${writable.path}.`
         );
-        let content = Buffer.from(input.content, "utf8");
+        let content = Buffer.from(source.content, "utf8");
         return await withTimeout2(
-          lease.session.writeFile(path, content),
+          lease.session.writeFile(writable.path, content),
           WRITE_TIMEOUT_MS,
-          `Timed out writing remote file ${path}.`
+          `Timed out writing remote file ${writable.path}.`
         ), {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
-          path,
+          path: writable.path,
           bytesWritten: content.length,
           overwritten: exists
         };
@@ -17473,6 +17560,61 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         lease.release();
       }
     });
+  }
+  /**
+   * Streams a local file to the remote path.
+   *
+   * Same gate as a text write — overwrite refusal, human authorization, a deadline — plus the
+   * things only an upload needs: the source is resolved and stat'ed first, so a missing,
+   * non-file or symlinked-to-something-sensitive path is decided before anyone is asked to
+   * approve it, and its size travels with the request so the dialog can state what is about to
+   * move. Everything past the stat names the *resolved* path: the name the caller used is not
+   * evidence of what is in the file.
+   */
+  async uploadLocalSource(localPath, input, target2, lease, writable) {
+    let local = await statLocalSource(lease.session, localPath), sourcePath = local.realPath, exists = await pathExists(lease.session, writable.path);
+    if (exists && !input.overwrite)
+      throw new Error("Remote file already exists. Pass overwrite: true to replace it.");
+    await withTimeout2(
+      this.options.authorizer.requireUpload(target2.server, {
+        operation: "upload_local_file",
+        path: writable.path,
+        overwrite: !!exists,
+        workspaceRoot: writable.workspaceRoot,
+        localPath: sourcePath,
+        localBytes: local.size
+      }),
+      WRITE_TIMEOUT_MS,
+      `Timed out waiting for SFTP upload authorization for ${writable.path}.`
+    );
+    let progress = progressFor(input.onProgress);
+    try {
+      await withTimeout2(
+        lease.session.uploadLocalFile(
+          sourcePath,
+          writable.path,
+          // `exists`, not `input.overwrite`: the flag that reaches the transfer has to be the
+          // state the user was shown. Passing the caller's permission would tell `uploadFile`
+          // "replacing is fine" for a path the dialog described as missing, and a file that
+          // appeared while the dialog was open would be clobbered with no conflict raised.
+          progress === void 0 ? { overwrite: !!exists } : { overwrite: !!exists, progress }
+        ),
+        UPLOAD_TIMEOUT_MS,
+        `Timed out uploading ${sourcePath} to ${writable.path}.`
+      );
+    } catch (error) {
+      throw isSftpConflictError(error) ? new Error("Remote file already exists. Pass overwrite: true to replace it.") : isUploadTimeout(error) ? (lease.abort?.(), new Error(
+        `Timed out uploading ${sourcePath} to ${writable.path} after ${UPLOAD_TIMEOUT_MS / 1e3} s; the transfer was aborted and the remote file may be incomplete. Check the remote file before relying on it, and retry with overwrite: true if it needs replacing.`
+      )) : error;
+    }
+    return {
+      terminalId: target2.terminalId,
+      serverId: target2.server.id,
+      path: writable.path,
+      bytesWritten: local.size,
+      overwritten: exists,
+      localPath: sourcePath
+    };
   }
   async createFile(input) {
     return await this.withAudit("sftp_create_file", input, async () => {
@@ -17667,12 +17809,20 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     );
   }
   async leaseFor(target2) {
-    return target2.context ? {
-      session: await this.ensureTerminalSession(target2.context),
-      rootKey: `terminal:${target2.context.terminalId}`,
-      release: () => {
-      }
-    } : await this.leaseBackgroundSession(target2.server);
+    if (target2.context) {
+      let terminalId = target2.context.terminalId;
+      return {
+        session: await this.ensureTerminalSession(target2.context),
+        rootKey: `terminal:${terminalId}`,
+        release: () => {
+        },
+        // Dropping the pooled session disposes the SSH connection, which is what stops a
+        // `fastPut` that has to be stopped. The terminal stays connected in the panel; the next
+        // agent SFTP call on it opens a fresh session.
+        abort: () => this.disposeTerminal(terminalId)
+      };
+    }
+    return await this.leaseBackgroundSession(target2.server);
   }
   async ensureTerminalSession(context) {
     let existing = this.terminalSessions.get(context.terminalId);
@@ -17691,7 +17841,11 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
       return {
         session: await held.ready,
         rootKey: `server:${server.id}`,
-        release: () => this.releaseBackgroundSession(server.id, held)
+        release: () => this.releaseBackgroundSession(server.id, held),
+        // Same reasoning as the terminal lease: evicting the pooled session disposes its
+        // connection, which is the only way to stop a `fastPut` already in flight. The entry is
+        // marked closed, so the release that follows cannot re-arm its idle timer.
+        abort: () => this.evictBackgroundSession(server.id, held)
       };
     } catch (error) {
       throw this.releaseBackgroundSession(server.id, held), error;
@@ -17716,12 +17870,16 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   async withAudit(tool, input, fn2) {
     let started = Date.now();
     try {
-      let result = await fn2();
+      let result = await fn2(), path = result.path ?? input.path;
       return this.options.audit?.record({
         tool,
         serverId: result.serverId ?? input.serverId,
         terminalId: result.terminalId ?? input.terminalId,
-        path: result.path ?? input.path,
+        path,
+        // An upload has two ends and `path` only names one. "Which file on the operator's
+        // machine was put on that box" is a question this trail has to answer, or the row says
+        // a file appeared and nothing about where it came from.
+        ...result.localPath === void 0 ? {} : { command: `upload ${result.localPath} -> ${path ?? ""}` },
         reasonCode: "ok",
         durationMs: Date.now() - started,
         ...result.truncated === void 0 ? {} : { truncated: result.truncated }
@@ -17732,6 +17890,10 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         serverId: input.serverId,
         terminalId: input.terminalId,
         path: input.path,
+        // A refused upload still names its source. "The agent tried to send `~/.ssh/id_rsa` to
+        // that box and the user said no" is the row an incident review is looking for, and it
+        // is the only place that attempt is recorded at all.
+        ...input.localPath === void 0 ? {} : { command: `upload ${input.localPath} -> ${input.path ?? ""}` },
         reasonCode: auditReasonForError2(error),
         durationMs: Date.now() - started
       }), error;
@@ -17785,6 +17947,40 @@ function isMissingPathError(error) {
   let code = error.code;
   return code === 2 || code === "ENOENT";
 }
+function resolveWriteSource(input) {
+  let content = typeof input.content == "string" ? input.content : void 0, localPath = input.localPath;
+  if (content !== void 0 && localPath !== void 0)
+    throw new Error("Pass either content or localPath, not both.");
+  if (content !== void 0)
+    return { kind: "content", content };
+  if (localPath === void 0)
+    throw new Error("Provide either content (inline text) or localPath (a file on this machine).");
+  if (localPath.trim() === "")
+    throw new Error("Local path cannot be empty.");
+  return { kind: "local", localPath };
+}
+async function statLocalSource(session, localPath) {
+  let local;
+  try {
+    local = await session.statLocalFile(localPath);
+  } catch (error) {
+    throw isMissingPathError(error) ? new Error(`Local file was not found: ${localPath}`) : error;
+  }
+  if (!local.isFile)
+    throw new Error(`Local path is not a regular file: ${local.realPath}`);
+  if (local.size > MAX_LOCAL_UPLOAD_BYTES)
+    throw new Error(
+      `Local file is too large to upload: ${local.realPath} is ${formatFileSize(local.size)}; the limit is ${formatFileSize(MAX_LOCAL_UPLOAD_BYTES)} and the upload deadline is ${UPLOAD_TIMEOUT_MS / 1e3} s.`
+    );
+  return local;
+}
+function isUploadTimeout(error) {
+  return error instanceof Error && error.message.startsWith("Timed out uploading");
+}
+function progressFor(onProgress) {
+  if (onProgress)
+    return { report: ({ transferredBytes, totalBytes }) => onProgress(transferredBytes, totalBytes) };
+}
 function basenameRemotePath(path) {
   let normalized = path.replace(/\/+$/, ""), index = normalized.lastIndexOf("/");
   return index < 0 ? normalized : normalized.slice(index + 1);
@@ -17806,9 +18002,11 @@ function looksBinary(buffer) {
 }
 function auditReasonForError2(error) {
   let message = error instanceof Error ? error.message : String(error);
-  return message.includes("was cancelled") ? "user_cancelled" : message.includes("does not allow background connections") ? "background_denied" : message.includes("Timed out waiting for SFTP") ? "confirmation_timeout" : message.includes("Timed out reading") || message.includes("Timed out listing") ? "read_timeout" : "error";
+  return message.includes("was cancelled") ? "user_cancelled" : message.includes("does not allow background connections") ? "background_denied" : message.includes("Timed out waiting for SFTP") ? "confirmation_timeout" : message.includes("Timed out reading") || message.includes("Timed out listing") ? "read_timeout" : message.includes("Timed out uploading") ? "upload_timeout" : message.startsWith("Local file was not found:") ? "local_not_found" : message.startsWith("Local path is not a regular file:") ? "local_not_regular_file" : message.startsWith("Local file is too large to upload:") ? "local_too_large" : "error";
 }
 async function withTimeout2(promise, timeoutMs, message) {
+  promise.catch(() => {
+  });
   let timer;
   try {
     return await Promise.race([
@@ -17860,6 +18058,40 @@ function isSensitiveRemotePath(path) {
   let normalized = normalizeRemoteDirectory(path), segments = normalized.split("/").filter(Boolean), basename3 = segments.at(-1) ?? "";
   return SENSITIVE_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)) || segments.some((segment) => SENSITIVE_SEGMENTS.has(segment)) || SENSITIVE_BASENAMES.has(basename3) || SENSITIVE_BASENAME_PREFIXES.some((prefix) => basename3.startsWith(prefix)) ? !0 : SENSITIVE_BASENAME_SUFFIXES.some((suffix) => basename3.endsWith(suffix));
 }
+var SENSITIVE_LOCAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".dsh"]), SENSITIVE_LOCAL_BASENAMES = /* @__PURE__ */ new Set([
+  "id_rsa",
+  "id_ed25519",
+  "id_ecdsa",
+  "id_dsa",
+  "authorized_keys",
+  ".netrc",
+  ".credentials",
+  ".env"
+]), SENSITIVE_LOCAL_FILES = [
+  { directory: ".kube", name: "config" },
+  { directory: ".docker", name: "config.json" }
+], SENSITIVE_LOCAL_SUFFIXES = [".pem"];
+function isSensitiveLocalPath(path) {
+  let segments = normalizeLocalPath(path).map((segment) => segment.toLowerCase());
+  if (segments.length === 0)
+    return !1;
+  let basename3 = segments.at(-1) ?? "";
+  return segments.some((segment) => SENSITIVE_LOCAL_SEGMENTS.has(segment)) || SENSITIVE_LOCAL_BASENAMES.has(basename3) || SENSITIVE_LOCAL_SUFFIXES.some((suffix) => basename3.endsWith(suffix)) ? !0 : SENSITIVE_LOCAL_FILES.some(
+    ({ directory, name: name2 }) => basename3 === name2 && segments.includes(directory)
+  );
+}
+function normalizeLocalPath(path) {
+  let segments = [];
+  for (let segment of path.replace(/\\/g, "/").split("/"))
+    if (!(segment === "" || segment === ".")) {
+      if (segment === "..") {
+        segments.pop();
+        continue;
+      }
+      segments.push(segment);
+    }
+  return segments;
+}
 
 // src/agent/SftpWriteAuthorizer.ts
 var DIRECTORY_GRANT_TTL_MS = 900 * 1e3, SftpWriteAuthorizer = class {
@@ -17884,7 +18116,8 @@ ${parentDirectory}`;
       parentDirectory,
       workspaceRoot: normalizeRemoteDirectory(request.workspaceRoot),
       outsideWorkspace,
-      sensitive
+      sensitive,
+      sensitiveLocal: !1
     }, scope = await this.confirm({ ...base, allowedScopes, stage: "primary" });
     if (!scope || !allowedScopes.includes(scope))
       throw new Error("SFTP write was cancelled.");
@@ -17911,7 +18144,8 @@ ${parentDirectory}`;
       parentDirectory,
       workspaceRoot: normalizeRemoteDirectory(request.workspaceRoot),
       outsideWorkspace,
-      sensitive
+      sensitive,
+      sensitiveLocal: !1
     };
     if (await this.confirm({ ...base, allowedScopes: ["once"], stage: "primary" }) !== "once")
       throw new Error("SFTP delete was cancelled.");
@@ -17921,6 +18155,39 @@ ${parentDirectory}`;
       stage: "sensitive-double-check"
     }) !== "once")
       throw new Error("SFTP delete was cancelled.");
+  }
+  /**
+   * Authorization for uploading a local file.
+   *
+   * Full trust does not reach here, and that is the point of the separate method. Trust is a
+   * statement about the *remote* server: the user said "this box may be written by the agent".
+   * An upload additionally reads the machine the Host runs on, which was never part of that
+   * statement — under the injected-instructions threat model, `id_rsa` leaving the laptop for a
+   * host the agent also controls is exactly the move a remembered grant must not cover. So this
+   * always asks, never stores a grant, and offers no window longer than the single operation.
+   *
+   * The double check is for either end being sensitive: a key on the local side and a key
+   * location on the remote side are the same class of mistake, and only one of them is visible
+   * in a dialog that only names the remote path.
+   */
+  async requireUpload(server, request) {
+    let parentDirectory = normalizeRemoteDirectory(dirname(request.path)), sensitive = isSensitiveRemotePath(request.path), sensitiveLocal = request.localPath !== void 0 && isSensitiveLocalPath(request.localPath), outsideWorkspace = !isWithinRemoteDirectory(request.workspaceRoot, request.path), base = {
+      server,
+      request,
+      parentDirectory,
+      workspaceRoot: normalizeRemoteDirectory(request.workspaceRoot),
+      outsideWorkspace,
+      sensitive,
+      sensitiveLocal
+    };
+    if (await this.confirm({ ...base, allowedScopes: ["once"], stage: "primary" }) !== "once")
+      throw new Error("SFTP upload was cancelled.");
+    if ((sensitive || sensitiveLocal) && await this.confirm({
+      ...base,
+      allowedScopes: ["once"],
+      stage: "sensitive-double-check"
+    }) !== "once")
+      throw new Error("SFTP upload was cancelled.");
   }
   hasLiveGrant(grantKey) {
     let expiresAt = this.grants.get(grantKey);
@@ -19005,9 +19272,7 @@ var SCOPE_QUESTION_ID = "at-terminal-sftp-write-scope", SCOPE_CHOICES = [
       if (asked.asked)
         return asked.scope;
     }
-    let reason = confirmation.stage === "sensitive-double-check" ? copy("Double confirmation required for sensitive path: {path}", {
-      path: confirmation.request.path
-    }) : copy("SFTP write requested: {path}", { path: confirmation.request.path }), displayReason = formatSftpWriteConfirmMessage(confirmation);
+    let reason = sftpWriteApprovalReason(confirmation), displayReason = formatSftpWriteConfirmMessage(confirmation);
     return await approval.request({
       agent: callCtx.agent,
       toolName: confirmation.request.operation,
@@ -19071,29 +19336,50 @@ function buildCommandApprovalCopy(request) {
 ${baseMessage}` : baseMessage;
   return { reason, displayReason };
 }
+function sftpWriteApprovalReason(confirmation) {
+  let { request } = confirmation;
+  return confirmation.stage === "sensitive-double-check" ? confirmation.sensitive ? copy("Double confirmation required for sensitive path: {path}", { path: request.path }) : copy("Double confirmation required for sensitive local file: {path}", {
+    path: request.localPath ?? request.path
+  }) : request.operation !== "upload_local_file" ? copy("SFTP write requested: {path}", { path: request.path }) : request.localPath === void 0 ? copy("SFTP upload requested: {path}", { path: request.path }) : copy("SFTP upload requested: {localPath} -> {path}", {
+    localPath: request.localPath,
+    path: request.path
+  });
+}
 function formatSftpWriteConfirmMessage(confirmation) {
-  let { server, request } = confirmation, isDelete = request.operation === "delete_file", warnings = [];
+  let { server, request } = confirmation, isDelete = request.operation === "delete_file", isUpload = request.operation === "upload_local_file", localSource = formatLocalSource(request), warnings = [];
   return confirmation.outsideWorkspace && warnings.push(
     copy("WARNING: outside the working directory {root} that this session was opened in.", {
       root: confirmation.workspaceRoot
     })
   ), confirmation.sensitive && warnings.push(
     copy("WARNING: sensitive system path (SSH keys, service units, cron, or system configuration).")
+  ), confirmation.sensitiveLocal && warnings.push(
+    copy("WARNING: sensitive local file (SSH keys, cloud credentials, or environment secrets).")
   ), confirmation.stage === "sensitive-double-check" ? [
-    copy("Double confirmation required: {path} is a sensitive system path on {server} ({host}).", {
+    confirmation.sensitive ? copy("Double confirmation required: {path} is a sensitive system path on {server} ({host}).", {
       path: request.path,
       server: server.label,
       host: server.host
+    }) : copy("Double confirmation required for sensitive local file: {path}", {
+      path: request.localPath ?? request.path
     }),
     "",
-    isDelete ? copy("Deleting here can break logins, services, or scheduled jobs on the server.") : copy(
+    isDelete ? copy("Deleting here can break logins, services, or scheduled jobs on the server.") : isUpload ? copy(
+      "This upload sends the contents of a local file to the server, where the remote account and anything watching it can read them."
+    ) : copy(
       "Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you."
     ),
+    // The double check names both ends for an upload: a human judging "send this file there"
+    // needs the source and the destination, and only one of them is a remote path.
+    ...localSource === void 0 ? [] : ["", localSource, copy("Path: {path}", { path: request.path })],
     "",
     copy("Confirm to allow this single operation.")
   ].join(`
 `) : [
     isDelete ? copy("Allow AT Terminal agent SFTP deletion on {server} ({host})?", {
+      server: server.label,
+      host: server.host
+    }) : isUpload ? copy("Allow AT Terminal agent SFTP upload on {server} ({host})?", {
       server: server.label,
       host: server.host
     }) : copy("Allow AT Terminal agent SFTP write on {server} ({host})?", {
@@ -19104,10 +19390,18 @@ function formatSftpWriteConfirmMessage(confirmation) {
     copy("Operation: {operation}", { operation: request.operation }),
     copy("Path: {path}", { path: request.path }),
     copy("Folder: {folder}", { folder: confirmation.parentDirectory }),
+    ...localSource === void 0 ? [] : [localSource],
     ...request.overwrite !== void 0 ? [copy("Overwrite: {value}", { value: request.overwrite ? copy("yes") : copy("no") })] : [],
     ...warnings.length > 0 ? ["", ...warnings] : []
   ].join(`
 `);
+}
+function formatLocalSource(request) {
+  if (!(request.operation !== "upload_local_file" || request.localPath === void 0))
+    return request.localBytes === void 0 ? copy("Local source: {path}", { path: request.localPath }) : copy("Local source: {path} ({size})", {
+      path: request.localPath,
+      size: formatFileSize(request.localBytes)
+    });
 }
 
 // src/platform/dsh/agent.ts

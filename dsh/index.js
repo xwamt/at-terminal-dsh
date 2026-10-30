@@ -85,6 +85,30 @@ export const Config = createConfigSchema(z)
 const AUDIT_TOOL_PREFIX = 'at_terminal_'
 
 /**
+ * The local end of an upload, as the row's `command`, or `undefined` for every other call.
+ *
+ * An upload has two ends and `path` names only one: without this, the row says a file appeared
+ * on the server and nothing about which file on the operator's own machine was sent — the half
+ * an incident review asks about first. The wording is `SftpAgentService`'s own
+ * (`upload <local> -> <remote>`) because one trail carrying two spellings of the same transfer
+ * reads like two different events. It goes in `command`, not a field of its own: that field
+ * already means "what the call tried to do" to the Settings page and to
+ * `get_agent_execution_status`, and a new field would be one more thing every reader has to
+ * learn before the row makes sense.
+ */
+function uploadSource(name, args, value) {
+  if (name !== 'at_terminal_sftp_write_file') return undefined
+  // The service reports the resolved source (realpath), which is the file that actually left the
+  // machine; `args.localPath` is the caller's spelling and is only the fallback for a call that
+  // failed before resolving. Two spellings of one transfer in one trail read as two events.
+  const resolved = value?.localPath
+  const localPath =
+    typeof resolved === 'string' && resolved !== '' ? resolved : args?.localPath
+  if (typeof localPath !== 'string' || localPath === '') return undefined
+  return `upload ${localPath} -> ${args?.path ?? value?.path ?? ''}`
+}
+
+/**
  * Project one completed tool call into an audit entry, or `undefined` when the call is not
  * ours.
  *
@@ -125,7 +149,7 @@ function auditEntryFrom(exec, result) {
   // The command is what an operator actually needs to read back, and it is the field
   // `AgentAuditLog` redacts before writing — recording only `path` would leave
   // `run_remote_command` rows saying nothing about what ran.
-  const command = args.command ?? value?.command
+  const command = args.command ?? value?.command ?? uploadSource(name, args, value)
   if (typeof command === 'string' && command !== '') entry.command = command
   const path = args.path ?? value?.path
   if (typeof path === 'string' && path !== '') entry.path = path

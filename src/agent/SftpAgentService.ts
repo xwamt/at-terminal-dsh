@@ -1,5 +1,8 @@
 import type { ServerConfig } from '../config/schema';
+import { formatFileSize } from '../sftp/FileSize';
+import { isSftpConflictError } from '../sftp/SftpErrors';
 import type { SftpEntry, SftpEntryType, SftpFileStat } from '../sftp/SftpTypes';
+import type { TransferProgress } from '../sftp/TransferService';
 import { dirname, joinRemotePath } from '../sftp/RemotePath';
 import type { TerminalContext, TerminalContextRegistry } from '../terminal/TerminalContext';
 import type { AgentAuditRecorder } from './AgentAuditLog';
@@ -18,6 +21,21 @@ export interface AgentSftpSession {
   stat(path: string): Promise<SftpFileStat>;
   readFile(path: string, maxBytes: number, offset?: number): Promise<Buffer>;
   writeFile(path: string, content: Buffer): Promise<void>;
+  /**
+   * Metadata of a file on the Host's own disk, resolved to its real location.
+   *
+   * Separate from `stat` because the two answer about different machines: conflating them
+   * would let a remote path be resolved against the local filesystem, or the reverse. The
+   * `realPath` is what the upload is authorized against — a symlink's own name is not evidence
+   * of what is in the file.
+   */
+  statLocalFile(localPath: string): Promise<{ size: number; isFile: boolean; realPath: string }>;
+  /** Streams a local file to `remotePath`; the bytes never pass through this service. */
+  uploadLocalFile(
+    localPath: string,
+    remotePath: string,
+    options: { overwrite: boolean; progress?: TransferProgress }
+  ): Promise<void>;
   mkdir(path: string): Promise<void>;
   createFile(path: string): Promise<void>;
   rename(oldPath: string, newPath: string): Promise<void>;
@@ -33,7 +51,7 @@ export interface SftpAgentServiceOptions {
    * denied agent write stays denied.
    */
   createSession(target: { server: ServerConfig }): AgentSftpSession;
-  authorizer: Pick<SftpWriteAuthorizer, 'requireWrite' | 'requireDelete'>;
+  authorizer: Pick<SftpWriteAuthorizer, 'requireWrite' | 'requireDelete' | 'requireUpload'>;
   /**
    * Looks a server up by id for background SFTP (no connected UI terminal). Servers
    * resolved this way must have `backgroundConnectionAllowed === true` or the call is
@@ -46,6 +64,16 @@ export interface SftpAgentServiceOptions {
 export interface SftpTargetInput {
   terminalId?: string;
   serverId?: string;
+}
+
+/** What a `writeFile` call reports back; `localPath` is present only for a streamed upload. */
+export interface SftpWriteResult {
+  terminalId?: string;
+  serverId: string;
+  path: string;
+  bytesWritten: number;
+  overwritten: boolean;
+  localPath?: string;
 }
 
 interface SftpTarget {
@@ -64,6 +92,16 @@ interface SessionLease {
   /** Key for the cached `realpath('.')`; terminal and background sessions never collide. */
   rootKey: string;
   release(): void;
+  /**
+   * Drop the pooled session this lease came from, closing its SSH connection.
+   *
+   * The only cancellation ssh2's `fastPut` offers. It has no abort API and no per-chunk hook a
+   * caller can stop from, so a transfer that has to be stopped is stopped by the connection
+   * under it going away; the alternative is a "timed out" answer that keeps writing. The cost is
+   * honest and bounded: any other operation sharing that pooled session fails with it, and the
+   * next call reconnects.
+   */
+  abort?(): void;
 }
 
 interface TerminalSessionEntry {
@@ -92,6 +130,30 @@ const MAX_READ_BYTES = 256 * 1024;
 const DEFAULT_MAX_ENTRIES = 500;
 const MAX_ENTRIES = 5_000;
 const WRITE_TIMEOUT_MS = 60_000;
+
+/**
+ * Deadline for a streamed local upload.
+ *
+ * Five minutes, not the write budget. A text write is bounded by a string the model already
+ * holds; an upload is bounded by the link, and 7 MB over a slow one legitimately takes minutes.
+ *
+ * Reaching it is destructive on the remote side and is handled as such: `fastPut` opens the
+ * destination with `w`, so the file is already truncated by the time this deadline fires, and
+ * the transfer cannot be cancelled except by closing the connection. `uploadLocalSource` does
+ * exactly that and says so in the error — the deadline does not by itself make a cut-off
+ * transfer safe, it only decides when to stop pretending the call is still going well.
+ */
+const UPLOAD_TIMEOUT_MS = 300_000;
+
+/**
+ * Largest local file an agent upload may carry.
+ *
+ * Not a protocol limit — SFTP streams, so the transfer itself does not care. It is a bound on
+ * what one confirmation covers: a mistyped path can name a disk image or a database dump, and
+ * the dialog the user just answered promised to move one artifact, not a gigabyte of whatever
+ * happened to be at that path.
+ */
+export const MAX_LOCAL_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
 /**
  * Read-side deadline.
@@ -224,36 +286,57 @@ export class SftpAgentService {
     });
   }
 
-  async writeFile(input: SftpTargetInput & { path: string; content: string; overwrite?: boolean }) {
+  /**
+   * Writes a remote file from one of two sources.
+   *
+   * `content` is the original shape and still the right one for text: the bytes are already in
+   * the caller's hands. `localPath` exists because the alternative for a binary was to base64
+   * it through the model's context — 7.3 MB became ~2.5M tokens, so the call could not happen
+   * at all. With `localPath` the Host reads its own disk and streams the file, and the payload
+   * never becomes a string.
+   */
+  async writeFile(
+    input: SftpTargetInput & {
+      path: string;
+      content?: string;
+      localPath?: string;
+      overwrite?: boolean;
+      onProgress?: (transferredBytes: number, totalBytes: number) => void;
+    }
+  ): Promise<SftpWriteResult> {
     return await this.withAudit('sftp_write_file', input, async () => {
+      const source = resolveWriteSource(input);
       const target = await this.resolveTarget(input, 'write');
       const lease = await this.leaseFor(target);
       try {
-        const { path, workspaceRoot } = await this.resolveWritablePath(lease, input.path);
-        const exists = await pathExists(lease.session, path);
+        const writable = await this.resolveWritablePath(lease, input.path);
+        if (source.kind === 'local') {
+          return await this.uploadLocalSource(source.localPath, input, target, lease, writable);
+        }
+        const exists = await pathExists(lease.session, writable.path);
         if (exists && !input.overwrite) {
           throw new Error('Remote file already exists. Pass overwrite: true to replace it.');
         }
         await withTimeout(
           this.options.authorizer.requireWrite(target.server, {
             operation: 'write_file',
-            path,
+            path: writable.path,
             overwrite: Boolean(exists),
-            workspaceRoot
+            workspaceRoot: writable.workspaceRoot
           }),
           WRITE_TIMEOUT_MS,
-          `Timed out waiting for SFTP write authorization for ${path}.`
+          `Timed out waiting for SFTP write authorization for ${writable.path}.`
         );
-        const content = Buffer.from(input.content, 'utf8');
+        const content = Buffer.from(source.content, 'utf8');
         await withTimeout(
-          lease.session.writeFile(path, content),
+          lease.session.writeFile(writable.path, content),
           WRITE_TIMEOUT_MS,
-          `Timed out writing remote file ${path}.`
+          `Timed out writing remote file ${writable.path}.`
         );
         return {
           terminalId: target.terminalId,
           serverId: target.server.id,
-          path,
+          path: writable.path,
           bytesWritten: content.length,
           overwritten: exists
         };
@@ -261,6 +344,91 @@ export class SftpAgentService {
         lease.release();
       }
     });
+  }
+
+  /**
+   * Streams a local file to the remote path.
+   *
+   * Same gate as a text write — overwrite refusal, human authorization, a deadline — plus the
+   * things only an upload needs: the source is resolved and stat'ed first, so a missing,
+   * non-file or symlinked-to-something-sensitive path is decided before anyone is asked to
+   * approve it, and its size travels with the request so the dialog can state what is about to
+   * move. Everything past the stat names the *resolved* path: the name the caller used is not
+   * evidence of what is in the file.
+   */
+  private async uploadLocalSource(
+    localPath: string,
+    input: {
+      overwrite?: boolean;
+      onProgress?: (transferredBytes: number, totalBytes: number) => void;
+    },
+    target: SftpTarget,
+    lease: SessionLease,
+    writable: WritableTarget
+  ) {
+    const local = await statLocalSource(lease.session, localPath);
+    const sourcePath = local.realPath;
+    const exists = await pathExists(lease.session, writable.path);
+    if (exists && !input.overwrite) {
+      throw new Error('Remote file already exists. Pass overwrite: true to replace it.');
+    }
+    await withTimeout(
+      this.options.authorizer.requireUpload(target.server, {
+        operation: 'upload_local_file',
+        path: writable.path,
+        overwrite: Boolean(exists),
+        workspaceRoot: writable.workspaceRoot,
+        localPath: sourcePath,
+        localBytes: local.size
+      }),
+      WRITE_TIMEOUT_MS,
+      `Timed out waiting for SFTP upload authorization for ${writable.path}.`
+    );
+    const progress = progressFor(input.onProgress);
+    try {
+      await withTimeout(
+        lease.session.uploadLocalFile(
+          sourcePath,
+          writable.path,
+          // `exists`, not `input.overwrite`: the flag that reaches the transfer has to be the
+          // state the user was shown. Passing the caller's permission would tell `uploadFile`
+          // "replacing is fine" for a path the dialog described as missing, and a file that
+          // appeared while the dialog was open would be clobbered with no conflict raised.
+          progress === undefined
+            ? { overwrite: Boolean(exists) }
+            : { overwrite: Boolean(exists), progress }
+        ),
+        UPLOAD_TIMEOUT_MS,
+        `Timed out uploading ${sourcePath} to ${writable.path}.`
+      );
+    } catch (error) {
+      // A file that appeared while the dialog was open must not be clobbered: the user was
+      // shown "Overwrite: no", so the late arrival is a conflict, not a reason to proceed.
+      if (isSftpConflictError(error)) {
+        throw new Error('Remote file already exists. Pass overwrite: true to replace it.');
+      }
+      if (isUploadTimeout(error)) {
+        // Reporting the deadline is not stopping the transfer. `fastPut` has no cancel, and the
+        // destination was already truncated by its `open('w')`, so closing the pooled connection
+        // is the only way to end the writes — and the message has to say that the remote file
+        // may be incomplete rather than implying a clean failure.
+        lease.abort?.();
+        throw new Error(
+          `Timed out uploading ${sourcePath} to ${writable.path} after ${UPLOAD_TIMEOUT_MS / 1000} s; ` +
+            'the transfer was aborted and the remote file may be incomplete. ' +
+            'Check the remote file before relying on it, and retry with overwrite: true if it needs replacing.'
+        );
+      }
+      throw error;
+    }
+    return {
+      terminalId: target.terminalId,
+      serverId: target.server.id,
+      path: writable.path,
+      bytesWritten: local.size,
+      overwritten: exists,
+      localPath: sourcePath
+    };
   }
 
   async createFile(input: SftpTargetInput & { path: string; content?: string }) {
@@ -514,11 +682,16 @@ export class SftpAgentService {
 
   private async leaseFor(target: SftpTarget): Promise<SessionLease> {
     if (target.context) {
+      const terminalId = target.context.terminalId;
       const session = await this.ensureTerminalSession(target.context);
       return {
         session,
-        rootKey: `terminal:${target.context.terminalId}`,
-        release: () => undefined
+        rootKey: `terminal:${terminalId}`,
+        release: () => undefined,
+        // Dropping the pooled session disposes the SSH connection, which is what stops a
+        // `fastPut` that has to be stopped. The terminal stays connected in the panel; the next
+        // agent SFTP call on it opens a fresh session.
+        abort: () => this.disposeTerminal(terminalId)
       };
     }
     return await this.leaseBackgroundSession(target.server);
@@ -561,7 +734,11 @@ export class SftpAgentService {
       return {
         session,
         rootKey: `server:${server.id}`,
-        release: () => this.releaseBackgroundSession(server.id, held)
+        release: () => this.releaseBackgroundSession(server.id, held),
+        // Same reasoning as the terminal lease: evicting the pooled session disposes its
+        // connection, which is the only way to stop a `fastPut` already in flight. The entry is
+        // marked closed, so the release that follows cannot re-arm its idle timer.
+        abort: () => this.evictBackgroundSession(server.id, held)
       };
     } catch (error) {
       this.releaseBackgroundSession(server.id, held);
@@ -613,16 +790,33 @@ export class SftpAgentService {
   }
 
   private async withAudit<
-    T extends { serverId?: string; terminalId?: string; path?: string; truncated?: boolean }
-  >(tool: string, input: SftpTargetInput & { path?: string }, fn: () => Promise<T>): Promise<T> {
+    T extends {
+      serverId?: string;
+      terminalId?: string;
+      path?: string;
+      truncated?: boolean;
+      localPath?: string;
+    }
+  >(
+    tool: string,
+    input: SftpTargetInput & { path?: string; localPath?: string },
+    fn: () => Promise<T>
+  ): Promise<T> {
     const started = Date.now();
     try {
       const result = await fn();
+      const path = result.path ?? input.path;
       this.options.audit?.record({
         tool,
         serverId: result.serverId ?? input.serverId,
         terminalId: result.terminalId ?? input.terminalId,
-        path: result.path ?? input.path,
+        path,
+        // An upload has two ends and `path` only names one. "Which file on the operator's
+        // machine was put on that box" is a question this trail has to answer, or the row says
+        // a file appeared and nothing about where it came from.
+        ...(result.localPath === undefined
+          ? {}
+          : { command: `upload ${result.localPath} -> ${path ?? ''}` }),
         reasonCode: 'ok',
         durationMs: Date.now() - started,
         ...(result.truncated === undefined ? {} : { truncated: result.truncated })
@@ -634,6 +828,12 @@ export class SftpAgentService {
         serverId: input.serverId,
         terminalId: input.terminalId,
         path: input.path,
+        // A refused upload still names its source. "The agent tried to send `~/.ssh/id_rsa` to
+        // that box and the user said no" is the row an incident review is looking for, and it
+        // is the only place that attempt is recorded at all.
+        ...(input.localPath === undefined
+          ? {}
+          : { command: `upload ${input.localPath} -> ${input.path ?? ''}` }),
         reasonCode: auditReasonForError(error),
         durationMs: Date.now() - started
       });
@@ -731,6 +931,90 @@ function isMissingPathError(error: unknown): boolean {
   return code === 2 || code === 'ENOENT';
 }
 
+type WriteSource = { kind: 'content'; content: string } | { kind: 'local'; localPath: string };
+
+/**
+ * Which source a write carries.
+ *
+ * Exactly one is required. "Both" is not a richer request but an ambiguous one — which bytes
+ * would land? — and "neither" is not a write at all. The caller is a model, so the messages say
+ * what to pass rather than which rule was broken.
+ */
+function resolveWriteSource(input: { content?: string; localPath?: string }): WriteSource {
+  const content = typeof input.content === 'string' ? input.content : undefined;
+  const localPath = input.localPath;
+  if (content !== undefined && localPath !== undefined) {
+    throw new Error('Pass either content or localPath, not both.');
+  }
+  if (content !== undefined) {
+    return { kind: 'content', content };
+  }
+  if (localPath === undefined) {
+    throw new Error('Provide either content (inline text) or localPath (a file on this machine).');
+  }
+  if (localPath.trim() === '') {
+    throw new Error('Local path cannot be empty.');
+  }
+  return { kind: 'local', localPath };
+}
+
+/**
+ * Local metadata for an upload source, or a refusal that says which check failed.
+ *
+ * The ENOENT message names the path the caller gave: a model that mistyped a directory gets
+ * "was not found" plus the exact string it sent, which is the only way it can see the typo.
+ * The other two refusals name the *resolved* path instead — that is the object that would
+ * actually move, and for a symlink the name the caller typed points somewhere else.
+ * Other failures (EACCES on the file, a vanished mount) are rethrown untouched — they describe
+ * the local disk, not the request, and rewriting them here would hide the real cause.
+ */
+async function statLocalSource(
+  session: AgentSftpSession,
+  localPath: string
+): Promise<{ size: number; isFile: boolean; realPath: string }> {
+  let local: { size: number; isFile: boolean; realPath: string };
+  try {
+    local = await session.statLocalFile(localPath);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new Error(`Local file was not found: ${localPath}`);
+    }
+    throw error;
+  }
+  if (!local.isFile) {
+    throw new Error(`Local path is not a regular file: ${local.realPath}`);
+  }
+  if (local.size > MAX_LOCAL_UPLOAD_BYTES) {
+    // Both bounds are stated because they disagree: the cap is generous enough to invite a
+    // retry, and the deadline means anything near it cannot finish. Naming only one of them
+    // produces a second failure with the same shape.
+    throw new Error(
+      `Local file is too large to upload: ${local.realPath} is ${formatFileSize(local.size)}; ` +
+        `the limit is ${formatFileSize(MAX_LOCAL_UPLOAD_BYTES)} and the upload deadline is ` +
+        `${UPLOAD_TIMEOUT_MS / 1000} s.`
+    );
+  }
+  return local;
+}
+
+/**
+ * Whether a failure is the upload deadline rather than a transfer error that happens to share
+ * the words. `withTimeout` leaves only the message as a marker, so it is matched at the start.
+ */
+function isUploadTimeout(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('Timed out uploading');
+}
+
+/** Bridges the session's `TransferProgress` port to the plain callback the tool layer passes in. */
+function progressFor(
+  onProgress: ((transferredBytes: number, totalBytes: number) => void) | undefined
+): TransferProgress | undefined {
+  if (!onProgress) {
+    return undefined;
+  }
+  return { report: ({ transferredBytes, totalBytes }) => onProgress(transferredBytes, totalBytes) };
+}
+
 function basenameRemotePath(path: string): string {
   const normalized = path.replace(/\/+$/, '');
   const index = normalized.lastIndexOf('/');
@@ -789,10 +1073,31 @@ function auditReasonForError(error: unknown): string {
   if (message.includes('Timed out reading') || message.includes('Timed out listing')) {
     return 'read_timeout';
   }
+  // Same reasoning on the upload side: a transfer that ran out of time says the link is slow
+  // or stalled, which is a different answer from "the call failed".
+  if (message.includes('Timed out uploading')) {
+    return 'upload_timeout';
+  }
+  // The local pre-flight has three failure modes a reader has to be able to tell apart: a
+  // mistyped path, a directory, and a file too big to move. None of them is a policy denial.
+  if (message.startsWith('Local file was not found:')) {
+    return 'local_not_found';
+  }
+  if (message.startsWith('Local path is not a regular file:')) {
+    return 'local_not_regular_file';
+  }
+  if (message.startsWith('Local file is too large to upload:')) {
+    return 'local_too_large';
+  }
   return 'error';
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  // The loser of this race still settles later, and on the upload path that loser is a `fastPut`
+  // the abort is about to reject. `Promise.race` already subscribes to every participant, so the
+  // rejection is handled today; this keeps it handled if the race is ever rewritten as a manual
+  // timer, which would leave the abandoned transfer's rejection unhandled.
+  promise.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

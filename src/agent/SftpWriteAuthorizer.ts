@@ -1,16 +1,31 @@
 import type { ServerConfig } from '../config/schema';
 import { dirname } from '../sftp/RemotePath';
 import { shouldAutoApproveSftpWrite } from './agentCommandTrust';
-import { isSensitiveRemotePath, isWithinRemoteDirectory, normalizeRemoteDirectory } from './remoteWritePolicy';
+import {
+  isSensitiveLocalPath,
+  isSensitiveRemotePath,
+  isWithinRemoteDirectory,
+  normalizeRemoteDirectory
+} from './remoteWritePolicy';
 
 export type SftpWriteScope = 'once' | 'directory' | 'session';
 
 export interface SftpWriteRequest {
-  operation: 'write_file' | 'create_file' | 'create_directory' | 'rename' | 'delete_file';
+  operation:
+    | 'write_file'
+    | 'create_file'
+    | 'create_directory'
+    | 'rename'
+    | 'delete_file'
+    | 'upload_local_file';
   path: string;
   overwrite: boolean;
   /** `realpath('.')` of the SFTP session, i.e. the directory the user actually opened. */
   workspaceRoot: string;
+  /** Upload source on the Host's disk; absent for every operation that carries its bytes. */
+  localPath?: string;
+  /** Size of that source, so the dialog can say how much is about to move. */
+  localBytes?: number;
 }
 
 export interface SftpWriteConfirmation {
@@ -20,6 +35,8 @@ export interface SftpWriteConfirmation {
   workspaceRoot: string;
   outsideWorkspace: boolean;
   sensitive: boolean;
+  /** Whether the *local* upload source is sensitive (a key or a credential file). */
+  sensitiveLocal: boolean;
   allowedScopes: readonly SftpWriteScope[];
   stage: 'primary' | 'sensitive-double-check';
 }
@@ -76,7 +93,8 @@ export class SftpWriteAuthorizer {
       parentDirectory,
       workspaceRoot: normalizeRemoteDirectory(request.workspaceRoot),
       outsideWorkspace,
-      sensitive
+      sensitive,
+      sensitiveLocal: false
     };
 
     const scope = await this.confirm({ ...base, allowedScopes, stage: 'primary' });
@@ -118,7 +136,8 @@ export class SftpWriteAuthorizer {
       parentDirectory,
       workspaceRoot: normalizeRemoteDirectory(request.workspaceRoot),
       outsideWorkspace,
-      sensitive
+      sensitive,
+      sensitiveLocal: false
     };
 
     const scope = await this.confirm({ ...base, allowedScopes: ['once'], stage: 'primary' });
@@ -133,6 +152,51 @@ export class SftpWriteAuthorizer {
       });
       if (confirmed !== 'once') {
         throw new Error('SFTP delete was cancelled.');
+      }
+    }
+  }
+
+  /**
+   * Authorization for uploading a local file.
+   *
+   * Full trust does not reach here, and that is the point of the separate method. Trust is a
+   * statement about the *remote* server: the user said "this box may be written by the agent".
+   * An upload additionally reads the machine the Host runs on, which was never part of that
+   * statement — under the injected-instructions threat model, `id_rsa` leaving the laptop for a
+   * host the agent also controls is exactly the move a remembered grant must not cover. So this
+   * always asks, never stores a grant, and offers no window longer than the single operation.
+   *
+   * The double check is for either end being sensitive: a key on the local side and a key
+   * location on the remote side are the same class of mistake, and only one of them is visible
+   * in a dialog that only names the remote path.
+   */
+  async requireUpload(server: ServerConfig, request: SftpWriteRequest): Promise<void> {
+    const parentDirectory = normalizeRemoteDirectory(dirname(request.path));
+    const sensitive = isSensitiveRemotePath(request.path);
+    const sensitiveLocal = request.localPath !== undefined && isSensitiveLocalPath(request.localPath);
+    const outsideWorkspace = !isWithinRemoteDirectory(request.workspaceRoot, request.path);
+    const base = {
+      server,
+      request,
+      parentDirectory,
+      workspaceRoot: normalizeRemoteDirectory(request.workspaceRoot),
+      outsideWorkspace,
+      sensitive,
+      sensitiveLocal
+    };
+
+    const scope = await this.confirm({ ...base, allowedScopes: ['once'], stage: 'primary' });
+    if (scope !== 'once') {
+      throw new Error('SFTP upload was cancelled.');
+    }
+    if (sensitive || sensitiveLocal) {
+      const confirmed = await this.confirm({
+        ...base,
+        allowedScopes: ['once'],
+        stage: 'sensitive-double-check'
+      });
+      if (confirmed !== 'once') {
+        throw new Error('SFTP upload was cancelled.');
       }
     }
   }

@@ -1,6 +1,11 @@
 import type { AgentConfirmationPort, CommandConfirmationRequest } from '../../agent/AgentConfirmationPort';
-import type { SftpWriteConfirmation, SftpWriteScope } from '../../agent/SftpWriteAuthorizer';
+import type {
+  SftpWriteConfirmation,
+  SftpWriteRequest,
+  SftpWriteScope
+} from '../../agent/SftpWriteAuthorizer';
 import { copy } from '../../i18n/copy';
+import { formatFileSize } from '../../sftp/FileSize';
 import { formatRemoteCommandConfirmMessage } from '../../utils/commandPreview';
 
 export interface DshApprovalRequest {
@@ -198,12 +203,7 @@ export class DshAgentConfirmation implements AgentConfirmationPort {
       }
     }
 
-    const reason =
-      confirmation.stage === 'sensitive-double-check'
-        ? copy('Double confirmation required for sensitive path: {path}', {
-            path: confirmation.request.path
-          })
-        : copy('SFTP write requested: {path}', { path: confirmation.request.path });
+    const reason = sftpWriteApprovalReason(confirmation);
 
     const displayReason = formatSftpWriteConfirmMessage(confirmation);
 
@@ -310,9 +310,41 @@ export function buildCommandApprovalCopy(request: {
   return { reason, displayReason };
 }
 
+/**
+ * The one-line reason an SFTP write approval is titled with.
+ *
+ * The card body carries the detail; this line is what a log, a notification or a collapsed
+ * dialog shows. For an upload that means **both ends**: the remote path alone would let a file
+ * leave the machine under a title that never says a local file is involved — and the approval
+ * event is the only place the source is recorded when the body is not rendered.
+ */
+function sftpWriteApprovalReason(confirmation: SftpWriteConfirmation): string {
+  const { request } = confirmation;
+  if (confirmation.stage === 'sensitive-double-check') {
+    return confirmation.sensitive
+      ? copy('Double confirmation required for sensitive path: {path}', { path: request.path })
+      : copy('Double confirmation required for sensitive local file: {path}', {
+          path: request.localPath ?? request.path
+        });
+  }
+  if (request.operation !== 'upload_local_file') {
+    return copy('SFTP write requested: {path}', { path: request.path });
+  }
+  // `localPath` is always set by the service for an upload; the single-ended form is the
+  // fallback for a confirmation built by hand (tests, or a future caller that forgets it).
+  return request.localPath === undefined
+    ? copy('SFTP upload requested: {path}', { path: request.path })
+    : copy('SFTP upload requested: {localPath} -> {path}', {
+        localPath: request.localPath,
+        path: request.path
+      });
+}
+
 export function formatSftpWriteConfirmMessage(confirmation: SftpWriteConfirmation): string {
   const { server, request } = confirmation;
   const isDelete = request.operation === 'delete_file';
+  const isUpload = request.operation === 'upload_local_file';
+  const localSource = formatLocalSource(request);
   const warnings: string[] = [];
 
   if (confirmation.outsideWorkspace) {
@@ -327,20 +359,38 @@ export function formatSftpWriteConfirmMessage(confirmation: SftpWriteConfirmatio
       copy('WARNING: sensitive system path (SSH keys, service units, cron, or system configuration).')
     );
   }
+  if (confirmation.sensitiveLocal) {
+    warnings.push(
+      copy('WARNING: sensitive local file (SSH keys, cloud credentials, or environment secrets).')
+    );
+  }
 
   if (confirmation.stage === 'sensitive-double-check') {
     return [
-      copy('Double confirmation required: {path} is a sensitive system path on {server} ({host}).', {
-        path: request.path,
-        server: server.label,
-        host: server.host
-      }),
+      confirmation.sensitive
+        ? copy('Double confirmation required: {path} is a sensitive system path on {server} ({host}).', {
+            path: request.path,
+            server: server.label,
+            host: server.host
+          })
+        : copy('Double confirmation required for sensitive local file: {path}', {
+            path: request.localPath ?? request.path
+          }),
       '',
       isDelete
         ? copy('Deleting here can break logins, services, or scheduled jobs on the server.')
-        : copy(
-            'Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you.'
-          ),
+        : isUpload
+          ? copy(
+              'This upload sends the contents of a local file to the server, where the remote account and anything watching it can read them.'
+            )
+          : copy(
+              'Writing here can grant persistent access: authorized keys, sudo rules, cron entries and service units survive without you.'
+            ),
+      // The double check names both ends for an upload: a human judging "send this file there"
+      // needs the source and the destination, and only one of them is a remote path.
+      ...(localSource === undefined
+        ? []
+        : ['', localSource, copy('Path: {path}', { path: request.path })]),
       '',
       copy('Confirm to allow this single operation.')
     ].join('\n');
@@ -352,17 +402,37 @@ export function formatSftpWriteConfirmMessage(confirmation: SftpWriteConfirmatio
           server: server.label,
           host: server.host
         })
-      : copy('Allow AT Terminal agent SFTP write on {server} ({host})?', {
-          server: server.label,
-          host: server.host
-        }),
+      : isUpload
+        ? copy('Allow AT Terminal agent SFTP upload on {server} ({host})?', {
+            server: server.label,
+            host: server.host
+          })
+        : copy('Allow AT Terminal agent SFTP write on {server} ({host})?', {
+            server: server.label,
+            host: server.host
+          }),
     '',
     copy('Operation: {operation}', { operation: request.operation }),
     copy('Path: {path}', { path: request.path }),
     copy('Folder: {folder}', { folder: confirmation.parentDirectory }),
+    ...(localSource === undefined ? [] : [localSource]),
     ...(request.overwrite !== undefined
       ? [copy('Overwrite: {value}', { value: request.overwrite ? copy('yes') : copy('no') })]
       : []),
     ...(warnings.length > 0 ? ['', ...warnings] : [])
   ].join('\n');
+}
+
+/** The local side of an upload, sized when the service reported a byte count. */
+function formatLocalSource(request: SftpWriteRequest): string | undefined {
+  if (request.operation !== 'upload_local_file' || request.localPath === undefined) {
+    return undefined;
+  }
+  if (request.localBytes === undefined) {
+    return copy('Local source: {path}', { path: request.localPath });
+  }
+  return copy('Local source: {path} ({size})', {
+    path: request.localPath,
+    size: formatFileSize(request.localBytes)
+  });
 }

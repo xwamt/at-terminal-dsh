@@ -43,13 +43,13 @@ let cachedTrust = TRUST_UNREAD;
  * Written as data, not as prose for humans: the model reads it once per request, so it has
  * to carry the decisions the tool names cannot. ASCII only — a byte budget is a budget.
  */
-export const PROMPT_SECTION_TEXT = `AT Terminal acts on configured SSH servers through three tool families: commands (at_terminal_run_remote_command), SFTP (at_terminal_sftp_*), and monitoring (at_terminal_open_monitor, at_terminal_get_hardware_metrics). For files prefer SFTP: it is authorized per path and returns structured results. The order that works is sftp_stat_path, then sftp_read_file, then sftp_write_file with overwrite.
+export const PROMPT_SECTION_TEXT = `AT Terminal acts on configured SSH servers through three tool families: commands (at_terminal_run_remote_command), SFTP (at_terminal_sftp_*), and monitoring (at_terminal_open_monitor, at_terminal_get_hardware_metrics). For files prefer SFTP: it is authorized per path and returns structured results. The order that works is sftp_stat_path, then sftp_read_file, then sftp_write_file with overwrite. A file that is already on this machine goes up through sftp_write_file localPath: the Host reads it, so a binary or a large file is never inlined as content.
 
-Trust decides who answers: "none" asks before every command, "policy" asks unless the command policy proves the command read-only, "full" runs ordinary commands without asking. SFTP writes, renames and deletes ask at every trust level except "full", and a sensitive path asks even then.
+Trust decides who answers: "none" asks before every command, "policy" asks unless the command policy proves the command read-only, "full" runs ordinary commands without asking. SFTP writes, renames and deletes ask at every trust level except "full", and a sensitive path asks even then. A localPath upload asks even on full trust.
 
 A result larger than the inline budget is written to a file and its spillPath is returned: read that path with offset/limit instead of re-running the command. Truncated or spilled is not the same as failed. A background command returns a job id: collect it with at_terminal_job_output, end it with at_terminal_job_kill, and a killed job means the remote process is gone.
 
-When several servers are connected, name serverId on every write or execute call (sftp_write_file, sftp_create_file, sftp_create_directory, sftp_rename, sftp_delete, run_remote_command). Those calls refuse to guess rather than act on the wrong host. Read calls may omit it: they use the active terminal and report resolvedBy as "implicit" with the candidate list, or "single-connected" when only one server was connected.
+When several servers are connected, name serverId on every write or execute call (sftp_write_file, sftp_create_file, sftp_create_directory, sftp_rename, sftp_delete, run_remote_command). Those calls refuse to guess rather than act on the wrong host. Read calls and open_monitor may omit it: they use the active terminal and report resolvedBy as "implicit" with the candidate list, or "single-connected" when only one server was connected.
 
 Servers and trust right now: {{${TRUST_VARIABLE}}}`;
 

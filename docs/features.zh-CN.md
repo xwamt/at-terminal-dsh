@@ -70,7 +70,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `sftp_list_directory` | 只读 | 通过已连接的 AT Terminal SFTP 会话列出远程目录。最多返回 `maxEntries` 条（默认 500，硬顶 5000），并带 `truncated`/`total`；`offset` 可对大目录分页。 |
 | `sftp_stat_path` | 只读 | 返回远程文件或目录的元信息。 |
 | `sftp_read_file` | 只读 | 读取有限大小的 UTF-8 远程文本文件；默认 `maxBytes` 65536（硬顶 262144）；`offset` 可续读，负值从文件尾部读取；疑似二进制内容会被拒绝。 |
-| `sftp_write_file` | 写入 | 向远程文件写入 UTF-8 文本；覆盖已有文件需要 `overwrite: true`。 |
+| `sftp_write_file` | 写入 | 向远程文件写入 UTF-8 文本；覆盖已有文件需要 `overwrite: true`。用 `localPath` 则改为上传「宿主进程所在机器上的文件」，不传 `content`：由宿主读取并流式传输，二进制或大文件不进入模型上下文；这类上传即使完全信任也会询问。 |
 | `sftp_create_file` | 写入 | 创建远程文件，可选写入 UTF-8 内容。 |
 | `sftp_create_directory` | 写入 | 创建远程目录。 |
 | `sftp_rename` | 写入 | 重命名或移动远程文件/目录；源路径与目标路径都需要写授权。 |
@@ -158,6 +158,7 @@ terminal_close({ sessionId })
 
 - `run_remote_command` 确认跟随服务器信任下拉（`Trust agent remote commands`）。**不信任**每条都弹窗。**有限信任**会加载 npm 精确依赖 `@at-series/command-policy@0.1.0`（禁止 `^`），对管道/链式命令的每一段检查变更状态黑名单：命中黑名单的阶段（写文件、改权限、装包、服务控制、`docker exec`、`iptables -F`）仍会弹窗；无法安全解析的命令（命令替换、文件重定向、未闭合引号）总是弹窗。**不在黑名单中的命令（包括未知命令）在有限信任下不弹窗直接运行。**`# Purpose:` 注释不授予权限；带引号的多行脚本以及静态 `sudo` / `python3 -c` / `sqlite3` 载荷会进入分析，而不是按包装命令名一刀切拦截。**完全信任**远程命令与 SFTP 写入都不弹窗。
 - 有限信任不会跳过 SFTP 写入授权。完全信任会跳过普通的远程命令确认与 SFTP 写入确认；敏感路径是例外——完全信任下仍然会询问。任何信任档都不会跳过 SSH 主机指纹信任。
+- `localPath` 上传单独授权：它读的是宿主进程所在的本机，而任何服务器信任档都没覆盖过这台机器。因此它在任何信任档都会询问（完全信任也不例外），不存储授权记忆；本机源文件或远端目标任一端属于敏感路径时，仍然二次确认。
 - Bridge 发布到 AT Series 注册表 `~/.at-series/bridges/<hostApp>/`。
 - SFTP 写入按「目录」授权：弹窗提供 `Allow Once`（默认）、`Allow This Folder For 15 Minutes`、`Allow This Folder For The Session` 三档，任何一档都只覆盖用户当时看到的那个目录，不会覆盖整台服务器。
 - 写入目标越出 SFTP 会话初始工作目录时，弹窗会明确高亮，并且不提供「本会话」这一档。
@@ -168,7 +169,7 @@ terminal_close({ sessionId })
 - 取消后台命令会向远端**进程组**发 `SIGTERM`，并等到它真正消失才把作业结算为 killed——只关闭本地 SSH 通道会让进程继续跑。被信号的 pid 来自作业在远端写下的文件（以 job id 命名），发送信号前先删除该文件。
 - 同时连着多台服务器时，「没有指定 serverId」的调用按它能不能改远端来区别对待。**写类与执行类**（`sftp_write_file`、`sftp_create_file`、`sftp_create_directory`、`sftp_rename`、`sftp_delete`、`run_remote_command`）直接报错并列出所有已连接服务器，**一个字都不会发到任何主机**——打错机器的写入会返回一个看起来像成功的 `exitCode: 0`，比失败更危险。**读类**（`sftp_list_directory`、`sftp_stat_path`、`sftp_read_file`、`get_hardware_metrics`）仍跟随当前活动终端，但结果里写 `resolvedBy: "implicit"` 并附候选列表；只连一台时写 `"single-connected"`。`open_monitor` 按读类处理：它只切换面板，不改远端。
 - SFTP 读取有大小限制，避免把大文件直接灌入 Agent 上下文。
-- SFTP 的读取、列目录与 stat 有 30 秒上限：通道卡住时会以带路径的超时失败，而不是返回一个看起来像空文件的结果；写入与删除的确认另有 60 秒预算。
+- SFTP 的读取、列目录与 stat 有 30 秒上限：通道卡住时会以带路径的超时失败，而不是返回一个看起来像空文件的结果；写入与删除的确认另有 60 秒预算。`localPath` 上传有自己的 300 秒预算：超时会中止这次传输并断开它所在的 SSH 连接，错误里说明远端文件可能不完整、依赖它之前先检查一遍——传输开始时目标文件就已经被截断，所以这个期限无法只停止写入而不关连接；要替换它需要 `overwrite: true`。外层工具调用上限为 480 秒，位于这两个预算之外，只用来兜住服务自身计时器之外的卡死。
 - 写入工具会解析远程路径，不允许修改远程根路径。
 
 ## 资产导入导出

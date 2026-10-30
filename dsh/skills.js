@@ -58,6 +58,8 @@ State what you ran, what it returned, and what you did **not** verify. "The serv
 
 ## The order that works
 
+For a binary, an archive or anything large, skip the steps below: \`at_terminal_sftp_write_file\` with \`localPath\` is one call, and the Host reads that local file and streams it, so its bytes never pass through you. \`read_file\` + \`write_file\` is the wrong tool for it — text editing cannot round-trip bytes it never held, and re-emitting a multi-megabyte file as \`content\` costs more context than the file has bytes.
+
 1. \`at_terminal_sftp_stat_path\` — does it exist, how big is it, when did it last change. An edit that assumes the file exists fails at the write, after the user has already approved it.
 2. \`at_terminal_sftp_read_file\` — read the whole file (follow \`spillPath\` if it was spilled). You cannot safely rewrite a file you have only partially seen: \`sftp_write_file\` replaces content, it does not patch it.
 3. \`at_terminal_sftp_write_file\` with \`overwrite: true\` — the confirmation names the path, so a wrong path is caught by a human before it lands.

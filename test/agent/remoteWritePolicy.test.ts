@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isSensitiveLocalPath,
   isSensitiveRemotePath,
   isWithinRemoteDirectory,
   normalizeRemoteDirectory
@@ -71,5 +72,49 @@ describe('isSensitiveRemotePath', () => {
     '/home/deploy/service.yml'
   ])('treats %j as ordinary', (path) => {
     expect(isSensitiveRemotePath(path)).toBe(false);
+  });
+});
+
+/**
+ * The local half of an upload.
+ *
+ * An upload is the one agent operation that reads the user's own machine, so the question here
+ * is not "may this be written" but "is this a credential about to leave the laptop". The check
+ * is lexical by necessity — it runs before anything has been authorized, so it must not touch
+ * the disk — which is why it only decides whether the dialog asks twice.
+ */
+describe('isSensitiveLocalPath', () => {
+  it.each([
+    '/Users/deploy/.ssh/id_rsa',
+    '/Users/deploy/.ssh/authorized_keys',
+    '/Users/deploy/.aws/credentials',
+    '/Users/deploy/.gnupg/private-keys-v1.d/abc.key',
+    '/Users/deploy/.dsh/settings.json',
+    '/home/deploy/.kube/config',
+    '/home/deploy/.docker/config.json',
+    '/Users/deploy/project/certs/deploy.pem',
+    '/Users/deploy/.netrc',
+    '/Users/deploy/project/.env',
+    '/tmp/id_ed25519',
+    '/tmp/id_ecdsa',
+    '/tmp/id_dsa',
+    'C:\\Users\\deploy\\.ssh\\id_rsa',
+    '/Users/deploy/Documents/../.ssh/id_rsa'
+  ])('treats %j as sensitive', (path) => {
+    expect(isSensitiveLocalPath(path)).toBe(true);
+  });
+
+  it.each([
+    '/Users/deploy/project/target/release/at-pc-server',
+    '/tmp/at-pc-server-linux-x86_64',
+    '/Users/deploy/project/dist/app.js',
+    '/Users/deploy/project/.env.example',
+    '/Users/deploy/project/README.md',
+    '/Users/deploy/project/.github/workflows/ci.yml',
+    '/home/deploy/.kube/cache/discovery',
+    '/home/deploy/.docker/daemon.json',
+    'C:\\Users\\deploy\\project\\dist\\app.exe'
+  ])('treats %j as ordinary', (path) => {
+    expect(isSensitiveLocalPath(path)).toBe(false);
   });
 });

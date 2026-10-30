@@ -6,8 +6,10 @@ export const AGENT_AUDIT_CHANNEL_NAME = 'AT Terminal Agent Audit';
 export const AGENT_AUDIT_FILE_NAME = 'agent-audit.jsonl';
 
 /**
- * One agent tool invocation. `command` and `path` are alternatives depending on the
- * tool; both may be present for tools that carry both (none today).
+ * One agent tool invocation. `command` and `path` are alternatives depending on the tool, and
+ * an SFTP upload row carries both: `path` is the remote destination and `command` is
+ * `upload <local source> -> <remote path>`, because the destination alone cannot answer which
+ * file on the operator's machine was sent there.
  */
 export interface AgentAuditEntry {
   serverId?: string;

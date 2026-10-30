@@ -1144,3 +1144,149 @@ describe('AgentToolService — an unnamed target with several servers connected 
     expect(metrics.candidates).toBeUndefined();
   });
 });
+
+/**
+ * What the HUD and the audit trail say about an upload.
+ *
+ * A streamed upload can run for minutes, and the snapshot used to be a hard-coded "50%" for
+ * every write — indistinguishable from a hang for exactly the transfer that needs progress most.
+ * The audit line had the mirror-image problem: `write <remote>` cannot answer "where did this
+ * file come from" when the file came from the Host's own disk.
+ */
+describe('AgentToolService sftp upload reporting', () => {
+  function bridge() {
+    return { updateTransfer: vi.fn(), completeTransfer: vi.fn(), recordAudit: vi.fn() };
+  }
+
+  function serviceWith(sftp: unknown, executionBridge: unknown) {
+    return createService({
+      configManager: { listServers: async () => [] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor,
+      sftp: sftp as never,
+      executionBridge: executionBridge as never
+    });
+  }
+
+  it('reports real upload progress and records where the file came from', async () => {
+    const events = bridge();
+    const sftp = {
+      writeFile: vi.fn(async (input: { onProgress?: (transferredBytes: number, totalBytes: number) => void }) => {
+        input.onProgress?.(256, 1024);
+        input.onProgress?.(1024, 1024);
+        return {
+          serverId: 'server-1',
+          path: '/opt/app/bin',
+          bytesWritten: 1024,
+          overwritten: false,
+          // The service reports the resolved source, which here is not the name it was asked
+          // for: a symlink is exactly the case where those two differ.
+          localPath: '/Users/deploy/.ssh/id_rsa'
+        };
+      })
+    };
+    const service = serviceWith(sftp, events);
+
+    await service.sftpWriteFile({
+      path: '/opt/app/bin',
+      localPath: '/Users/deploy/dist/payload.bin',
+      overwrite: true
+    });
+
+    expect(sftp.writeFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/opt/app/bin',
+        localPath: '/Users/deploy/dist/payload.bin',
+        onProgress: expect.any(Function)
+      })
+    );
+    const snapshots = events.updateTransfer.mock.calls.map(([snapshot]) => snapshot);
+    // Starts at 0 rather than a placeholder, then follows the transfer instead of freezing.
+    expect(snapshots[0].progressPercent).toBe(0);
+    expect(snapshots.map((snapshot: { progressPercent: number }) => snapshot.progressPercent)).toContain(25);
+    expect(snapshots.at(-1).progressPercent).toBe(100);
+    expect(snapshots.at(-1).bytesPerSec).toBeGreaterThan(0);
+    expect(events.completeTransfer).toHaveBeenCalled();
+    expect(events.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: 'at_terminal_sftp_write_file',
+        // The HUD row names the file that actually left the machine, not the innocent alias.
+        command: 'upload /Users/deploy/.ssh/id_rsa -> /opt/app/bin',
+        reasonCode: 'policy_allowed'
+      })
+    );
+  });
+
+  it('keeps the placeholder snapshot and the write command for a text write', async () => {
+    const events = bridge();
+    const sftp = {
+      writeFile: vi.fn(async () => ({ serverId: 'server-1', path: '/srv/app/a.txt', bytesWritten: 4 }))
+    };
+    const service = serviceWith(sftp, events);
+
+    await service.sftpWriteFile({ path: '/srv/app/a.txt', content: 'next' });
+
+    // A text write has no intermediate state to report and no local source to name.
+    expect(sftp.writeFile).toHaveBeenCalledWith({ path: '/srv/app/a.txt', content: 'next' });
+    expect(events.updateTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({ progressPercent: 50, type: 'upload' })
+    );
+    expect(events.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'write /srv/app/a.txt' })
+    );
+  });
+
+  it('does not report a failed write as a denial', async () => {
+    const events = bridge();
+    const sftp = {
+      writeFile: vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED 10.0.0.9:22');
+      })
+    };
+    const service = serviceWith(sftp, events);
+
+    await expect(
+      service.sftpWriteFile({ path: '/srv/app/a.txt', content: 'next' })
+    ).rejects.toThrow('ECONNREFUSED');
+
+    // `AgentExecutionBridge` renders a `denied` row as a high-risk denial — as if the agent had
+    // tried something the user stopped. A dead link is not that, and neither is a missing file.
+    expect(events.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ reasonCode: 'error' }));
+  });
+
+  it('keeps a cancelled upload and an expired one distinguishable in the HUD ring', async () => {
+    const cancelled = bridge();
+    const cancelledService = serviceWith(
+      {
+        writeFile: vi.fn(async () => {
+          throw new Error('SFTP upload was cancelled.');
+        })
+      },
+      cancelled
+    );
+    await expect(
+      cancelledService.sftpWriteFile({ path: '/srv/app/a.txt', localPath: '/tmp/a' })
+    ).rejects.toThrow('was cancelled');
+    expect(cancelled.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCode: 'user_cancelled' })
+    );
+
+    const expired = bridge();
+    const expiredService = serviceWith(
+      {
+        writeFile: vi.fn(async () => {
+          throw new Error(
+            'Timed out uploading /tmp/a to /srv/app/a.txt after 300 s; the transfer was aborted and the remote file may be incomplete.'
+          );
+        })
+      },
+      expired
+    );
+    await expect(
+      expiredService.sftpWriteFile({ path: '/srv/app/a.txt', localPath: '/tmp/a' })
+    ).rejects.toThrow('Timed out uploading');
+    expect(expired.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCode: 'upload_timeout' })
+    );
+  });
+});

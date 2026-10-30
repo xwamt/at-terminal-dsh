@@ -418,3 +418,167 @@ describe('SftpWriteAuthorizer requireDelete', () => {
     expect(recorder.seen[0].outsideWorkspace).toBe(true);
   });
 });
+
+function uploadRequest(path: string, overrides: Partial<SftpWriteRequest> = {}): SftpWriteRequest {
+  return {
+    operation: 'upload_local_file',
+    path,
+    overwrite: false,
+    workspaceRoot: WORKSPACE_ROOT,
+    localPath: '/Users/deploy/dist/app',
+    localBytes: 1024,
+    ...overrides
+  };
+}
+
+/**
+ * The upload gate.
+ *
+ * Full trust is a statement about the *remote* server; an upload also reads the machine the
+ * Host runs on, which was never part of that statement. So this path asks even when the server
+ * is fully trusted, never remembers an answer, and double-checks when either end is a
+ * credential.
+ */
+describe('SftpWriteAuthorizer requireUpload', () => {
+  it('asks even on a fully trusted server', async () => {
+    const recorder = recordingConfirm(['once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+    const trusted = { ...server(), agentCommandTrust: 'full' as const };
+
+    await authorizer.requireUpload(trusted, uploadRequest(`${WORKSPACE_ROOT}/dist/app`));
+
+    expect(recorder.seen).toHaveLength(1);
+    expect(recorder.seen[0].request.operation).toBe('upload_local_file');
+  });
+
+  it('only ever offers "once", even inside the folder the session was opened in', async () => {
+    const recorder = recordingConfirm(['once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`));
+
+    expect(recorder.seen[0].allowedScopes).toEqual(['once']);
+    expect(recorder.seen[0].outsideWorkspace).toBe(false);
+  });
+
+  it('never remembers an approval, so every upload asks again', async () => {
+    const recorder = recordingConfirm(['once', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`));
+    await authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`));
+
+    expect(recorder.seen).toHaveLength(2);
+  });
+
+  it('is not covered by a session grant on the same directory', async () => {
+    const recorder = recordingConfirm(['session', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireWrite(server(), write(`${WORKSPACE_ROOT}/dist/app`));
+    await authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`));
+
+    expect(recorder.seen).toHaveLength(2);
+    expect(recorder.seen[1].request.operation).toBe('upload_local_file');
+  });
+
+  it('leaves no grant behind for a later write to reuse', async () => {
+    const recorder = recordingConfirm(['once', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`));
+    await authorizer.requireWrite(server(), write(`${WORKSPACE_ROOT}/dist/app`));
+
+    expect(recorder.seen).toHaveLength(2);
+    expect(recorder.seen[1].request.operation).toBe('write_file');
+  });
+
+  it('asks twice when the remote path is sensitive', async () => {
+    const recorder = recordingConfirm(['once', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(server(), uploadRequest('/etc/cron.d/deploy'));
+
+    expect(recorder.seen.map((confirmation) => confirmation.stage)).toEqual([
+      'primary',
+      'sensitive-double-check'
+    ]);
+    expect(recorder.seen[0].sensitive).toBe(true);
+    expect(recorder.seen[0].sensitiveLocal).toBe(false);
+  });
+
+  it('asks twice when the local source is sensitive, even though the remote path is ordinary', async () => {
+    const recorder = recordingConfirm(['once', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(
+      server(),
+      uploadRequest(`${WORKSPACE_ROOT}/dist/key`, { localPath: '/Users/deploy/.ssh/id_rsa' })
+    );
+
+    expect(recorder.seen.map((confirmation) => confirmation.stage)).toEqual([
+      'primary',
+      'sensitive-double-check'
+    ]);
+    expect(recorder.seen[0].sensitive).toBe(false);
+    expect(recorder.seen[0].sensitiveLocal).toBe(true);
+  });
+
+  it('still asks exactly twice when both ends are sensitive', async () => {
+    const recorder = recordingConfirm(['once', 'once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(
+      server(),
+      uploadRequest('/root/.ssh/authorized_keys', { localPath: '/Users/deploy/.ssh/id_ed25519.pub' })
+    );
+
+    expect(recorder.seen).toHaveLength(2);
+    expect(recorder.seen[0].sensitive).toBe(true);
+    expect(recorder.seen[0].sensitiveLocal).toBe(true);
+  });
+
+  it('carries the local source and its size into the dialog', async () => {
+    const recorder = recordingConfirm(['once']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await authorizer.requireUpload(
+      server(),
+      uploadRequest(`${WORKSPACE_ROOT}/dist/app`, {
+        localPath: '/Users/deploy/dist/app',
+        localBytes: 7_692_224
+      })
+    );
+
+    expect(recorder.seen[0].request.localPath).toBe('/Users/deploy/dist/app');
+    expect(recorder.seen[0].request.localBytes).toBe(7_692_224);
+    expect(recorder.seen[0].parentDirectory).toBe(`${WORKSPACE_ROOT}/dist`);
+  });
+
+  it('throws "SFTP upload was cancelled." when the prompt is dismissed', async () => {
+    const authorizer = new SftpWriteAuthorizer({ confirm: async () => undefined });
+
+    await expect(
+      authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`))
+    ).rejects.toThrow('SFTP upload was cancelled.');
+  });
+
+  it('rejects a scope the prompt was not allowed to offer', async () => {
+    const recorder = recordingConfirm(['directory']);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await expect(
+      authorizer.requireUpload(server(), uploadRequest(`${WORKSPACE_ROOT}/dist/app`))
+    ).rejects.toThrow('SFTP upload was cancelled.');
+  });
+
+  it('cancels when the sensitive double-check is dismissed', async () => {
+    const recorder = recordingConfirm(['once', undefined]);
+    const authorizer = new SftpWriteAuthorizer({ confirm: recorder.confirm });
+
+    await expect(
+      authorizer.requireUpload(server(), uploadRequest('/etc/cron.d/deploy'))
+    ).rejects.toThrow('SFTP upload was cancelled.');
+    expect(recorder.seen).toHaveLength(2);
+  });
+});

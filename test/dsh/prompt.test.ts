@@ -38,6 +38,22 @@ describe('the prompt section', () => {
     expect(PROMPT_SECTION_TEXT).toContain('full');
   });
 
+  it('sends a local file through localPath, and says an upload asks even at full trust', () => {
+    // The door itself. A model that never learns `localPath` exists is back to inlining: a
+    // 7.3 MB binary is ~10 MB of base64 in one call, which no context survives.
+    expect(PROMPT_SECTION_TEXT).toContain('localPath');
+    expect(PROMPT_SECTION_TEXT).toContain('never inlined as content');
+    // And the exception to the trust rule above it: an upload pushes a file the model has not
+    // read, so "full" must not be read as "no prompt for this one".
+    expect(PROMPT_SECTION_TEXT).toContain('A localPath upload asks even on full trust');
+  });
+
+  it('stays ASCII, which is the one budget the section is written against', () => {
+    // The header claims it and nothing checked it: one curly quote costs three bytes on every
+    // request, and the text is assembled into a prompt that is otherwise plain ASCII.
+    expect(PROMPT_SECTION_TEXT).toMatch(/^[\x20-\x7e\n]*$/);
+  });
+
   it('refuses an order it cannot get from the host, naming the name that failed', () => {
     // `getSectionOrder('TOOL_BASH')` returns undefined for an unknown key rather than
     // throwing, and `section()` would then reject the order with a message that never

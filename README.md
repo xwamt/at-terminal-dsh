@@ -141,7 +141,7 @@ independently toggled rows.
 | `at_terminal_sftp_list_directory` | SFTP | List a remote directory with pagination (`offset` / `maxEntries`) |
 | `at_terminal_sftp_stat_path` | SFTP | Inspect type, size, permissions, and modification time |
 | `at_terminal_sftp_read_file` | SFTP | Read bounded UTF-8 text with `offset` and `maxBytes` |
-| `at_terminal_sftp_write_file` | SFTP | Write UTF-8 text after write authorization; existing files need `overwrite: true` |
+| `at_terminal_sftp_write_file` | SFTP | Write UTF-8 text after write authorization; existing files need `overwrite: true`. `localPath` names a file on the machine running the Host instead of passing `content` — the Host reads and streams it, so a binary or a large file never enters the model's context. An upload always asks, even at full trust |
 | `at_terminal_sftp_create_file` | SFTP | Create a remote file, optionally with initial content |
 | `at_terminal_sftp_create_directory` | SFTP | Create a remote directory after write authorization |
 | `at_terminal_sftp_rename` | SFTP | Move or rename a path; source and destination both need write authorization |

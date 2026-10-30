@@ -550,24 +550,55 @@ export class AgentToolService {
     terminalId?: string;
     serverId?: string;
     path: string;
-    content: string;
+    content?: string;
+    localPath?: string;
     overwrite?: boolean;
   }) {
     const transferId = `write-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const filename = input.path.split('/').pop() || input.path;
+    const isUpload = input.localPath !== undefined;
+    // "upload <local> -> <remote>" rather than "write <remote>": when a file turns up on a
+    // server the question asked later is where it came from, and the remote path alone cannot
+    // answer it.
+    const auditCommand = isUpload ? `upload ${input.localPath} -> ${input.path}` : `write ${input.path}`;
+    const startedAt = Date.now();
+    // A streamed upload can take minutes, and a snapshot pinned at 50% for that long is
+    // indistinguishable from a hang. A text write carries its bytes in the call itself and has
+    // no intermediate state to report, so it keeps the single placeholder snapshot.
     this.dependencies.executionBridge?.updateTransfer({
       id: transferId,
       filename,
       type: 'upload',
-      progressPercent: 50,
-      bytesPerSec: 1024 * 50
+      progressPercent: isUpload ? 0 : 50,
+      bytesPerSec: isUpload ? 0 : 1024 * 50
     });
+    const onProgress = isUpload
+      ? (transferredBytes: number, totalBytes: number) => {
+          this.dependencies.executionBridge?.updateTransfer({
+            id: transferId,
+            filename,
+            type: 'upload',
+            progressPercent:
+              totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0,
+            // Cumulative average, not the delta between two 32 KiB steps: those arrive
+            // unevenly, and a delta-derived rate flickers between 0 and tens of MB/s.
+            bytesPerSec: Math.round((transferredBytes / Math.max(1, Date.now() - startedAt)) * 1000)
+          });
+        }
+      : undefined;
     try {
-      const res = await this.requireSftp().writeFile(input);
+      const res = await this.requireSftp().writeFile(
+        onProgress === undefined ? input : { ...input, onProgress }
+      );
       this.dependencies.executionBridge?.completeTransfer(transferId);
       this.dependencies.executionBridge?.recordAudit({
         tool: 'at_terminal_sftp_write_file',
-        command: `write ${input.path}`,
+        // The service reports the resolved source, which is the file that actually moved: a
+        // symlink named `payload.bin` is not what the operator needs to see in the HUD row.
+        command:
+          typeof res.localPath === 'string'
+            ? `upload ${res.localPath} -> ${input.path}`
+            : auditCommand,
         reasonCode: 'policy_allowed',
         serverId: input.serverId
       });
@@ -576,8 +607,11 @@ export class AgentToolService {
       this.dependencies.executionBridge?.completeTransfer(transferId);
       this.dependencies.executionBridge?.recordAudit({
         tool: 'at_terminal_sftp_write_file',
-        command: `write ${input.path}`,
-        reasonCode: 'denied',
+        command: auditCommand,
+        // Not `denied`: a dead link, a missing local file or an expired deadline was never a
+        // policy decision, and labelling them all "denied" made every failure look like the
+        // agent tried something the user refused.
+        reasonCode: sftpWriteFailureReason(error),
         serverId: input.serverId
       });
       throw error;
@@ -762,4 +796,25 @@ function auditReasonForError(error: unknown, fallback: string): string {
     return 'background_denied';
   }
   return fallback === 'user_approved' || fallback === 'auto_approved' ? 'error' : fallback;
+}
+
+/**
+ * Why an agent SFTP write failed, in the bridge's vocabulary.
+ *
+ * `denied` used to be the answer for every thrown error, which put a dead connection, a missing
+ * local file and a real refusal in the same bucket — and `AgentExecutionBridge` renders a
+ * `denied` row as a high-risk denial, i.e. as if the agent had tried something the user stopped.
+ * The remaining codes stay honest: a cancellation is `user_cancelled`, an expired transfer is
+ * `upload_timeout`, and everything else is `error`. The bridge has no "failed" decision (it maps
+ * `error` to an allowed, low-risk row), so the durable JSONL is where the precise code lives.
+ */
+function sftpWriteFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('was cancelled')) {
+    return 'user_cancelled';
+  }
+  if (message.startsWith('Timed out uploading')) {
+    return 'upload_timeout';
+  }
+  return 'error';
 }
