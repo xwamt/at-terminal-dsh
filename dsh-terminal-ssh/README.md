@@ -49,7 +49,7 @@ Splitting it out also buys two things that would be lost inside the main package
 
 ## What it needs
 
-- `@at-series/dsh-at-terminal` `^0.2.0` (declared as a peer; it exports the SSH backend this bundle
+- `@at-series/dsh-at-terminal` `^0.3.0` (declared as a peer; it exports the SSH backend this bundle
   references by subpath, so the backend lives in one place instead of being copied here)
 - A DeepSeek Harness desktop build that composes `@deepseek-ai/dsh-terminal` — every 0.2.x does
 - A configured server with **Allow background connections** enabled, if you want the agent's

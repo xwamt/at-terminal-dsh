@@ -1,7 +1,7 @@
 {
   "name": "@at-series/dsh-at-terminal-ssh",
   "description": "Keep an AT Terminal SSH shell alive across tool calls — the opt-in composition bundle for @at-series/dsh-at-terminal.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "dsh": {
     "bundle": {
@@ -26,6 +26,6 @@
     "directory": "dsh-terminal-ssh"
   },
   "peerDependencies": {
-    "@at-series/dsh-at-terminal": "^0.2.0"
+    "@at-series/dsh-at-terminal": "^0.3.0"
   }
 }

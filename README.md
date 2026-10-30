@@ -3,14 +3,14 @@
 > **DeepSeek Harness (DSH) 原生 SSH 终端、SFTP 远程文件工作区与 Agent 直连运维套件。**  
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
-[![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.3_Verified-brightgreen.svg)](#installation--setup--安装与配置)
-[![Test Coverage](https://img.shields.io/badge/tests-97%2F97%20passed%20(1312%20tests)-blue.svg)](#build--verification--构建与验证)
+[![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.5_Verified-brightgreen.svg)](#installation--setup--安装与配置)
+[![Test Coverage](https://img.shields.io/badge/tests-101%2F101%20passed%20(1437%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
 
 [English](#english) | [中文说明](#中文说明)
 
-> **Release 0.2.0 (2026-10-19)** — floating monitor HUD with per-connection audit history, platform-native copy/paste shortcuts, and stricter direct tools. Full notes: [docs/releases/0.2.0.md](docs/releases/0.2.0.md).
+> **Release 0.3.0 (2026-10-30)** — semantic-seam hardening: background jobs & job control, spill of oversized results, an opt-in persistent SSH bundle, a settings page with a trust library, multi-server target safety, large-file `localPath` streaming upload, and read-side timeouts. Full notes: [docs/releases/0.3.0.md](docs/releases/0.3.0.md).
 
 ---
 
@@ -30,11 +30,13 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 
 ### Key Features
 1. **Native Direct Agent Tools (No MCP Proxy Overhead)**:
-   - Registers 15 direct tools into DSH's host context (`ctx.tools`): SSH servers, remote commands, terminal context, 8 SFTP operations, hardware metrics, agent execution status and the monitor HUD. Every tool validates its arguments and answers with an actionable message instead of a raw JavaScript error.
+   - Registers 17 direct tools into DSH's host context (`ctx.tools`): SSH servers, remote commands (including background jobs and job control), terminal context, 8 SFTP operations, hardware metrics, agent execution status and the monitor HUD. Every tool validates its arguments and answers with an actionable message instead of a raw JavaScript error.
    - Zero-latency tool invocation without external stdio/HTTP MCP proxy processes.
    - Fully responds to `exec.signal` for real-time cancellation when an agent task is aborted.
    - Integrates seamlessly with DSH's `ctx.approval` workflow and provides formatted `output.render` rich outputs.
    - Hardware metrics report CPU, load, memory, per-mount disk usage, network throughput and top processes; the list is bounded (top 5 rows plus a count) so one Docker host cannot flood the transcript.
+   - **Background jobs & spilled results**: a command started with `run_in_background` returns a job id the model can collect with `at_terminal_job_output` and stop with `at_terminal_job_kill`; a result too large to inline is written to a file and returned as a `spillPath` to read in slices, instead of flooding the transcript.
+   - **Large-file streaming upload**: `at_terminal_sftp_write_file` accepts a host-side `localPath`, so the host reads and streams a local file to the remote instead of routing it through the model context (a 7.3 MB binary uploads in ~0.5 s with a byte-identical sha256).
 2. **Robust Asset Management & Encrypted Export**:
    - Supports Password, Private Key (PEM/OpenSSH with Passphrase), and SSH Agent forwarding.
    - Credentials isolation in secure local storage.
@@ -65,6 +67,9 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
    - Adds a `type: "ssh"` backend to dsh's own `ctx.terminals`, so the six built-in `terminal_*` tools drive a **remote** shell: `terminal_open({ type: "ssh", name: "payment01" })`, then `terminal_send` / `terminal_read`, and `cd` survives between calls.
    - `name` is the server selector (server id first, then label; an ambiguous label is refused rather than guessed), because the official tool takes no `serverId`.
    - Composed as `cordis:group` + `isolate: { terminals: true }`, so a profile without it is byte-for-byte unaffected, and the right-sidebar terminal (a different subsystem) keeps its own registry.
+10. **Settings Page, Trust Library & i18n**:
+   - A settings tab contributed into the host's own shell (Settings → Plugins → AT Terminal): authorization decision stats, the retained audit rows, and the **trust library** of saved SSH host keys with `SHA256:` fingerprints you can compare against `ssh-keygen -lf` (and "forget" per server).
+   - Approval dialogs follow the system language (English / 简体中文), and the panel's colors come from the host's `--dsw-*` tokens so they track the light/dark theme.
 
 ### Installation & Setup
 
@@ -175,6 +180,8 @@ independently toggled rows.
 - **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 17 个直连工具，覆盖 SSH 服务器、远程命令（含后台作业与作业控制）、终端上下文、8 个 SFTP 操作、硬件指标、Agent 执行状态与监控面板，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
 - **运行期技能与提示词**：通过 `ctx.inject(['skills'])` 注册三个运行期技能（巡检 / 远端编辑 / 故障记录），工具规则集中在一个提示词段里，工具定义体积比逐条描述小 45%。
 - **多服务器不猜目标**：同时连着多台服务器时，写类 / 执行类工具没拿到 `serverId` 会直接报错并列出候选（打错机器的写入会返回看起来成功的 `exitCode: 0`）；读类工具仍跟随活动终端，但结果里带 `resolvedBy` 与 `candidates`，事后能查「这次打到哪台、怎么定的」。
+- **后台作业与结果溢出**：`at_terminal_run_remote_command` 支持 `run_in_background`，命令不再占住一轮对话；模型可用 `at_terminal_job_output` 取回、`at_terminal_job_kill` 停止。单个结果过大时写入溢出文件并返回 `spillPath`，按偏移分片读取，避免灌爆上下文。
+- **大文件直传**：`at_terminal_sftp_write_file` 新增宿主侧 `localPath`——由宿主进程读本机文件并流式上传，7.3 MB 二进制约 470 ms 完成、远端 sha256 与本地逐字节一致，且**零模型上下文开销**。
 - **全生命周期协同**：
   - **动态取消响应**：完全感知 `exec.signal`，当用户在 DSH 界面点击停止生成或取消任务时，远端 SSH 命令与传输流立即被精确中断。
   - **原生审批通道**：无缝对接 DSH 的 `ctx.approval` 交互机制。
