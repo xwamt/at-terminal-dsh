@@ -1,7 +1,6 @@
 {
   "name": "@at-series/dsh-at-terminal",
   "version": "0.3.0",
-  "private": true,
   "type": "module",
   "description": "AT Terminal for DeepSeek Harness: SSH/SFTP assets and remote SSH terminals.",
   "icon": "./icon.svg",
