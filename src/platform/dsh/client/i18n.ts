@@ -464,6 +464,8 @@ export const zh: Record<string, string> = {
   'settings.optional.state.missing': '未安装',
   'settings.optional.state.disabled': '已安装，未启用',
   'settings.optional.state.enabled': '已启用，{count} 个组件运行中',
+  'settings.optional.state.failed': '已启用，但激活失败',
+  'settings.optional.state.unknown': '已启用，激活状态未确认',
   'settings.optional.install': '安装',
   'settings.optional.enable': '启用',
   'settings.optional.disable': '停用',
@@ -471,6 +473,11 @@ export const zh: Record<string, string> = {
   'settings.optional.manual': '也可以自行安装：npm install --save-exact {spec}',
   'settings.optional.unavailable': '当前 Harness 没有插件管理器，无法从这里安装或开关；面板与本插件的 17 个工具不受影响。',
   'settings.optional.failed': '操作失败：{message}',
+  'settings.optional.pendingBuilds.title': '有安装脚本等待允许',
+  'settings.optional.pendingBuilds.description': '以下依赖的安装脚本被 pnpm 拦下。允许后会以你的权限在本机运行，并保存在当前配置；只在你信任这些包时才允许。',
+  'settings.optional.approveBuilds': '允许这些脚本并重试',
+  'settings.optional.details': '查看安装失败详情',
+  'settings.optional.restoring': '安装或启用失败，正在恢复上一个版本 …',
   'settings.trust.failed': '操作失败：{message}'
 };
 
@@ -862,6 +869,8 @@ export const en: Record<string, string> = {
   'settings.optional.state.missing': 'Not installed',
   'settings.optional.state.disabled': 'Installed, switched off',
   'settings.optional.state.enabled': 'Active, {count} components running',
+  'settings.optional.state.failed': 'Enabled, but activation failed',
+  'settings.optional.state.unknown': 'Enabled, activation not confirmed',
   'settings.optional.install': 'Install',
   'settings.optional.enable': 'Enable',
   'settings.optional.disable': 'Disable',
@@ -869,5 +878,10 @@ export const en: Record<string, string> = {
   'settings.optional.manual': 'Or install it yourself: npm install --save-exact {spec}',
   'settings.optional.unavailable': 'This Harness has no plugin manager, so it cannot be installed or switched from here. The panel and the 17 tools are unaffected.',
   'settings.optional.failed': 'Action failed: {message}',
+  'settings.optional.pendingBuilds.title': 'Build scripts need approval',
+  'settings.optional.pendingBuilds.description': 'pnpm blocked the install scripts of these dependencies. Allowing runs them with your permissions and saves the approval for this profile; allow them only if you trust these packages.',
+  'settings.optional.approveBuilds': 'Allow these scripts and retry',
+  'settings.optional.details': 'View installation failure details',
+  'settings.optional.restoring': 'The change failed; restoring the previous version …',
   'settings.trust.failed': 'Action failed: {message}'
 };

@@ -27,6 +27,7 @@ import {
 } from '../models';
 import { h, pathLabel, renderFailure, type AsyncState, type El } from './shared';
 import { moveRowFocus } from '../listNav';
+import type { GetTriggerProps, MenuTarget } from '../menuFocus';
 import {
   chevronDownRegular,
   chevronRightRegular,
@@ -91,7 +92,16 @@ export interface AssetsViewProps {
   onOpenInNewTab(server: ServerView): void;
   onEdit(server: ServerView): void;
   onRemove(server: ServerView): void;
+  /** Old local menu (host without `contextMenus`): row position plus the server. */
   onRowMenu(event: { preventDefault(): void; clientX: number; clientY: number }, server: ServerView): void;
+  /**
+   * Host menu route. When both are present the row uses `getTriggerProps` for right-click,
+   * Shift+F10 and the ContextMenu key, and the `⋯` button asks `onOpenMenu` to open the
+   * shared overlay; the local `att-menu` is not rendered.
+   */
+  menuTarget?(server: ServerView): MenuTarget;
+  getTriggerProps?: GetTriggerProps;
+  onOpenMenu?(target: MenuTarget, point: { x: number; y: number }): void;
   onNew(): void;
   onImport(): void;
   onExport(): void;
@@ -208,6 +218,74 @@ function matchesQuery(server: ServerView, needle: string): boolean {
 
 function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, roving: boolean): El {
   const selected = props.selectedId === text(server.id);
+  /**
+   * Two routes, one row.
+   *
+   * With `contextMenus` mounted the host owns right-click, Shift+F10, the ContextMenu key,
+   * focus return and viewport placement; the body only supplies the captured target. Without
+   * it — a 0.2.1 host — the old local menu is used unchanged, including its keyboard branch
+   * below. The branch is decided once per render so the row can never half-use both.
+   */
+  const hostMenu = typeof props.getTriggerProps === 'function' && typeof props.menuTarget === 'function';
+  const target = hostMenu ? props.menuTarget?.(server) ?? null : null;
+  const onKeyDown = (event: {
+    key?: string;
+    currentTarget?: { getBoundingClientRect?: () => { left: number; bottom: number } };
+    preventDefault?: () => void;
+    shiftKey?: boolean;
+  }): void => {
+    const key = String(event?.key ?? '');
+    if (key === 'Enter') {
+      event.preventDefault?.();
+      props.onOpenInNewTab(server);
+      return;
+    }
+    /*
+     * The keyboard route to the row menu.
+     *
+     * `ContextMenu` is the dedicated key; `Shift+F10` is the same chord every other list on
+     * every other platform uses, and macOS keyboards have no menu key at all — so without this
+     * the only keyboard path to the menu was Tab-tabbing onto the `⋯` button, which is exactly
+     * the per-row Tab stop the roving model exists to avoid.
+     *
+     * Only the fallback handles it here: the host trigger factory wraps this handler with its
+     * own Shift+F10/ContextMenu branch and would be defeated by an earlier `preventDefault`.
+     */
+    if (!hostMenu && (key === 'ContextMenu' || (key === 'F10' && event?.shiftKey === true))) {
+      event.preventDefault?.();
+      props.onSelect(server);
+      props.onRowMenu({ preventDefault() {}, ...menuAnchor(event) }, server);
+      return;
+    }
+    if (key === ' ' || key === 'Spacebar') {
+      // Space selects. Without the preventDefault the list would also scroll under the
+      // cursor, which is the one thing a Space press must not do.
+      event.preventDefault?.();
+      props.onSelect(server);
+      return;
+    }
+    // Selection follows focus, which is what makes the shortcut and the row menu act on the
+    // row the user is looking at.
+    moveRowFocus(event, '[data-at-terminal-row]');
+  };
+  const handlers: Record<string, unknown> = {
+    // `tabIndex` is passed through to `getTriggerProps`: its own default would make every row
+    // a Tab stop, undoing the roving model this row exists to keep.
+    tabIndex: roving ? 0 : -1,
+    onClick: () => props.onSelect(server),
+    // A double-click opens a **terminal tab** for this server. Enter does the same from the
+    // keyboard (above); the `atTerminal.newTab` shortcut is the second route.
+    onDoubleClick: () => props.onOpenInNewTab(server),
+    onKeyDown
+  };
+  if (!hostMenu) {
+    handlers.onContextMenu = (event: { preventDefault(): void; clientX: number; clientY: number }) =>
+      props.onRowMenu(event, server);
+  }
+  const triggerProps =
+    hostMenu && target !== null && props.getTriggerProps !== undefined
+      ? props.getTriggerProps(target, handlers)
+      : handlers;
   return h(
     'div',
     {
@@ -225,49 +303,7 @@ function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, rov
        */
       tabIndex: roving ? 0 : -1,
       'data-at-terminal-row': text(server.id),
-      onClick: () => props.onSelect(server),
-      // A double-click opens a **terminal tab** for this server. Enter does the same from the
-      // keyboard (below); the `atTerminal.newTab` shortcut is the second route.
-      onDoubleClick: () => props.onOpenInNewTab(server),
-      onKeyDown: (event: {
-        key?: string;
-        currentTarget?: { getBoundingClientRect?: () => { left: number; bottom: number } };
-        preventDefault?: () => void;
-        shiftKey?: boolean;
-      }) => {
-        const key = String(event?.key ?? '');
-        if (key === 'Enter') {
-          event.preventDefault?.();
-          props.onOpenInNewTab(server);
-          return;
-        }
-        /*
-         * The keyboard route to the row menu.
-         *
-         * `ContextMenu` is the dedicated key; `Shift+F10` is the same chord every other list on
-         * every other platform uses, and macOS keyboards have no menu key at all — so without this
-         * the only keyboard path to the menu was Tab-tabbing onto the `⋯` button, which is exactly
-         * the per-row Tab stop the roving model exists to avoid.
-         */
-        if (key === 'ContextMenu' || (key === 'F10' && event?.shiftKey === true)) {
-          event.preventDefault?.();
-          props.onSelect(server);
-          props.onRowMenu({ preventDefault() {}, ...menuAnchor(event) }, server);
-          return;
-        }
-        if (key === ' ' || key === 'Spacebar') {
-          // Space selects. Without the preventDefault the list would also scroll under the
-          // cursor, which is the one thing a Space press must not do.
-          event.preventDefault?.();
-          props.onSelect(server);
-          return;
-        }
-        // Selection follows focus, which is what makes the shortcut and the row menu act on the
-        // row the user is looking at.
-        moveRowFocus(event, '[data-at-terminal-row]');
-      },
-      onContextMenu: (event: { preventDefault(): void; clientX: number; clientY: number }) =>
-        props.onRowMenu(event, server)
+      ...triggerProps
     },
     h('span', { className: 'att-row-label' }, text(server.label)),
     h(
@@ -344,7 +380,17 @@ function renderRow(t: Translate, server: ServerView, props: AssetsViewProps, rov
           }) => {
             event.stopPropagation();
             props.onSelect(server);
-            props.onRowMenu({ preventDefault() {}, ...menuAnchor(event) }, server);
+            /*
+             * The visible half of the same menu. With the host service the row's captured
+             * target is opened at the button's own rect (a keyboard-activated click reports
+             * 0,0); otherwise the body's local menu state gets the same position.
+             */
+            if (hostMenu && target !== null && props.onOpenMenu !== undefined) {
+              const anchor = menuAnchor(event);
+              props.onOpenMenu(target, { x: anchor.clientX, y: anchor.clientY });
+            } else {
+              props.onRowMenu({ preventDefault() {}, ...menuAnchor(event) }, server);
+            }
           },
           'data-at-terminal-action': 'row-menu'
         },

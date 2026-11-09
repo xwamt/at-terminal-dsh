@@ -34,6 +34,7 @@ interface ChannelModule {
       resolveTerminal?: () => unknown;
       resolveSftp?: () => unknown;
       resolveSettings?: () => unknown;
+      resolvePluginManager?: () => unknown;
     }
   ) => () => void;
   crc32: (buffer: Buffer) => number;
@@ -76,7 +77,8 @@ function createHarness(  assets?: () => unknown,
   servers?: () => unknown,
   terminal?: () => unknown,
   settings?: () => unknown,
-  sftp?: () => unknown
+  sftp?: () => unknown,
+  pluginManager?: () => unknown
 ): Harness {
   const routes = new Map<string, Route>();
   const upgrades = new Map<string, Route>();
@@ -128,7 +130,8 @@ function createHarness(  assets?: () => unknown,
       resolveServers: servers,
       resolveTerminal: terminal,
       resolveSftp: sftp,
-      resolveSettings: settings
+      resolveSettings: settings,
+      resolvePluginManager: pluginManager
     }),
     mountAgain: () =>
       channel.registerChannel(ctx, {
@@ -137,7 +140,8 @@ function createHarness(  assets?: () => unknown,
         resolveServers: servers,
         resolveTerminal: terminal,
         resolveSftp: sftp,
-        resolveSettings: settings
+        resolveSettings: settings,
+        resolvePluginManager: pluginManager
       })
   };
 }
@@ -1083,6 +1087,188 @@ describe('dsh Host channel — trust library', () => {
     const harness = createHarness();
     const answer = await callRpc(harness, { method: 'terminal.hostKeys' });
     expect(answer.json?.error?.code).toBe('services-unavailable');
+    harness.dispose();
+  });
+});
+
+describe('dsh Host channel — optional bundle', () => {
+  const BUNDLE = '@at-series/dsh-at-terminal-ssh';
+  const rows = [
+    { rowId: 'registry', entryId: 'entry-registry' },
+    { rowId: 'backend', entryId: 'entry-backend' },
+    { rowId: 'tools', entryId: 'entry-tools' }
+  ];
+  const activePlugins = [
+    { entryId: 'entry-registry', fiberPhase: 'active' },
+    { entryId: 'entry-backend', fiberPhase: 'active' },
+    { entryId: 'entry-tools', fiberPhase: 'active' }
+  ];
+
+  it('installs the fixed bundle with explicit enabled, never the dead activateNewBundles option', async () => {
+    const calls: Array<{ spec: string; options: Record<string, unknown> }> = [];
+    const manager = {
+      async listBundles() {
+        return [{ name: BUNDLE, installed: true, enabled: true, rows }];
+      },
+      async listPlugins() {
+        return activePlugins;
+      },
+      async installBundle(spec: string, options: Record<string, unknown>) {
+        calls.push({ spec, options });
+        return { changed: true, application: 'applied', stage: 'enable', target: BUNDLE, bundle: BUNDLE };
+      }
+    };
+    const harness = createHarness(undefined, undefined, undefined, undefined, undefined, () => manager);
+
+    const answer = await callRpc(harness, { method: 'terminal.optionalBundle.install', params: {} });
+
+    expect(answer.status).toBe(200);
+    expect(answer.json?.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.spec).toBe(`${BUNDLE}@0.1.0`);
+    expect(calls[0]!.options).toEqual({ enabled: true, saveExact: true });
+    expect(calls[0]!.options).not.toHaveProperty('activateNewBundles');
+    expect(answer.json?.result).toMatchObject({
+      spec: `${BUNDLE}@0.1.0`,
+      outcome: { application: 'applied' },
+      state: { installed: true, enabled: true, activation: 'active', rows: 3 }
+    });
+    harness.dispose();
+  });
+
+  it('carries approvedBuilds and requestId through, and reports the blocked scripts back', async () => {
+    const calls: Array<{ options: Record<string, unknown> }> = [];
+    const manager = {
+      async listBundles() {
+        return [{ name: BUNDLE, installed: false, enabled: false, rows: [] }];
+      },
+      async installBundle(_spec: string, options: Record<string, unknown>) {
+        calls.push({ options });
+        return {
+          changed: false,
+          application: 'failed',
+          stage: 'install',
+          target: BUNDLE,
+          error: { code: 'operation-error', diagnostic: 'Ignored build scripts: esbuild' },
+          pendingBuilds: ['esbuild'],
+          approvedBuilds: ['esbuild']
+        };
+      }
+    };
+    const harness = createHarness(undefined, undefined, undefined, undefined, undefined, () => manager);
+
+    const answer = await callRpc(harness, {
+      method: 'terminal.optionalBundle.install',
+      params: { approvedBuilds: ['esbuild'], requestId: 'install-1' }
+    });
+
+    expect(answer.json?.ok).toBe(true);
+    expect(calls[0]!.options).toEqual({
+      enabled: true,
+      saveExact: true,
+      approvedBuilds: ['esbuild'],
+      requestId: 'install-1'
+    });
+    expect(answer.json?.result).toMatchObject({
+      state: { activation: 'failed', pendingBuilds: ['esbuild'] }
+    });
+    harness.dispose();
+  });
+
+  it('refuses a malformed approvedBuilds list instead of passing it to the manager', async () => {
+    let called = 0;
+    const manager = {
+      async listBundles() {
+        return [];
+      },
+      async installBundle() {
+        called += 1;
+        return { application: 'applied' };
+      }
+    };
+    const harness = createHarness(undefined, undefined, undefined, undefined, undefined, () => manager);
+
+    const answer = await callRpc(harness, {
+      method: 'terminal.optionalBundle.install',
+      params: { approvedBuilds: ['esbuild', ''] }
+    });
+
+    expect(answer.json?.ok).toBe(false);
+    expect(answer.json?.error?.code).toBe('bad-params');
+    expect(called).toBe(0);
+    harness.dispose();
+  });
+
+  it('keeps the failed install result for the next get, so a reload still shows pendingBuilds', async () => {
+    const manager = {
+      async listBundles() {
+        return [{ name: BUNDLE, installed: false, enabled: false, rows: [] }];
+      },
+      async installBundle() {
+        return {
+          changed: false,
+          application: 'failed',
+          stage: 'install',
+          target: BUNDLE,
+          error: { code: 'operation-error', diagnostic: 'build blocked' },
+          pendingBuilds: ['esbuild']
+        };
+      }
+    };
+    const harness = createHarness(undefined, undefined, undefined, undefined, undefined, () => manager);
+
+    const installed = await callRpc(harness, { method: 'terminal.optionalBundle.install', params: {} });
+    expect(installed.json?.result).toMatchObject({
+      state: { activation: 'failed', pendingBuilds: ['esbuild'] }
+    });
+
+    const reread = await callRpc(harness, { method: 'terminal.optionalBundle.get', params: {} });
+    expect(reread.json?.result).toMatchObject({
+      activation: 'failed',
+      pendingBuilds: ['esbuild'],
+      diagnostic: 'build blocked'
+    });
+    harness.dispose();
+  });
+
+  it('keeps a failed enable result so the page shows failed rather than the saved enabled state', async () => {
+    const manager = {
+      async listBundles() {
+        return [{ name: BUNDLE, installed: true, enabled: true, rows }];
+      },
+      async listPlugins() {
+        return activePlugins;
+      },
+      async setBundleEnabled() {
+        return {
+          changed: true,
+          application: 'failed',
+          stage: 'enable',
+          target: BUNDLE,
+          enabled: true,
+          error: { code: 'operation-error', diagnostic: 'activate failed: boom' }
+        };
+      }
+    };
+    const harness = createHarness(undefined, undefined, undefined, undefined, undefined, () => manager);
+
+    const enabled = await callRpc(harness, {
+      method: 'terminal.optionalBundle.setEnabled',
+      params: { enabled: true }
+    });
+
+    expect(enabled.json?.result).toMatchObject({
+      enabled: true,
+      state: { installed: true, enabled: true, activation: 'failed', diagnostic: 'activate failed: boom' }
+    });
+    harness.dispose();
+  });
+
+  it('says the plugin manager is unavailable instead of throwing a bare error', async () => {
+    const harness = createHarness();
+    const answer = await callRpc(harness, { method: 'terminal.optionalBundle.install', params: {} });
+    expect(answer.json?.ok).toBe(false);
+    expect(answer.json?.error?.code).toBe('plugin-manager-unavailable');
     harness.dispose();
   });
 });

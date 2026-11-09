@@ -6,7 +6,7 @@ Harness loads as a plugin; it does **not** touch the VS Code extension code
 path, and building or installing it must never change the `base` / `mcp`
 variants.
 
-- **Verified against:** DeepSeek Harness Desktop `0.2.1-rc.5` (the version this
+- **Verified against:** DeepSeek Harness Desktop `0.2.2-rc.1` (the version this
   machine has installed; the tool DSL is re-checked against that install on
   every `verify` run, and the sandbox is re-extracted whenever the install
   changes — a cached sandbox from a previous release is discarded, not reused).
@@ -31,7 +31,7 @@ variants.
 | `prompt.js` | The guidance section and the one variable it interpolates. It says once what the tool descriptions used to repeat — the three tool families, what each trust tier means, the read-before-write order, and how to read a `spillPath`. `ctx.inject(['systemPrompt'])` rather than a required `inject` entry: a composition without `dsh-system-prompt` should lose the guidance, not the plugin |
 | `skills.js` | Three runtime skills — inspection, remote edit, incident write-up — registered on `ctx.skills` through `ctx.inject`, with the same "absent service costs the catalog, not the plugin" rule as the section. `register()` answers a duplicate with a warning and a no-op disposer rather than throwing, so the count it returns is not evidence: `verifyRegisteredSkills()` reads the catalog back and `ping` reports that. In this desktop build `tool-skill` is disabled at the base layer and enabled again for preset-run agents, which is why the model-facing catalog is a separate question from registration |
 | `spill.js` | Puts a result too big to show into the Host's `ctx.spillStore` and keeps the head, the tail and the account of what fell between them inline. The store is read per call, so a preset that composes it later still works; its absence degrades to truncation, never to an error |
-| `jobs.js` | The job **producer** for `run_remote_command`: it hands `ctx.jobs.start()` a spec whose cancel signals the **remote** process group. `pidfileFor()` and `backgroundScript()` come from `host.bundle.js`, so the pidfile naming and the pid write have one definition each. The two `at_terminal_job_*` tools in `tools.js` are the matching consumers: the desktop composition ships `tool-jobs` **disabled** (`dsh-web-app/cordis.patch.yml`), which leaves the registry running and the model with no way to read or stop what it started |
+| `jobs.js` | The job **producer** for `run_remote_command`: it hands `ctx.jobs.start()` a spec whose cancel signals the **remote** process group. `pidfileFor()` and `backgroundScript()` come from `host.bundle.js`, so the pidfile naming and the pid write have one definition each. The two `at_terminal_job_*` tools in `tools.js` are the fallback consumers: DSH 0.2.2's standard/cordis/ptc presets mount `dsh-tool-jobs`, so there the host `job_output` / `job_kill` own the job and the plugin hides its duplicates (`when`), while a composition without the host tools still gets the fallback pair |
 | `host.bundle.js` | **Built** (committed): the TypeScript domain services (`src/platform/dsh/entry.ts`) compiled for the Host half |
 | `client.js` | **Built** (committed): the browser half — `src/platform/dsh/client/**` bundled with xterm and the reused webview assets into one ModuleLoader factory |
 | `esbuild.dsh.mjs` | Builds both artifacts; `--check` (wired into `verify:dsh`) fails when either is stale |
@@ -50,7 +50,7 @@ variants.
 node dsh/scripts/verify.mjs
 ```
 
-**Eleven** independent checks; a non-zero exit fails the gate:
+**Twelve** independent checks; a non-zero exit fails the gate:
 
 1. **syntax** — every shipped JavaScript file parses.
 2. **manifest** — the documented bundle contract (name/version/`exports`/patch
@@ -62,7 +62,12 @@ node dsh/scripts/verify.mjs
    allowlist — and that package must really be present under
    `node_modules/`. **Any `@deepseek-ai/dsh-*` specifier fails**, with file,
    line and specifier printed.
-5. **tools** — every tool definition satisfies the installed
+5. **package-files** — every relative import of the three Host entry files
+   (`index.js`, `tools.js`, `channel.js`) names a path the manifest's `files`
+   list actually ships. A missing entry is invisible in a `link:` checkout and
+   fatal in a registry install (`ERR_MODULE_NOT_FOUND`), so the publication
+   filter is proven here instead of discovered by a user.
+6. **tools** — every tool definition satisfies the installed
    `ToolRuntime.register()` contract: `parameters` is exactly the normalized
    `parameterSchemaSpecToJsonSchema({})` (`{ type: 'object', properties: {} }`,
    **not** `{}`), `output.schema` is already raw JSON Schema
@@ -77,14 +82,14 @@ node dsh/scripts/verify.mjs
    not just the spec: the command must begin with the pid write, because a version
    that named the pidfile and killed it but never wrote it passed every
    "start() was called" test on the shelf and failed on the first real host.
-6. **settings** — the exported `Config` schema is built with the **installed**
-   `@deepseek-ai/schemastery`. It must describe exactly the six documented
+7. **settings** — the exported `Config` schema is built with the **installed**
+   `@deepseek-ai/schemastery`. It must describe exactly the nine documented
    fields, resolve the documented defaults through real `.get()` accessors,
    mark every field `.volatile()` after a JSON round-trip (the projection
-   `dsh-settings` performs), and **reject** eleven illegal values — both on
+   `dsh-settings` performs), and **reject** twelve illegal values — both on
    direct validation and through `~standard.validate`, the path dsh uses when
    persisting a settings edit. Boundary values must stay accepted.
-7. **client** — the browser half. `dsh.client` must be declared and well-formed,
+8. **client** — the browser half. `dsh.client` must be declared and well-formed,
    `exports["./client"]` must resolve to a file that is also listed in `files`, the
    loader call's `id` must equal the package name, and no statement other than the
    loader call may run at script execution. The factory contract is asserted by
@@ -96,20 +101,25 @@ node dsh/scripts/verify.mjs
    the only external it requires. All of these failure modes are silent in a
    browser — a bundle registered under the wrong name is simply never required — so
    they are asserted here rather than reviewed.
-8. **bundle** — both committed artifacts (`host.bundle.js` *and* `client.js`) are
+9. **bundle** — both committed artifacts (`host.bundle.js` *and* `client.js`) are
    rebuilt in memory and compared byte for byte: a `link:`-installed package runs
    no build step, so a stale artifact is the easiest way to ship code nobody wrote.
-9. **theme-tokens** — the `--vscode-*` → `--dsw-alias-*` bridge carries only theme
+10. **theme-tokens** — the `--vscode-*` → `--dsw-alias-*` bridge carries only theme
    references (and `color-mix(...)` that resolves through one), and the whole
    stylesheet is scanned for `rgb()`/`hsl()` forms a `#rrggbb` scan cannot see. A
    literal does not follow the light/dark switch, so it is a silent theme bug.
-10. **policy** — every tool `createTools()` registers has a row in
+11. **policy** — every tool `createTools()` registers has a row in
    `dsh/policy.js`, and every row names a registered tool. The runtime guard
    **denies** an unclassified tool, so a missing row is an outage while a stale row
    is a table that lies; both directions are asserted, and the row that keeps
    `sftp_delete` off sensitive paths is pinned by flag.
 
-Check 4 is static and always runs. Checks 5 and 6 extract the real
+12. **opt-in terminal bundle** — `dsh-terminal-ssh` must stay a real,
+   isolated composition: one `cordis:group` row with `isolate.terminals`,
+   the official registry → backend → tools order, prefixed ids, and a
+   `./terminal-backend` export that is present and listed in `files`.
+
+Check 4 is static and always runs. Checks 6 and 7 extract the real
 `@deepseek-ai/dsh-tools` and `@deepseek-ai/schemastery` dependency closures out of
 `/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` into
 `dsh/.cache/dsh-sandbox` (git-ignored). Point `DSH_ASAR` at another archive to
@@ -192,8 +202,8 @@ authoring helper `defineTool` is not required at runtime.
 
 The Host half needs a real schemastery schema for `Config`, and the Harness's
 copy is unreachable from a `link:` install, so `npm run vendor:dsh` copies
-`@deepseek-ai/schemastery@3.18.5` and its only runtime dependency
-`@deepseek-ai/cosmokit@1.8.6` into `dsh/node_modules/@deepseek-ai/`. The
+`@deepseek-ai/schemastery@3.19.0` and its only runtime dependency
+`@deepseek-ai/cosmokit@1.9.0` into `dsh/node_modules/@deepseek-ai/`. The
 versions match the installed Harness exactly, the npm tarballs are
 byte-identical to the in-`app.asar` copies, and both libraries tag cross-realm
 objects with `Symbol.for(...)` (`"schemastery"`, `"ValidationError"`,
@@ -632,7 +642,7 @@ analysis in `docs/research/2026-09-28-at-terminal-迁移为DSH插件-可行性�
 Corrections that plan made on contact with the installed Harness (it assumed
 `0.1.1-rc.2` and a `dsh web` CLI):
 
-- the installed product is the **Desktop** app (`0.2.1-rc.5` as of this revision; it was
+- the installed product is the **Desktop** app (`0.2.2-rc.1` as of this revision; it was
   an earlier `rc` when the plan was written), and installs go
   through the Desktop Plugin Manager, not `dsh plugin --profile web add`;
 - the settings API is a schemastery `Config` export plus `.volatile()` fields,

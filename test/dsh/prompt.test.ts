@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error plain-JS host module
-import { PROMPT_SECTION_NAME, PROMPT_SECTION_TEXT, TRUST_VARIABLE, promptSection, trustFact, updateTrustFact } from '../../dsh/prompt.js';
+import { PROMPT_SECTION_NAME, PROMPT_SECTION_TEXT, PROMPT_SECTION_TEXT_FALLBACK, TRUST_VARIABLE, hasVisibleAtTerminalTool, promptSection, trustFact, updateTrustFact } from '../../dsh/prompt.js';
 
 /**
  * The prompt section.
@@ -33,9 +33,58 @@ describe('the prompt section', () => {
     // names alone, so losing one silently would be a regression in guidance.
     expect(PROMPT_SECTION_TEXT).toContain('sftp_stat_path');
     expect(PROMPT_SECTION_TEXT).toContain('spillPath');
-    expect(PROMPT_SECTION_TEXT).toContain('at_terminal_job_kill');
+    expect(PROMPT_SECTION_TEXT).toContain('job_kill');
     expect(PROMPT_SECTION_TEXT).toContain('policy');
     expect(PROMPT_SECTION_TEXT).toContain('full');
+    // The fallback wording is the same guidance with the plugin's own control names.
+    expect(PROMPT_SECTION_TEXT_FALLBACK).toContain('at_terminal_job_kill');
+    expect(PROMPT_SECTION_TEXT_FALLBACK).toContain('at_terminal_job_output');
+  });
+
+  it('renders the job-control names the step can actually see', () => {
+    const section = promptSection({ order: 1000 });
+    const host = {
+      view: () =>
+        new Map([
+          ['at_terminal_run_remote_command', {}],
+          ['job_output', {}],
+          ['job_kill', {}]
+        ])
+    };
+    const fallback = {
+      view: () =>
+        new Map([
+          ['at_terminal_run_remote_command', {}],
+          ['at_terminal_job_output', {}],
+          ['at_terminal_job_kill', {}]
+        ])
+    };
+
+    expect(section.text({ scope: {}, toolSet: host })).toContain(
+      'collect it with job_output, end it with job_kill'
+    );
+    expect(section.text({ scope: {}, toolSet: fallback })).toContain(
+      'collect it with at_terminal_job_output, end it with at_terminal_job_kill'
+    );
+  });
+
+  it('is empty when only resident tools are visible, and fail-open without an admission set', () => {
+    const section = promptSection({ order: 1000 });
+    const resident = {
+      view: () =>
+        new Map([
+          ['at_terminal_ping', {}],
+          ['at_terminal_list_ssh_servers', {}],
+          ['at_terminal_get_terminal_context', {}],
+          ['at_terminal_get_agent_execution_status', {}]
+        ])
+    };
+
+    expect(section.text({ scope: {}, toolSet: resident })).toBe('');
+    // No toolSet means registration-time inspection or an older host: keep the guidance.
+    expect(section.text({})).toContain('AT Terminal acts');
+    expect(hasVisibleAtTerminalTool(undefined)).toBe(true);
+    expect(hasVisibleAtTerminalTool(resident)).toBe(false);
   });
 
   it('sends a local file through localPath, and says an upload asks even at full trust', () => {

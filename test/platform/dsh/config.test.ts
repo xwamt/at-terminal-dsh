@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error plain-JS host module
-import { SETTINGS_FIELDS } from '../../../dsh/settings.js';
+import { SETTINGS_FIELDS, createConfigSchema, readSettings } from '../../../dsh/settings.js';
+// @ts-expect-error vendored plain-JS package with no type declarations
+import schemastery from '../../../dsh/node_modules/@deepseek-ai/schemastery/lib/index.mjs';
 import { createDshConfigReader } from '../../../src/platform/dsh/config';
 import type { DshResolvedSettings, DshSettingAccessor } from '../../../src/platform/dsh/host';
 import { resolveTerminalSettings } from '../../../src/terminal/terminalSettings';
@@ -119,5 +121,43 @@ describe('createDshConfigReader', () => {
     expect(keys).not.toContain('keepAliveInterval');
     // The one that stayed got wired instead: SshSession applies it (test/ssh/SshSession.idle.test.ts).
     expect(keys).toContain('idleDisconnectMinutes');
+  });
+});
+
+/**
+ * R2's settings surface.
+ *
+ * `sftpWriteGuard` is not a UI preference like the terminal fields: it decides whether an
+ * agent write is refused. The closed-set pattern is the write guard, so it is exercised
+ * through the real schemastery instance rather than only inspected as metadata.
+ */
+describe('the agent SFTP write guard setting', () => {
+  it('is a closed set of three modes with observe as the default', () => {
+    const field = SETTINGS_FIELDS.find((entry: { key: string }) => entry.key === 'sftpWriteGuard') as
+      | { type: string; pattern?: string; default: unknown }
+      | undefined;
+    expect(field).toMatchObject({
+      type: 'string',
+      pattern: '^(off|observe|strict)$',
+      default: 'observe'
+    });
+    // `observe` must be the default: `strict` would break every existing agent write that
+    // never read first, and `off` would silently drop the protection this release adds.
+    expect(readSettings({}).sftpWriteGuard).toBe('observe');
+    expect(readSettings({ sftpWriteGuard: accessor(() => 'strict') }).sftpWriteGuard).toBe('strict');
+
+    // A1's opt-in is off by default: enabling multi-file patch must be a deliberate action.
+    expect(readSettings({}).enableApplyPatch).toBe(false);
+    expect(readSettings({ enableApplyPatch: accessor(() => true) }).enableApplyPatch).toBe(true);
+  });
+
+  it('accepts exactly off/observe/strict through the real schema', () => {
+    const schema = createConfigSchema(schemastery);
+
+    for (const value of ['off', 'observe', 'strict']) {
+      expect(schema({ sftpWriteGuard: value }).sftpWriteGuard.get()).toBe(value);
+    }
+    // A typo like "sometimes" must be rejected at edit() time, not silently normalised.
+    expect(() => schema({ sftpWriteGuard: 'sometimes' })).toThrow();
   });
 });

@@ -17,6 +17,13 @@
     "settings.js",
     "channel.js",
     "commands.js",
+    "jobs.js",
+    "locale.js",
+    "optionalBundle.js",
+    "policy.js",
+    "prompt.js",
+    "skills.js",
+    "spill.js",
     "client.js",
     "client.xterm.js",
     "client.styles.js",
@@ -27,7 +34,21 @@
     "locale/*.json",
     "policy-assets"
   ],
+  "engines": {
+    "node": ">=24.9",
+    "dsh": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.3.0-0"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.19.0",
+    "@deepseek-ai/cosmokit": "1.9.0",
+    "ssh2": "^1.16.0"
+  },
+  "bundledDependencies": [
+    "@deepseek-ai/schemastery",
+    "@deepseek-ai/cosmokit"
+  ],
   "dsh": {
+    "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
@@ -36,7 +57,9 @@
       "immediately": true,
       "inject": [
         "@deepseek-ai/dsh-client-ui-sidebar-right",
-        "@deepseek-ai/dsh-client-shortcuts"
+        "@deepseek-ai/dsh-client-shortcuts",
+        "@deepseek-ai/dsh-client-ui-context-menu",
+        "@deepseek-ai/dsh-client-ui-file-actions"
       ]
     }
   }

@@ -1056,6 +1056,8 @@ var NS = "atTerminal", zh = {
   "settings.optional.state.missing": "\u672A\u5B89\u88C5",
   "settings.optional.state.disabled": "\u5DF2\u5B89\u88C5\uFF0C\u672A\u542F\u7528",
   "settings.optional.state.enabled": "\u5DF2\u542F\u7528\uFF0C{count} \u4E2A\u7EC4\u4EF6\u8FD0\u884C\u4E2D",
+  "settings.optional.state.failed": "\u5DF2\u542F\u7528\uFF0C\u4F46\u6FC0\u6D3B\u5931\u8D25",
+  "settings.optional.state.unknown": "\u5DF2\u542F\u7528\uFF0C\u6FC0\u6D3B\u72B6\u6001\u672A\u786E\u8BA4",
   "settings.optional.install": "\u5B89\u88C5",
   "settings.optional.enable": "\u542F\u7528",
   "settings.optional.disable": "\u505C\u7528",
@@ -1063,6 +1065,11 @@ var NS = "atTerminal", zh = {
   "settings.optional.manual": "\u4E5F\u53EF\u4EE5\u81EA\u884C\u5B89\u88C5\uFF1Anpm install --save-exact {spec}",
   "settings.optional.unavailable": "\u5F53\u524D Harness \u6CA1\u6709\u63D2\u4EF6\u7BA1\u7406\u5668\uFF0C\u65E0\u6CD5\u4ECE\u8FD9\u91CC\u5B89\u88C5\u6216\u5F00\u5173\uFF1B\u9762\u677F\u4E0E\u672C\u63D2\u4EF6\u7684 17 \u4E2A\u5DE5\u5177\u4E0D\u53D7\u5F71\u54CD\u3002",
   "settings.optional.failed": "\u64CD\u4F5C\u5931\u8D25\uFF1A{message}",
+  "settings.optional.pendingBuilds.title": "\u6709\u5B89\u88C5\u811A\u672C\u7B49\u5F85\u5141\u8BB8",
+  "settings.optional.pendingBuilds.description": "\u4EE5\u4E0B\u4F9D\u8D56\u7684\u5B89\u88C5\u811A\u672C\u88AB pnpm \u62E6\u4E0B\u3002\u5141\u8BB8\u540E\u4F1A\u4EE5\u4F60\u7684\u6743\u9650\u5728\u672C\u673A\u8FD0\u884C\uFF0C\u5E76\u4FDD\u5B58\u5728\u5F53\u524D\u914D\u7F6E\uFF1B\u53EA\u5728\u4F60\u4FE1\u4EFB\u8FD9\u4E9B\u5305\u65F6\u624D\u5141\u8BB8\u3002",
+  "settings.optional.approveBuilds": "\u5141\u8BB8\u8FD9\u4E9B\u811A\u672C\u5E76\u91CD\u8BD5",
+  "settings.optional.details": "\u67E5\u770B\u5B89\u88C5\u5931\u8D25\u8BE6\u60C5",
+  "settings.optional.restoring": "\u5B89\u88C5\u6216\u542F\u7528\u5931\u8D25\uFF0C\u6B63\u5728\u6062\u590D\u4E0A\u4E00\u4E2A\u7248\u672C \u2026",
   "settings.trust.failed": "\u64CD\u4F5C\u5931\u8D25\uFF1A{message}"
 }, en = {
   "type.label": "AT Terminal",
@@ -1450,6 +1457,8 @@ var NS = "atTerminal", zh = {
   "settings.optional.state.missing": "Not installed",
   "settings.optional.state.disabled": "Installed, switched off",
   "settings.optional.state.enabled": "Active, {count} components running",
+  "settings.optional.state.failed": "Enabled, but activation failed",
+  "settings.optional.state.unknown": "Enabled, activation not confirmed",
   "settings.optional.install": "Install",
   "settings.optional.enable": "Enable",
   "settings.optional.disable": "Disable",
@@ -1457,6 +1466,11 @@ var NS = "atTerminal", zh = {
   "settings.optional.manual": "Or install it yourself: npm install --save-exact {spec}",
   "settings.optional.unavailable": "This Harness has no plugin manager, so it cannot be installed or switched from here. The panel and the 17 tools are unaffected.",
   "settings.optional.failed": "Action failed: {message}",
+  "settings.optional.pendingBuilds.title": "Build scripts need approval",
+  "settings.optional.pendingBuilds.description": "pnpm blocked the install scripts of these dependencies. Allowing runs them with your permissions and saves the approval for this profile; allow them only if you trust these packages.",
+  "settings.optional.approveBuilds": "Allow these scripts and retry",
+  "settings.optional.details": "View installation failure details",
+  "settings.optional.restoring": "The change failed; restoring the previous version \u2026",
   "settings.trust.failed": "Action failed: {message}"
 };
 
@@ -2044,6 +2058,30 @@ function moveRowFocus(event, selector) {
 }
 
 // src/platform/dsh/client/menuFocus.ts
+var SERVER_MENU_TARGET = "at-terminal.server", SFTP_ENTRY_MENU_TARGET = "at-terminal.sftp-entry", SFTP_CONTAINER_MENU_TARGET = "at-terminal.sftp-container", serverMenuBuilders = /* @__PURE__ */ new Map(), sftpMenuBuilders = /* @__PURE__ */ new Map();
+function tabKeyOf(value) {
+  return typeof value.tabKey == "string" ? value.tabKey : "";
+}
+function resolveMenuActions(map, value) {
+  let builder = map.get(tabKeyOf(value));
+  return builder !== void 0 ? builder(value) : map.size === 1 ? [...map.values()][0](value) : [];
+}
+function setServerMenuBuilder(tabKey, build) {
+  return serverMenuBuilders.set(tabKey, build), () => {
+    serverMenuBuilders.get(tabKey) === build && serverMenuBuilders.delete(tabKey);
+  };
+}
+function resolveServerMenuActions(value) {
+  return resolveMenuActions(serverMenuBuilders, value);
+}
+function setSftpMenuBuilder(tabKey, build) {
+  return sftpMenuBuilders.set(tabKey, build), () => {
+    sftpMenuBuilders.get(tabKey) === build && sftpMenuBuilders.delete(tabKey);
+  };
+}
+function resolveSftpMenuActions(value) {
+  return resolveMenuActions(sftpMenuBuilders, value);
+}
 function useMenuFocus(open, onClose) {
   let ref = import_react2.default.useRef(null), closeRef = import_react2.default.useRef(onClose);
   return import_react2.default.useEffect(() => {
@@ -2598,7 +2636,34 @@ function matchesQuery(server, needle) {
   ].join(" ").toLowerCase().includes(needle.toLowerCase());
 }
 function renderRow(t, server, props, roving) {
-  let selected = props.selectedId === text(server.id);
+  let selected = props.selectedId === text(server.id), hostMenu = typeof props.getTriggerProps == "function" && typeof props.menuTarget == "function", target = hostMenu ? props.menuTarget?.(server) ?? null : null, handlers = {
+    // `tabIndex` is passed through to `getTriggerProps`: its own default would make every row
+    // a Tab stop, undoing the roving model this row exists to keep.
+    tabIndex: roving ? 0 : -1,
+    onClick: () => props.onSelect(server),
+    // A double-click opens a **terminal tab** for this server. Enter does the same from the
+    // keyboard (above); the `atTerminal.newTab` shortcut is the second route.
+    onDoubleClick: () => props.onOpenInNewTab(server),
+    onKeyDown: (event) => {
+      let key = String(event?.key ?? "");
+      if (key === "Enter") {
+        event.preventDefault?.(), props.onOpenInNewTab(server);
+        return;
+      }
+      if (!hostMenu && (key === "ContextMenu" || key === "F10" && event?.shiftKey === !0)) {
+        event.preventDefault?.(), props.onSelect(server), props.onRowMenu({ preventDefault() {
+        }, ...menuAnchor(event) }, server);
+        return;
+      }
+      if (key === " " || key === "Spacebar") {
+        event.preventDefault?.(), props.onSelect(server);
+        return;
+      }
+      moveRowFocus(event, "[data-at-terminal-row]");
+    }
+  };
+  hostMenu || (handlers.onContextMenu = (event) => props.onRowMenu(event, server));
+  let triggerProps = hostMenu && target !== null && props.getTriggerProps !== void 0 ? props.getTriggerProps(target, handlers) : handlers;
   return h(
     "div",
     {
@@ -2616,28 +2681,7 @@ function renderRow(t, server, props, roving) {
        */
       tabIndex: roving ? 0 : -1,
       "data-at-terminal-row": text(server.id),
-      onClick: () => props.onSelect(server),
-      // A double-click opens a **terminal tab** for this server. Enter does the same from the
-      // keyboard (below); the `atTerminal.newTab` shortcut is the second route.
-      onDoubleClick: () => props.onOpenInNewTab(server),
-      onKeyDown: (event) => {
-        let key = String(event?.key ?? "");
-        if (key === "Enter") {
-          event.preventDefault?.(), props.onOpenInNewTab(server);
-          return;
-        }
-        if (key === "ContextMenu" || key === "F10" && event?.shiftKey === !0) {
-          event.preventDefault?.(), props.onSelect(server), props.onRowMenu({ preventDefault() {
-          }, ...menuAnchor(event) }, server);
-          return;
-        }
-        if (key === " " || key === "Spacebar") {
-          event.preventDefault?.(), props.onSelect(server);
-          return;
-        }
-        moveRowFocus(event, "[data-at-terminal-row]");
-      },
-      onContextMenu: (event) => props.onRowMenu(event, server)
+      ...triggerProps
     },
     h("span", { className: "att-row-label" }, text(server.label)),
     h(
@@ -2702,8 +2746,12 @@ function renderRow(t, server, props, roving) {
           // by Tab.
           tabIndex: -1,
           onClick: (event) => {
-            event.stopPropagation(), props.onSelect(server), props.onRowMenu({ preventDefault() {
-            }, ...menuAnchor(event) }, server);
+            if (event.stopPropagation(), props.onSelect(server), hostMenu && target !== null && props.onOpenMenu !== void 0) {
+              let anchor = menuAnchor(event);
+              props.onOpenMenu(target, { x: anchor.clientX, y: anchor.clientY });
+            } else
+              props.onRowMenu({ preventDefault() {
+              }, ...menuAnchor(event) }, server);
           },
           "data-at-terminal-action": "row-menu"
         },
@@ -3690,6 +3738,11 @@ var DEFAULT_UI_SETTINGS = {
   semanticHighlight: !0,
   zebraStripes: !1
 }, BodyLocale = import_react4.default.createContext((key) => key);
+function fileActionsFrom(props) {
+  let value = props?.fileActions, candidate = typeof value == "function" ? value() : value;
+  if (!(candidate === null || typeof candidate != "object"))
+    return typeof candidate.save == "function" ? candidate : void 0;
+}
 function wrapWithLocale(Component, t, extras = { openSessionTab: () => !1 }) {
   return function(props) {
     return h(BodyLocale.Provider, { value: t }, h(Component, { t, ...extras, ...props }));
@@ -3833,7 +3886,7 @@ function formsDiffer(left, right) {
   return Object.keys(left).some((field) => left[field] !== right[field]);
 }
 function AtTerminalBody(props = {}) {
-  let t = import_react4.default.useContext(BodyLocale), tabId = readTabId(props), tabKey = readTabKey(props) || ANONYMOUS_TAB_KEY, restored = readAssetsState(tabKey), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, [formOpen, setFormOpen] = import_react4.default.useState(restored?.formOpen ?? !1), [dialog, setDialog] = import_react4.default.useState("none"), [menu, setMenu] = import_react4.default.useState(null), [copied, setCopied] = import_react4.default.useState(null), [listSelectedId, setListSelectedId] = import_react4.default.useState(restored?.listSelectedId ?? ""), scrollRef = import_react4.default.useRef(null), scrollTopRef = import_react4.default.useRef(restored?.scrollTop ?? 0), [notice, setNotice] = import_react4.default.useState(null), [summaryRevision, setSummaryRevision] = import_react4.default.useState(0), [serversRevision, setServersRevision] = import_react4.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react4.default.useState(restored?.form ?? emptyForm), [formError, setFormError] = import_react4.default.useState(null), [saveState, setSaveState] = import_react4.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react4.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react4.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react4.default.useState(!1), formBaselineRef = import_react4.default.useRef(form), [confirm, setConfirm] = import_react4.default.useState(null);
+  let t = import_react4.default.useContext(BodyLocale), tabId = readTabId(props), tabKey = readTabKey(props) || ANONYMOUS_TAB_KEY, restored = readAssetsState(tabKey), openSessionTab = typeof props.openSessionTab == "function" ? props.openSessionTab : () => !1, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, contextMenuValue = props.contextMenus, contextMenus = typeof contextMenuValue == "function" ? contextMenuValue() : contextMenuValue !== null && typeof contextMenuValue == "object" ? contextMenuValue : void 0, useContextMenu = props.useContextMenu, getTriggerProps = contextMenus !== void 0 && typeof useContextMenu == "function" ? useContextMenu().getTriggerProps : void 0, hostMenu = contextMenus !== void 0 && typeof getTriggerProps == "function", [formOpen, setFormOpen] = import_react4.default.useState(restored?.formOpen ?? !1), [dialog, setDialog] = import_react4.default.useState("none"), [menu, setMenu] = import_react4.default.useState(null), [copied, setCopied] = import_react4.default.useState(null), [listSelectedId, setListSelectedId] = import_react4.default.useState(restored?.listSelectedId ?? ""), scrollRef = import_react4.default.useRef(null), scrollTopRef = import_react4.default.useRef(restored?.scrollTop ?? 0), [notice, setNotice] = import_react4.default.useState(null), [summaryRevision, setSummaryRevision] = import_react4.default.useState(0), [serversRevision, setServersRevision] = import_react4.default.useState(0), summaryState = useHostRead("assets.summary", summaryRevision), serversState = useHostRead("servers.list", serversRevision), servers = serversState.kind === "ok" ? serverViews(serversState.result) : [], groups = serversState.kind === "ok" && Array.isArray(serversState.result.groups) ? serversState.result.groups : [], [form, setForm] = import_react4.default.useState(restored?.form ?? emptyForm), [formError, setFormError] = import_react4.default.useState(null), [saveState, setSaveState] = import_react4.default.useState({ kind: "idle" }), [removal, setRemoval] = import_react4.default.useState({ kind: "idle" }), [showPassword, setShowPassword] = import_react4.default.useState(!1), [groupMenuOpen, setGroupMenuOpen] = import_react4.default.useState(!1), formBaselineRef = import_react4.default.useRef(form), [confirm, setConfirm] = import_react4.default.useState(null);
   function requestConfirm(request) {
     return new Promise((resolve) => setConfirm({ request, resolve }));
   }
@@ -3866,6 +3919,31 @@ function AtTerminalBody(props = {}) {
     node !== null && (node.scrollTop = scrollTopRef.current);
   }, [serversState.kind]);
   let menuFocus = useMenuFocus(menu !== null, () => setMenu(null)), exportBusy = exportState.kind === "pending", importBusy = importState.kind === "pending", busy = exportBusy || importBusy || saveState.kind === "pending";
+  async function saveExportEnvelope(filename, envelope) {
+    let fileActions = fileActionsFrom(props);
+    if (fileActions === void 0)
+      return saveDownload(filename, envelope), filename;
+    let text2 = typeof envelope == "string" ? envelope : JSON.stringify(envelope, null, 2);
+    try {
+      let result = await fileActions.save(
+        {
+          read: async () => new Blob([text2], { type: "application/json" }),
+          name: filename,
+          mediaType: "application/json"
+        },
+        "download"
+      );
+      return result.status === "cancelled" ? null : result.status === "saved" && result.path !== "" ? result.path : filename;
+    } catch (error) {
+      return postDiagnostic(
+        "warn",
+        `fileActions.save failed; falling back to saveDownload: ${String(error?.message ?? error)}`,
+        "export",
+        null,
+        null
+      ), saveDownload(filename, envelope), filename;
+    }
+  }
   function runExport() {
     if (!exportBusy) {
       if (exportPassword === "") {
@@ -3877,10 +3955,15 @@ function AtTerminalBody(props = {}) {
         includePrivateKeys,
         packagePassword: exportPassword
       }).then(
-        (result) => {
+        async (result) => {
           let payload = result ?? {}, filename = text(payload.filename) || "at-terminal-assets.at-terminal-assets";
           try {
-            saveDownload(filename, payload.envelope), setExportState({ kind: "ok", filename, omissions: count(payload.omissions) });
+            let shownName = await saveExportEnvelope(filename, payload.envelope);
+            if (shownName === null) {
+              setExportState({ kind: "idle" });
+              return;
+            }
+            setExportState({ kind: "ok", filename: shownName, omissions: count(payload.omissions) });
           } catch (error) {
             setExportState({ kind: "failed", ...asFailure(error) });
           }
@@ -3955,6 +4038,32 @@ function AtTerminalBody(props = {}) {
     write !== void 0 && write.catch(() => {
     }), setCopied(t("menu.copied", { target })), window.setTimeout(() => setCopied(null), 2e3);
   }
+  function serverMenuActions(value) {
+    let serverId = text(value.serverId), server = servers.find((entry) => text(entry.id) === serverId);
+    if (server === void 0) return [];
+    let actions = [
+      {
+        id: "connect",
+        label: t("menu.connect"),
+        // 连接 opens a session tab too, exactly like the double-click: this body has no
+        // terminal to connect *in*.
+        run: () => openAssetInSessionTab(server)
+      }
+    ];
+    return openMonitorTab !== void 0 && actions.push({
+      id: "monitor",
+      label: t("monitor.title"),
+      run: () => openMonitorTab({ serverId, target: "hardware" })
+    }), actions.push(
+      { id: "edit", label: t("menu.edit"), run: () => startEdit(server) },
+      { id: "copy", label: t("menu.copy"), run: () => copyAddress(server) },
+      { id: "remove", label: t("menu.remove"), run: () => runRemove(server), danger: !0 }
+    ), actions;
+  }
+  import_react4.default.useEffect(() => {
+    if (hostMenu)
+      return setServerMenuBuilder(tabKey, serverMenuActions);
+  });
   let children = [];
   if (formOpen && children.push(
     renderFormView({
@@ -4016,6 +4125,13 @@ function AtTerminalBody(props = {}) {
           server
         });
       },
+      // Host menu route: the row and its `⋯` button both carry this captured target. The value
+      // is plain JSON (the tab key plus the id) — never the mutable `ServerView`.
+      menuTarget: hostMenu ? (server) => ({ kind: SERVER_MENU_TARGET, value: { tabKey, serverId: text(server.id) } }) : void 0,
+      getTriggerProps: hostMenu ? getTriggerProps : void 0,
+      onOpenMenu: hostMenu ? (target, point) => {
+        contextMenus?.open?.(target, point);
+      } : void 0,
       onNew: startNew,
       onImport: () => {
         setImportState({ kind: "idle" }), setDialog("import");
@@ -4077,7 +4193,7 @@ function AtTerminalBody(props = {}) {
       onConfirm: () => answerConfirm(!0),
       onClose: () => answerConfirm(!1)
     })
-  ), menu !== null) {
+  ), menu !== null && !hostMenu) {
     let item = (key, labelKey, onClick, danger = !1) => h(
       "button",
       {
@@ -4222,6 +4338,17 @@ function rowGlyph(row) {
   let entry = row.entry;
   return entry === void 0 ? null : entry.type === "symlink" ? symlinkRegular({ size: 14 }) : entry.type === "directory" ? folderRegular({ size: 14 }) : fileRegular({ size: 14 });
 }
+function rowInteraction(props, row, focused, handlers) {
+  return typeof props.getTriggerProps == "function" && typeof props.menuTarget == "function" ? props.getTriggerProps?.(props.menuTarget?.(row), {
+    ...handlers,
+    tabIndex: focused ? 0 : -1
+  }) ?? handlers : {
+    ...handlers,
+    onContextMenu: (event) => {
+      event.preventDefault(), event.stopPropagation?.(), props.onRowContextMenu?.(event, row);
+    }
+  };
+}
 function renderRow2(t, row, props, focusedKey) {
   let pad = { paddingLeft: `${8 + row.depth * 14}px` }, key = `row:${row.key}`, focused = row.key === focusedKey;
   if (row.kind === "parent")
@@ -4234,11 +4361,10 @@ function renderRow2(t, row, props, focusedKey) {
         style: pad,
         "data-at-terminal-action": "sftp-up",
         title: t("sftp.goUp"),
-        onClick: () => props.onGoUp(),
-        onContextMenu: (event) => {
-          event.preventDefault(), event.stopPropagation?.(), props.onRowContextMenu?.(event, row);
-        },
-        onKeyDown: (event) => onRowKeyDown(event, row, props)
+        ...rowInteraction(props, row, focused, {
+          onClick: () => props.onGoUp(),
+          onKeyDown: (event) => onRowKeyDown(event, row, props)
+        })
       },
       h("span", { className: "att-tree-glyph", "aria-hidden": "true" }, "\u2191"),
       h("span", { className: "att-tree-name" }, ".."),
@@ -4315,14 +4441,13 @@ function renderRow2(t, row, props, focusedKey) {
       "data-at-terminal-sftp": "entry",
       "data-at-terminal-entry": entry.type,
       title: entry.path,
-      onClick: selectable ? () => props.onSelect(entry.path) : void 0,
-      // Double-click is the gesture the 资产 list already taught this panel for "open the
-      // thing this row names", so it opens the viewer rather than inventing a second one.
-      onDoubleClick: selectable ? () => props.onOpen(entry.path, "view") : void 0,
-      onContextMenu: (event) => {
-        event.preventDefault(), event.stopPropagation?.(), props.onRowContextMenu?.(event, row);
-      },
-      onKeyDown: (event) => onRowKeyDown(event, row, props)
+      ...rowInteraction(props, row, focused, {
+        onClick: selectable ? () => props.onSelect(entry.path) : void 0,
+        // Double-click is the gesture the 资产 list already taught this panel for "open the
+        // thing this row names", so it opens the viewer rather than inventing a second one.
+        onDoubleClick: selectable ? () => props.onOpen(entry.path, "view") : void 0,
+        onKeyDown: (event) => onRowKeyDown(event, row, props)
+      })
     },
     renderDisclosure(t, row, props.onToggle),
     h(
@@ -4584,9 +4709,53 @@ function renderPath(t, props) {
     listing !== void 0 && listing.kind === "active" ? h("span", { className: "att-chip" }, t("sftp.entryCount", { count: count(listing.entries.length) })) : null
   );
 }
-function renderSftpView(props) {
-  let { t } = props, focusedKey = sftpTreeFocusKey(props.rows, focusedRowKey);
+function SftpTree(props) {
+  let { t } = props, focusedKey = sftpTreeFocusKey(props.rows, focusedRowKey), hostContainer = typeof props.getTriggerProps == "function" && typeof props.containerMenuTarget == "function" ? props.getTriggerProps(props.containerMenuTarget(), { tabIndex: -1 }) : {
+    onContextMenu: (event) => {
+      event.preventDefault(), props.onContainerContextMenu?.(event);
+    }
+  };
   return h(
+    "div",
+    {
+      className: "att-content",
+      ref: props.scrollRef,
+      onScroll: (event) => props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0)),
+      ...hostContainer
+    },
+    renderStatus(t, props),
+    props.failure === null ? null : h("div", { key: "action-failed" }, renderFailure(t, props.failure)),
+    h(
+      "div",
+      {
+        role: "tree",
+        // The listing is the page's whole content, so the page's own title names it;
+        // `sftp.title` is already that string in both locales.
+        "aria-label": t("sftp.title"),
+        // A read in flight is exactly what `aria-busy` is for, and it is the only
+        // thing on this page that changes without the user's hands on the keyboard.
+        "aria-busy": props.state.kind === "pending",
+        "data-at-terminal-sftp-tree": "true"
+      },
+      renderTree(t, props, focusedKey)
+    )
+  );
+}
+function renderSftpView(props) {
+  let { t } = props;
+  return props.compact === !0 ? h(
+    "div",
+    {
+      className: "att-page att-sftp-page",
+      key: "sftp",
+      hidden: !props.visible,
+      role: "region",
+      "aria-label": t("sftp.title"),
+      "data-at-terminal-sftp-compact": "true",
+      style: { display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }
+    },
+    SftpTree(props)
+  ) : h(
     "div",
     {
       className: "att-page att-sftp-page",
@@ -4600,33 +4769,7 @@ function renderSftpView(props) {
     },
     renderToolbar(t, props),
     renderFileActions(t, props),
-    h(
-      "div",
-      {
-        className: "att-content",
-        ref: props.scrollRef,
-        onScroll: (event) => props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0)),
-        onContextMenu: (event) => {
-          event.preventDefault(), props.onContainerContextMenu?.(event);
-        }
-      },
-      renderStatus(t, props),
-      props.failure === null ? null : h("div", { key: "action-failed" }, renderFailure(t, props.failure)),
-      h(
-        "div",
-        {
-          role: "tree",
-          // The listing is the page's whole content, so the page's own title names it;
-          // `sftp.title` is already that string in both locales.
-          "aria-label": t("sftp.title"),
-          // A read in flight is exactly what `aria-busy` is for, and it is the only
-          // thing on this page that changes without the user's hands on the keyboard.
-          "aria-busy": props.state.kind === "pending",
-          "data-at-terminal-sftp-tree": "true"
-        },
-        renderTree(t, props, focusedKey)
-      )
-    ),
+    SftpTree(props),
     renderPath(t, props)
   );
 }
@@ -4880,7 +5023,28 @@ function renderBody(t, props) {
   ), nodes.push(renderFileStatus(t, pane.file, pane.draft, pane.dirty)), nodes);
 }
 function renderSftpFileView(props) {
-  let { t } = props;
+  let { t } = props, split = props.split === !0 && props.tree !== void 0 && props.tree !== null, main = h(
+    "div",
+    {
+      className: "sftp-file-main",
+      // The pane is a flex column so its toolbar keeps its height and only the content
+      // scrolls; without this the editor's own scroll area grows the whole page.
+      style: { display: "flex", flexDirection: "column", flex: "1 1 auto", minWidth: 0, minHeight: 0 }
+    },
+    renderToolbar2(t, props),
+    // The inline flex is load-bearing in the split layout: the stylesheet's
+    // `.att-sftp-file-page > .att-file-content` rule no longer matches through the new
+    // `.sftp-file-main` wrapper, and a content area that cannot shrink would push the
+    // toolbar out instead of scrolling.
+    h(
+      "div",
+      {
+        className: "att-content att-file-content",
+        style: { flex: "1 1 auto", minHeight: 0 }
+      },
+      renderBody(t, props)
+    )
+  );
   return h(
     "div",
     {
@@ -4894,10 +5058,40 @@ function renderSftpFileView(props) {
       // mounted — see the `hidden`-not-unmounted note at the top of this file.)
       role: "region",
       "aria-labelledby": navTabId("sftp", "sftp"),
-      "data-at-terminal-sftp-file-pane": navPanelId("sftp")
+      "data-at-terminal-sftp-file-pane": navPanelId("sftp"),
+      "data-at-terminal-sftp-split": split ? "true" : "false",
+      ...split ? {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "stretch",
+          minHeight: 0,
+          overflow: "hidden"
+        }
+      } : {}
     },
-    renderToolbar2(t, props),
-    h("div", { className: "att-content att-file-content" }, renderBody(t, props))
+    split ? h(
+      "div",
+      {
+        key: "sftp-split-tree",
+        className: "sftp-split-tree",
+        // 240px is the official preview's starting width; 42% lets a narrow-but-wide
+        // panel grow it without starving the editor, and 180px is the readable floor.
+        style: {
+          flex: "0 1 240px",
+          width: "42%",
+          minWidth: "180px",
+          maxWidth: "320px",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          borderRight: ".5px solid var(--dsw-alias-border-l3)",
+          overflow: "hidden"
+        }
+      },
+      props.tree
+    ) : null,
+    main
   );
 }
 
@@ -4962,9 +5156,12 @@ function requestedServerId(params) {
   let value = params.serverId;
   return typeof value == "string" ? value : "";
 }
-var ANONYMOUS_KEY = "anonymous";
+var ANONYMOUS_KEY = "anonymous", rememberedSftpFiles = /* @__PURE__ */ new Map();
+function forgetRememberedSftpFile(tabKey) {
+  rememberedSftpFiles.delete(tabKey);
+}
 function AtTerminalSessionBody(props = {}) {
-  let t = import_react6.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
+  let t = import_react6.default.useContext(BodyLocale), key = readTabKey(props) || ANONYMOUS_KEY, openMonitorTab = typeof props.openMonitorTab == "function" ? props.openMonitorTab : void 0, contextMenuValue = props.contextMenus, contextMenus = typeof contextMenuValue == "function" ? contextMenuValue() : contextMenuValue !== null && typeof contextMenuValue == "object" ? contextMenuValue : void 0, useContextMenu = props.useContextMenu, getTriggerProps = contextMenus !== void 0 && typeof useContextMenu == "function" ? useContextMenu().getTriggerProps : void 0, hostMenu = contextMenus !== void 0 && typeof getTriggerProps == "function", params = useTabParams(props), signal = readTabSignal(props), session = useSession(key);
   import_react6.default.useEffect(() => {
     retainSessionSignal(session, signal);
   }, [session, signal]), import_react6.default.useEffect(() => (markSessionActive(key), () => {
@@ -4997,7 +5194,19 @@ function AtTerminalSessionBody(props = {}) {
   }, [key, servers, session, session.serverId, session.state.kind, session.failure]);
   let [sftpRevision, setSftpRevision] = import_react6.default.useState(0), [sftpVisited, setSftpVisited] = import_react6.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react6.default.useState(!1), [sftpFailure, setSftpFailure] = import_react6.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react6.default.useState(() => [
     ...readSftpState(key)?.expanded ?? []
-  ]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), [confirm, setConfirm] = import_react6.default.useState(null);
+  ]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), sftpRootRef = import_react6.default.useRef(null), [sftpPanelWidth, setSftpPanelWidth] = import_react6.default.useState(0);
+  import_react6.default.useEffect(() => {
+    let node = sftpRootRef.current;
+    if (node === null || typeof ResizeObserver > "u") return;
+    let observer = new ResizeObserver((entries) => {
+      let width = entries[0]?.contentRect?.width;
+      typeof width == "number" && width > 0 && setSftpPanelWidth(width);
+    });
+    return observer.observe(node), () => {
+      observer.disconnect();
+    };
+  }, []);
+  let [confirm, setConfirm] = import_react6.default.useState(null);
   function requestConfirm(request) {
     return new Promise((resolve) => setConfirm({ request, resolve }));
   }
@@ -5039,13 +5248,19 @@ function AtTerminalSessionBody(props = {}) {
     let node = sftpScrollRef.current;
     node !== null && (node.scrollTop = sftpScrollTopRef.current);
   }, [sftpState.kind]);
+  let sftpFileRestoredRef = import_react6.default.useRef(!1);
+  import_react6.default.useEffect(() => {
+    if (sftpFileRestoredRef.current || (sftpFileRestoredRef.current = !0, session.page !== "sftp" || sftpFile !== null)) return;
+    let remembered = rememberedSftpFiles.get(key);
+    remembered !== void 0 && openSftpFile(remembered.path, remembered.mode);
+  }, []);
   function reloadSftp(dropCache) {
     dropCache && callRpc("sftp.refresh", { terminalId: session.hostTerminalId }).catch(
       (error) => setSftpFailure(asFailure(error))
     ), setSftpFailure(null), setSftpNotice(null), setSftpChildren({}), setSftpRevision((value) => value + 1);
   }
   function openSftpFile(path, mode) {
-    setSftpSelected(path), setSftpFailure(null), setSftpFile({ kind: "pending", path, mode }), callRpc("sftp.readFile", { path, terminalId: session.hostTerminalId }).then(
+    setSftpSelected(path), setSftpFailure(null), rememberedSftpFiles.set(key, { path, mode }), setSftpFile({ kind: "pending", path, mode }), callRpc("sftp.readFile", { path, terminalId: session.hostTerminalId }).then(
       (result) => {
         let file = sftpFileText(result);
         setSftpFile(
@@ -5070,6 +5285,24 @@ function AtTerminalSessionBody(props = {}) {
       (pane) => pane === null || pane.kind !== "ready" ? pane : { ...pane, mode: "view", draft: pane.file.text, dirty: !1, save: { kind: "idle" } }
     );
   }
+  function closeSftpFile() {
+    let pane = sftpFile;
+    (async () => pane !== null && pane.kind === "ready" && pane.dirty && !await requestConfirm({
+      title: t("dialog.confirmDiscardTitle"),
+      message: t("sftp.discardConfirm", { name: pane.path }),
+      confirmLabel: t("sftp.discard"),
+      danger: !0
+    }) || (rememberedSftpFiles.delete(key), setSftpFile(null)))();
+  }
+  import_react6.default.useEffect(() => {
+    if (sftpFile === null || session.page !== "sftp" || typeof document > "u") return;
+    let onKeyDown = (event) => {
+      event.key !== "Escape" || event.defaultPrevented || confirm !== null || newFileDialog !== null || sftpMenu !== null || (event.preventDefault(), closeSftpFile());
+    };
+    return document.addEventListener("keydown", onKeyDown), () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sftpFile, session.page, confirm, newFileDialog, sftpMenu]);
   function draftSftpFile(value) {
     setSftpFile(
       (pane) => pane === null || pane.kind !== "ready" ? pane : { ...pane, draft: value, dirty: value !== pane.file.text }
@@ -5111,6 +5344,41 @@ function AtTerminalSessionBody(props = {}) {
       }
     ));
   }
+  function base64Blob(base64) {
+    let bytes;
+    if (typeof Uint8Array.fromBase64 == "function")
+      bytes = Uint8Array.fromBase64(base64);
+    else {
+      let binary = atob(base64);
+      bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    }
+    return new Blob([bytes], { type: "application/octet-stream" });
+  }
+  async function saveRemoteBytes(name, base64) {
+    let fileActions = fileActionsFrom(props);
+    if (fileActions === void 0)
+      return saveBytes(name, base64), { status: "fallback" };
+    try {
+      let result = await fileActions.save(
+        {
+          read: async () => base64Blob(base64),
+          name,
+          mediaType: "application/octet-stream"
+        },
+        "download"
+      );
+      return result.status === "cancelled" ? { status: "cancelled" } : result.status === "saved" ? { status: "saved", path: result.path } : { status: "requested" };
+    } catch (error) {
+      return postDiagnostic(
+        "warn",
+        `fileActions.save failed; falling back to saveBytes: ${String(error?.message ?? error)}`,
+        "sftp-download",
+        null,
+        null
+      ), saveBytes(name, base64), { status: "fallback" };
+    }
+  }
   function downloadSftpFile(path) {
     let fileName = path.split("/").filter(Boolean).pop() || "remote-file";
     setSftpDownloading(!0), setSftpFailure(null), setSftpTransferProgress({
@@ -5137,10 +5405,18 @@ function AtTerminalSessionBody(props = {}) {
         }
       }
     ).then(
-      (result) => {
+      async (result) => {
         let payload = result ?? {}, name = typeof payload.name == "string" && payload.name !== "" ? payload.name : fileName, size = typeof payload.size == "number" ? payload.size : 0;
         try {
-          saveBytes(name, typeof payload.base64 == "string" ? payload.base64 : ""), setSftpTransferProgress({
+          let outcome = await saveRemoteBytes(
+            name,
+            typeof payload.base64 == "string" ? payload.base64 : ""
+          );
+          if (outcome.status === "cancelled") {
+            setSftpTransferProgress(null), setSftpDownloading(!1);
+            return;
+          }
+          setSftpTransferProgress({
             kind: "download",
             name,
             loaded: size,
@@ -5149,7 +5425,11 @@ function AtTerminalSessionBody(props = {}) {
             detail: `${formatFileSize(size)} / ${formatFileSize(size)}`
           }), setTimeout(() => {
             setSftpTransferProgress(null), setSftpDownloading(!1);
-          }, 800), setSftpNotice(t("sftp.downloadDone", { name, size: formatFileSize(size) }));
+          }, 800);
+          let done = t("sftp.downloadDone", { name, size: formatFileSize(size) });
+          setSftpNotice(
+            outcome.status === "saved" && typeof outcome.path == "string" && outcome.path !== "" ? `${done} ${outcome.path}` : done
+          );
         } catch (error) {
           setSftpTransferProgress(null), setSftpDownloading(!1), setSftpFailure(asFailure(error));
         }
@@ -5240,6 +5520,75 @@ function AtTerminalSessionBody(props = {}) {
     write !== void 0 && write.catch(() => {
     }), setSftpNotice(t("sftp.copiedPath", { path }));
   }
+  function sftpTargetFor(row) {
+    let root = sftpList?.rootPath ?? "";
+    if (row.kind === "parent")
+      return {
+        kind: SFTP_ENTRY_MENU_TARGET,
+        value: { tabKey: key, terminalId: session.hostTerminalId, rowKind: "parent", targetDir: root }
+      };
+    if (row.kind === "entry" && row.entry !== void 0) {
+      let entry = row.entry;
+      return {
+        kind: SFTP_ENTRY_MENU_TARGET,
+        value: {
+          tabKey: key,
+          terminalId: session.hostTerminalId,
+          rowKind: "entry",
+          entryType: entry.type,
+          path: entry.path,
+          name: entry.name,
+          targetDir: entry.type === "directory" ? entry.path : dirname(entry.path)
+        }
+      };
+    }
+    return sftpContainerTarget();
+  }
+  function sftpContainerTarget() {
+    return {
+      kind: SFTP_CONTAINER_MENU_TARGET,
+      value: {
+        tabKey: key,
+        terminalId: session.hostTerminalId,
+        rowKind: "container",
+        targetDir: sftpList?.rootPath ?? ""
+      }
+    };
+  }
+  function sftpMenuActions(value) {
+    let listing = sftpList;
+    if (listing === null || listing.kind !== "active") return [];
+    let rowKind = text(value.rowKind), targetDir = text(value.targetDir), path = text(value.path), name = text(value.name);
+    if (rowKind === "parent")
+      return [
+        { id: "up", label: t("sftp.goUp"), run: () => void goUpSftp() },
+        { id: "refresh", label: t("toolbar.refresh"), run: () => reloadSftp(!0) }
+      ];
+    if (rowKind === "entry")
+      return text(value.entryType) === "directory" ? [
+        { id: "new-file", label: t("sftp.newFile"), run: () => openNewFileDialog(path) },
+        { id: "upload", label: t("sftp.uploadHere"), run: () => triggerUpload(path) },
+        { id: "refresh", label: t("toolbar.refresh"), run: () => reloadSftp(!0) },
+        { id: "copy-path", label: t("sftp.copyPath"), run: () => copyRemotePath(path) },
+        { id: "delete", label: t("sftp.delete"), run: () => deleteRemoteItem(path, name), danger: !0 }
+      ] : [
+        { id: "view", label: t("sftp.view"), run: () => openSftpFile(path, "view") },
+        { id: "edit", label: t("sftp.edit"), run: () => openSftpFile(path, "edit") },
+        { id: "download", label: t("sftp.download"), run: () => downloadSftpFile(path) },
+        { id: "new-file", label: t("sftp.newFile"), run: () => openNewFileDialog(dirname(path)) },
+        { id: "copy-path", label: t("sftp.copyPath"), run: () => copyRemotePath(path) },
+        { id: "delete", label: t("sftp.delete"), run: () => deleteRemoteItem(path, name), danger: !0 }
+      ];
+    let actions = [
+      { id: "new-file", label: t("sftp.newFile"), run: () => openNewFileDialog(targetDir) },
+      { id: "upload", label: t("sftp.upload"), run: () => triggerUpload(targetDir) }
+    ];
+    return listing.rootPath !== "" && listing.rootPath !== "/" && actions.push({ id: "up", label: t("sftp.goUp"), run: () => void goUpSftp() }), actions.push({ id: "refresh", label: t("toolbar.refresh"), run: () => reloadSftp(!0) }), actions;
+  }
+  import_react6.default.useEffect(() => {
+    if (hostMenu)
+      return setSftpMenuBuilder(key, sftpMenuActions);
+  });
   function triggerUpload(targetDir) {
     setSftpMenu(null), sftpUploadTargetRef.current = targetDir, sftpFileInputRef.current !== null ? sftpFileInputRef.current.click() : typeof document < "u" && document.querySelector('[data-at-terminal-action="sftp-menu-upload-input"]')?.click();
   }
@@ -5290,6 +5639,8 @@ function AtTerminalSessionBody(props = {}) {
       return;
     }
     setSftpVisited(!0), reloadSftp(!1);
+    let remembered = rememberedSftpFiles.get(key);
+    remembered !== void 0 && sftpFile === null && openSftpFile(remembered.path, remembered.mode);
   }
   let inputHandlerRef = import_react6.default.useRef(() => {
   }), resizeHandlerRef = import_react6.default.useRef(() => {
@@ -5378,72 +5729,77 @@ function AtTerminalSessionBody(props = {}) {
       t("terminal.closed", { reason: session.reason })
     )
   );
-  let children = [], uploadTarget = sftpList === null ? "" : sftpList.rootPath;
-  if (children.push(
-    renderSftpView({
-      t,
-      // The file pane takes the page over rather than sitting inside it: two surfaces that
-      // mount and hide each other, the same shape the 资产 page uses for its server form.
-      visible: session.page === "sftp" && sftpFile === null,
-      mode: session.page,
-      onMode: changePage,
-      state: sftpState,
-      failure: sftpFailure,
-      // The rows are computed here rather than in the view because the recursion lives in
-      // `flattenSftpTree`, which is unit-tested without a DOM; the view only maps rows.
-      rows: flattenSftpTree({
-        rootPath: sftpList === null ? "" : sftpList.rootPath,
-        entries: sftpList === null ? [] : sftpList.entries,
-        expanded: sftpExpanded,
-        children: sftpChildren,
-        disconnected: sftpList !== null && sftpList.kind === "disconnected"
-      }),
+  let children = [], uploadTarget = sftpList === null ? "" : sftpList.rootPath, sftpSplit = sftpFile !== null && session.page === "sftp" && sftpPanelWidth >= 560, sftpTreeElement = renderSftpView({
+    t,
+    // With no file open this is the normal page; with one open in the wide layout it is the
+    // compact left column. The narrow layout keeps the old "hidden page + full file pane".
+    visible: session.page === "sftp" && (sftpFile === null || sftpSplit),
+    compact: sftpSplit,
+    mode: session.page,
+    onMode: changePage,
+    state: sftpState,
+    failure: sftpFailure,
+    // The rows are computed here rather than in the view because the recursion lives in
+    // `flattenSftpTree`, which is unit-tested without a DOM; the view only maps rows.
+    rows: flattenSftpTree({
+      rootPath: sftpList === null ? "" : sftpList.rootPath,
+      entries: sftpList === null ? [] : sftpList.entries,
       expanded: sftpExpanded,
-      busy: sftpBusy,
-      scrollRef: sftpScrollRef,
-      onScrollTop: (top) => {
-        sftpScrollTopRef.current = top;
-        let stored = readSftpState(key);
-        stored !== void 0 && saveSftpState(key, { ...stored, scrollTop: top });
-      },
-      onToggle: toggleSftpDirectory,
-      onGoUp: () => void goUpSftp(),
-      onRefresh: () => reloadSftp(!0),
-      selectedPath: sftpSelected,
-      onSelect: setSftpSelected,
-      onOpen: openSftpFile,
-      onDownload: downloadSftpFile,
-      downloading: sftpDownloading,
-      uploadTarget,
-      onUpload: (files) => uploadSftpFiles(files, uploadTarget),
-      uploading: sftpUploading,
-      progress: sftpTransferProgress,
-      notice: sftpNotice,
-      onRowContextMenu: (event, row) => {
-        let listing = sftpList;
-        if (listing === null || listing.kind !== "active") return;
-        let targetDir = listing.rootPath;
-        if (row.kind === "entry") {
-          let entry = row.entry;
-          entry.type === "directory" ? targetDir = entry.path : (targetDir = dirname(entry.path), setSftpSelected(entry.path));
-        }
-        setSftpMenu({
-          x: event.clientX,
-          y: event.clientY,
-          row,
-          targetDir
-        });
-      },
-      onContainerContextMenu: (event) => {
-        let listing = sftpList;
-        listing === null || listing.kind !== "active" || setSftpMenu({
-          x: event.clientX,
-          y: event.clientY,
-          targetDir: listing.rootPath
-        });
+      children: sftpChildren,
+      disconnected: sftpList !== null && sftpList.kind === "disconnected"
+    }),
+    expanded: sftpExpanded,
+    busy: sftpBusy,
+    scrollRef: sftpScrollRef,
+    onScrollTop: (top) => {
+      sftpScrollTopRef.current = top;
+      let stored = readSftpState(key);
+      stored !== void 0 && saveSftpState(key, { ...stored, scrollTop: top });
+    },
+    onToggle: toggleSftpDirectory,
+    onGoUp: () => void goUpSftp(),
+    onRefresh: () => reloadSftp(!0),
+    selectedPath: sftpSelected,
+    onSelect: setSftpSelected,
+    onOpen: openSftpFile,
+    onDownload: downloadSftpFile,
+    downloading: sftpDownloading,
+    uploadTarget,
+    onUpload: (files) => uploadSftpFiles(files, uploadTarget),
+    uploading: sftpUploading,
+    progress: sftpTransferProgress,
+    notice: sftpNotice,
+    menuTarget: hostMenu ? sftpTargetFor : void 0,
+    getTriggerProps: hostMenu ? getTriggerProps : void 0,
+    containerMenuTarget: hostMenu ? sftpContainerTarget : void 0,
+    onOpenMenu: hostMenu ? (target, point) => {
+      contextMenus?.open?.(target, point);
+    } : void 0,
+    onRowContextMenu: (event, row) => {
+      let listing = sftpList;
+      if (listing === null || listing.kind !== "active") return;
+      let targetDir = listing.rootPath;
+      if (row.kind === "entry") {
+        let entry = row.entry;
+        entry.type === "directory" ? targetDir = entry.path : (targetDir = dirname(entry.path), setSftpSelected(entry.path));
       }
-    })
-  ), session.page === "sftp") {
+      setSftpMenu({
+        x: event.clientX,
+        y: event.clientY,
+        row,
+        targetDir
+      });
+    },
+    onContainerContextMenu: (event) => {
+      let listing = sftpList;
+      listing === null || listing.kind !== "active" || setSftpMenu({
+        x: event.clientX,
+        y: event.clientY,
+        targetDir: listing.rootPath
+      });
+    }
+  });
+  if (sftpFile === null && children.push(sftpTreeElement), session.page === "sftp") {
     if (children.push(
       h("input", {
         key: "sftp-menu-file-input",
@@ -5461,7 +5817,7 @@ function AtTerminalSessionBody(props = {}) {
           event?.target !== void 0 && (event.target.value = ""), picked.length > 0 && uploadSftpFiles(picked, sftpUploadTargetRef.current || uploadTarget);
         }
       })
-    ), sftpMenu !== null) {
+    ), sftpMenu !== null && !hostMenu) {
       let menuRow = sftpMenu.row, menuItems = [], menuItem = (itemKey, label, onClick, danger = !1) => h(
         "button",
         {
@@ -5631,17 +5987,15 @@ function AtTerminalSessionBody(props = {}) {
       onRevert: revertSftpFile,
       onSave: saveSftpFile,
       onReload: () => openSftpFile(sftpFile.path, sftpFile.mode),
-      // Closing a dirty buffer asks first (UI2-11): the 关闭 button sat next to the save
-      // button and discarded a whole file's worth of typing with one click.
-      onClose: () => {
-        (async () => sftpFile.kind === "ready" && sftpFile.dirty && !await requestConfirm({
-          title: t("dialog.confirmDiscardTitle"),
-          message: t("sftp.discardConfirm", { name: sftpFile.path }),
-          confirmLabel: t("sftp.discard"),
-          danger: !0
-        }) || setSftpFile(null))();
-      },
-      onDownload: () => downloadSftpFile(sftpFile.path)
+      // Closing a dirty buffer asks first (UI2-11): the 返回 button sat next to the save
+      // button and discarded a whole file's worth of typing with one click. Escape shares
+      // this exact function (see the document listener above).
+      onClose: closeSftpFile,
+      onDownload: () => downloadSftpFile(sftpFile.path),
+      // Wide layout: the tree node built above is rendered as the left column. Narrow:
+      // `null`, so the file pane keeps the page to itself exactly as before U3.
+      tree: sftpSplit ? sftpTreeElement : null,
+      split: sftpSplit
     })
   ), children.push(
     h(TerminalView, {
@@ -5679,7 +6033,11 @@ function AtTerminalSessionBody(props = {}) {
     })
   ), import_react6.default.useEffect(() => {
     postBodyRendered(key, session.page);
-  }, [key, session.page]), h("div", { className: "att-root", "data-at-terminal-body": session.page }, children);
+  }, [key, session.page]), h(
+    "div",
+    { className: "att-root", "data-at-terminal-body": session.page, ref: sftpRootRef },
+    children
+  );
 }
 function postBodyRendered(key, page) {
   postDiagnostic("info", `at-terminal body rendered tab=${key} page=${page}`, "body", null, null);
@@ -7218,7 +7576,7 @@ function timeOf(timestamp) {
   return [when.getHours(), when.getMinutes(), when.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
 }
 function AtTerminalSettingsTab() {
-  let t = import_react13.default.useContext(BodyLocale), decisionLabel = (decision) => t(decision === "allowed" ? "monitor.decision.allowed" : decision === "confirmed" ? "monitor.decision.confirmed" : "monitor.decision.denied"), optionalState = (state) => state.installed ? state.enabled ? t("settings.optional.state.enabled", { count: state.rows }) : t("settings.optional.state.disabled") : t("settings.optional.state.missing"), [audits, setAudits] = (0, import_react13.useState)(null), [hostKeys, setHostKeys] = (0, import_react13.useState)(null), [servers, setServers] = (0, import_react13.useState)([]), [optional, setOptional] = (0, import_react13.useState)(null), [optionalBusy, setOptionalBusy] = (0, import_react13.useState)(!1), [optionalError, setOptionalError] = (0, import_react13.useState)(null), [error, setError] = (0, import_react13.useState)(null), [busy, setBusy] = (0, import_react13.useState)(!1), [reloadCount, setReloadCount] = (0, import_react13.useState)(0);
+  let t = import_react13.default.useContext(BodyLocale), decisionLabel = (decision) => t(decision === "allowed" ? "monitor.decision.allowed" : decision === "confirmed" ? "monitor.decision.confirmed" : "monitor.decision.denied"), optionalState = (state) => state.installed ? state.enabled ? state.activation === "failed" ? t("settings.optional.state.failed") : state.activation === "active" ? t("settings.optional.state.enabled", { count: state.rows }) : t("settings.optional.state.unknown") : t("settings.optional.state.disabled") : t("settings.optional.state.missing"), [audits, setAudits] = (0, import_react13.useState)(null), [hostKeys, setHostKeys] = (0, import_react13.useState)(null), [servers, setServers] = (0, import_react13.useState)([]), [optional, setOptional] = (0, import_react13.useState)(null), [optionalBusy, setOptionalBusy] = (0, import_react13.useState)(!1), [optionalError, setOptionalError] = (0, import_react13.useState)(null), [error, setError] = (0, import_react13.useState)(null), [busy, setBusy] = (0, import_react13.useState)(!1), [reloadCount, setReloadCount] = (0, import_react13.useState)(0);
   (0, import_react13.useEffect)(() => {
     let cancelled = !1;
     return setError(null), Promise.all([
@@ -7246,9 +7604,15 @@ function AtTerminalSettingsTab() {
       (failure2) => setError(failure2 instanceof Error ? failure2.message : String(failure2))
     ).finally(() => setBusy(!1));
   }, runOptional = (method, params = {}) => {
-    setOptionalBusy(!0), setOptionalError(null), callRpc(method, params).then(() => setReloadCount((count2) => count2 + 1)).catch(
+    setOptionalBusy(!0), setOptionalError(null), callRpc(method, params).then((answer) => {
+      let reported = answer?.state;
+      reported != null && setOptional(reported), setReloadCount((count2) => count2 + 1);
+    }).catch(
       (failure2) => setOptionalError(failure2 instanceof Error ? failure2.message : String(failure2))
     ).finally(() => setOptionalBusy(!1));
+  }, approveBuilds = () => {
+    let pending3 = optional?.pendingBuilds ?? [];
+    pending3.length !== 0 && runOptional("terminal.optionalBundle.install", { approvedBuilds: pending3 });
   }, totals = { allowed: 0, confirmed: 0, denied: 0 };
   for (let audit of audits ?? [])
     audit.decision === "allowed" ? totals.allowed += 1 : audit.decision === "confirmed" ? totals.confirmed += 1 : totals.denied += 1;
@@ -7395,6 +7759,49 @@ function AtTerminalSettingsTab() {
           optional.installed ? optional.enabled ? t("settings.optional.disable") : t("settings.optional.enable") : t("settings.optional.install")
         )
       ),
+      optional !== null && optional.pendingBuilds !== void 0 && optional.pendingBuilds.length > 0 ? h(
+        "div",
+        { style: { ...keyCardStyle, borderColor: "var(--dsw-alias-state-warn-primary)" } },
+        h(
+          "div",
+          { style: { ...captionStyle, color: "var(--dsw-alias-state-warn-primary)" } },
+          t("settings.optional.pendingBuilds.title")
+        ),
+        h("div", { style: captionStyle }, t("settings.optional.pendingBuilds.description")),
+        h(
+          "ul",
+          { style: { ...listStyle, margin: 0, paddingLeft: "18px" } },
+          ...optional.pendingBuilds.map((name) => h("li", { key: name, style: monoStyle }, name))
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            disabled: optionalBusy,
+            style: { ...buttonStyle, alignSelf: "flex-start" },
+            onClick: approveBuilds
+          },
+          t("settings.optional.approveBuilds")
+        )
+      ) : null,
+      optional?.diagnostic !== void 0 && optional.diagnostic !== "" ? h(
+        "details",
+        { style: { ...captionStyle, minWidth: 0 } },
+        h("summary", { style: { cursor: "pointer" } }, t("settings.optional.details")),
+        h(
+          "pre",
+          {
+            style: {
+              ...monoStyle,
+              margin: "6px 0 0",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere"
+            }
+          },
+          optional.diagnostic
+        )
+      ) : null,
+      optional?.restoring === !0 ? h("div", { style: mutedStyle }, t("settings.optional.restoring")) : null,
       optionalError !== null ? h("div", { style: mutedStyle }, t("settings.optional.failed", { message: optionalError })) : null,
       optionalBusy ? h("div", { style: mutedStyle }, t("settings.optional.busy")) : null,
       optional?.available === !0 ? h(
@@ -7413,6 +7820,9 @@ function AtTerminalSettingsTab() {
 }
 
 // src/platform/dsh/client/main.ts
+function optionalService(ctx, name) {
+  return typeof ctx.get == "function" ? ctx.get(name) : name === "contextMenus" ? ctx.contextMenus : ctx.fileActions;
+}
 function newTabCommand(t, openSessionTab) {
   return {
     id: "atTerminal.newTab",
@@ -7703,7 +8113,40 @@ function apply(ctx) {
       setFormatLocale(ctx.locale.getLocale());
     } catch {
     }
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "at-terminal: dictionaries"), ctx.effect(() => () => disposeStyles(), "at-terminal: styles teardown"), ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), "at-terminal: assets tab type"), ctx.effect(
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "at-terminal: dictionaries"), ctx.effect(() => () => disposeStyles(), "at-terminal: styles teardown");
+  let registerContextMenus = (scope, service) => {
+    scope.effect(
+      () => service.register({
+        id: "at-terminal.server-actions",
+        target: SERVER_MENU_TARGET,
+        order: 10,
+        resolve: (value) => resolveServerMenuActions(value)
+      }),
+      "at-terminal: server context menu"
+    ), scope.effect(
+      () => service.register({
+        id: "at-terminal.sftp-entry-actions",
+        target: SFTP_ENTRY_MENU_TARGET,
+        order: 10,
+        resolve: (value) => resolveSftpMenuActions(value)
+      }),
+      "at-terminal: sftp entry context menu"
+    ), scope.effect(
+      () => service.register({
+        id: "at-terminal.sftp-container-actions",
+        target: SFTP_CONTAINER_MENU_TARGET,
+        order: 10,
+        resolve: (value) => resolveSftpMenuActions(value)
+      }),
+      "at-terminal: sftp container context menu"
+    );
+  }, contextMenus = optionalService(ctx, "contextMenus");
+  contextMenus !== void 0 ? registerContextMenus(ctx, contextMenus) : typeof ctx.inject == "function" && ctx.inject(["contextMenus"], (scoped) => {
+    let service = optionalService(scoped, "contextMenus");
+    service !== void 0 && registerContextMenus(scoped, service);
+  });
+  let fileActions = () => optionalService(ctx, "fileActions");
+  ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), "at-terminal: assets tab type"), ctx.effect(
     () => ctx.sidebarRightTabs.register(sessionDefinition(t)),
     "at-terminal: session tab type"
   ), ctx.effect(
@@ -7755,7 +8198,7 @@ function apply(ctx) {
   ), ctx.effect(
     () => ctx.sidebarRight.registerCloseHandler(KIND_SESSION, (_sessionId, tab) => {
       let contentId = tab?.contentId, key = typeof contentId == "string" && contentId !== "" ? contentId : String(tab?.id ?? "");
-      key !== "" && (disposeSession(key, !0, "close-handler"), clearTabState(key));
+      key !== "" && (disposeSession(key, !0, "close-handler"), clearTabState(key), forgetRememberedSftpFile(key));
     }),
     "at-terminal: session close"
   ), ctx.effect(
@@ -7785,7 +8228,12 @@ function apply(ctx) {
         // whichever registered last.
         ctx.slots.register(
           { name: "sidebar.right.pane.tab", key: ID, locale: NS },
-          wrapWithLocale(withStyles(AtTerminalBody), t, { openSessionTab, openMonitorTab })
+          wrapWithLocale(withStyles(AtTerminalBody), t, {
+            openSessionTab,
+            openMonitorTab,
+            contextMenus: () => optionalService(ctx, "contextMenus"),
+            fileActions
+          })
         )
       )
     ),
@@ -7795,7 +8243,11 @@ function apply(ctx) {
       "sidebar.right.pane.tab",
       () => ctx.slots.register(
         { name: "sidebar.right.pane.tab", key: ID_SESSION, locale: NS },
-        wrapWithLocale(withStyles(AtTerminalSessionBody), t, { openMonitorTab })
+        wrapWithLocale(withStyles(AtTerminalSessionBody), t, {
+          openMonitorTab,
+          contextMenus: () => optionalService(ctx, "contextMenus"),
+          fileActions
+        })
       )
     ),
     "at-terminal: terminal pane body"

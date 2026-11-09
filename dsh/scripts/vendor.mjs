@@ -23,7 +23,7 @@
  * Why that is safe
  * ----------------
  * The npm-published copies are byte-identical to the in-asar copies (checked
- * against DeepSeek Harness Desktop 0.1.7-rc.2), and both libraries tag their
+ * against DeepSeek Harness Desktop 0.2.2-rc.1), and both libraries tag their
  * cross-realm objects with `Symbol.for(...)` (`"schemastery"`,
  * `"ValidationError"`, `"cosmokit.volatile.write"`), so a vendored copy and the
  * Harness's copy agree on identity. The packages are locked to an exact
@@ -56,13 +56,13 @@ const MODULES_DIR = path.join(BUNDLE_DIR, 'node_modules')
 export const VENDORED = Object.freeze([
   Object.freeze({
     name: '@deepseek-ai/schemastery',
-    version: '3.18.5',
-    integrity: 'sha512-Mnobvqf9rHsZYv4g5edj5ddxS1oF1kIdSlz0DunUgnY3LWG5F26MqvH3YOOsSaodCgyzJ16OMN9O99/s5Crtdw=='
+    version: '3.19.0',
+    integrity: 'sha512-bDXoYQa7ghAhmdYD5VPlzKxEzJV/aKkz5l4V5h1u06z8GAPN1ROewSjvR9WiXhpa52E9fng8lpH5QdCRIQgnyQ=='
   }),
   Object.freeze({
     name: '@deepseek-ai/cosmokit',
-    version: '1.8.6',
-    integrity: 'sha512-ZSD/fN52L498LBIOYwjIOlaLv5veY6ZEwI2yzvZUKQtctn0QAPqu8tKdJ+OF5+Tv6NBq1U+wJWH+QI6OGy5EvQ=='
+    version: '1.9.0',
+    integrity: 'sha512-5O1S53mZiJyZYcvxxD0Qv1EY7qFPSxbGyD8CbVK6gw7W9FvcXZj2YIX1ZkOqyQQ3Xt2rFkZDHJv0+V3Zmmp8CA=='
   })
 ])
 

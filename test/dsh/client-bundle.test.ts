@@ -171,6 +171,19 @@ function createReactShim() {
           current = (node.type as (props: Record<string, unknown>) => unknown)(node.props);
           continue;
         }
+        // The shim has no DOM, but the bodies attach refs to their scroll containers and to
+        // the panel root. A tiny node stand-in is enough for the effects that write
+        // `scrollTop` or feed `ResizeObserver`; leaving refs null would make those paths
+        // unreachable in this harness while working in a real panel.
+        const ref = node.props.ref as { current?: unknown } | undefined;
+        if (ref !== undefined && ref !== null && typeof ref === 'object' && ref.current === null) {
+          ref.current = {
+            scrollTop: 0,
+            getBoundingClientRect: () => ({ width: 0, height: 0, left: 0, bottom: 0 }),
+            querySelector: () => null,
+            querySelectorAll: () => []
+          };
+        }
         return node;
       }
       throw new Error('instantiate() exceeded its component depth cap');
@@ -332,6 +345,11 @@ async function connectInThisTab(harness: Harness): Promise<void> {
  */
 function createSessionHarness(options: {
   location?: { protocol: string; host: string; origin: string; href: string };
+  contextMenus?: boolean;
+  fileActions?: boolean;
+  fileActionsResult?: FileActionOutcome;
+  fileActionsFails?: boolean;
+  panelWidth?: number;
 } = {}): Harness {
   const harness = createHarness({ ...options, body: 'session' });
   harness.apply();
@@ -521,10 +539,26 @@ interface Harness {
   clipboard: string[];
   confirms: string[];
   documentListeners: Array<{ type: string }>;
+  /** Providers handed to `ctx.contextMenus.register`, in registration order. */
+  contextMenuRegistrations: Array<{
+    id: string;
+    target: string;
+    order?: number;
+    resolve: (value: Record<string, unknown>, signal?: AbortSignal) => Array<Record<string, unknown>>;
+  }>;
+  /** `ctx.contextMenus.open` calls made by the fake trigger props. */
+  contextMenuOpens: Array<{ target: { kind: string; value: Record<string, unknown> }; point: { x: number; y: number } }>;
+  /** `ctx.fileActions.save` calls, including the source callback the body handed over. */
+  fileActionCalls: Array<{
+    source: { read?: (signal: AbortSignal) => Promise<Blob>; name?: string; mediaType?: string };
+    mode: string;
+  }>;
   setRpcHandler(method: string, handler: (params: Record<string, unknown>) => unknown): void;
   setConfirmAnswer(answer: boolean): void;
   shim: ReturnType<typeof createReactShim>;
 }
+
+type FileActionOutcome = { status: 'cancelled' } | { status: 'requested' } | { status: 'saved'; path: string };
 
 /**
  * Which registered pane body a harness drives. Two tab kinds, two bodies.
@@ -545,6 +579,15 @@ function createHarness(
   options: {
     location?: { protocol: string; host: string; origin: string; href: string };
     body?: BodyPage;
+    /** Mount the optional host context-menu service and its Slot-scope trigger factory. */
+    contextMenus?: boolean;
+    /** Mount the optional file-actions service. */
+    fileActions?: boolean;
+    /** What the file-actions stub returns; a rejected promise when `fileActionsFails`. */
+    fileActionsResult?: FileActionOutcome;
+    fileActionsFails?: boolean;
+    /** Let `ResizeObserver` report this panel width, so the U3 split branch is reachable. */
+    panelWidth?: number;
   } = {}
 ): Harness {
   const shim = createReactShim();
@@ -559,6 +602,29 @@ function createHarness(
   const confirms: string[] = [];
   let confirmAnswer = true;
   const documentListeners: Array<{ type: string }> = [];
+  const contextMenuRegistrations: Harness['contextMenuRegistrations'] = [];
+  const contextMenuOpens: Harness['contextMenuOpens'] = [];
+  const fileActionCalls: Harness['fileActionCalls'] = [];
+  const fileActionsStub = {
+    canSaveAs: false,
+    async save(
+      source: { read?: (signal: AbortSignal) => Promise<Blob>; name?: string; mediaType?: string },
+      mode: string
+    ): Promise<FileActionOutcome> {
+      fileActionCalls.push({ source, mode });
+      if (options.fileActionsFails === true) throw new Error('file actions unavailable');
+      return options.fileActionsResult ?? { status: 'requested' };
+    }
+  };
+  const contextMenusStub = {
+    register(input: Harness['contextMenuRegistrations'][number]) {
+      contextMenuRegistrations.push(input);
+      return () => {};
+    },
+    open(target: { kind: string; value: Record<string, unknown> }, point: { x: number; y: number }) {
+      contextMenuOpens.push({ target, point });
+    }
+  };
 
   const stylesById = new Map<string, { textContent: string; removed: boolean }>();
   const appendedStyles: Array<{ textContent: string; removed: boolean }> = [];
@@ -825,6 +891,25 @@ function createHarness(
     }
   };
   sandbox.self = sandbox;
+  if (options.panelWidth !== undefined) {
+    /**
+     * A `ResizeObserver` that answers once with the configured width.
+     *
+     * The real body measures its own element, so a test that wants the wide split has to make
+     * the measurement exist — falling back to `window.innerWidth` in the product would have
+     * been a guess about the sidebar, not the panel.
+     */
+    (sandbox as Record<string, unknown>).ResizeObserver = class {
+      private readonly callback: (entries: Array<{ contentRect: { width: number } }>) => void;
+      constructor(callback: (entries: Array<{ contentRect: { width: number } }>) => void) {
+        this.callback = callback;
+      }
+      observe(): void {
+        this.callback([{ contentRect: { width: options.panelWidth as number } }]);
+      }
+      disconnect(): void {}
+    };
+  }
 
   const registrations: Array<{ id: string; factory: (require: (id: string) => unknown) => unknown }> = [];
   const context = vm.createContext(sandbox);
@@ -932,6 +1017,18 @@ function createHarness(
     }
   };
 
+  Object.assign(ctxStub, {
+    // `ctx.get` is the non-requiring lookup `optionalService` probes first. Returning the stub
+    // only when the test mounted it keeps every other case on the old fallback path.
+    get(name: string) {
+      if (name === 'contextMenus' && options.contextMenus === true) return contextMenusStub;
+      if (name === 'fileActions' && options.fileActions === true) return fileActionsStub;
+      return undefined;
+    },
+    ...(options.contextMenus === true ? { contextMenus: contextMenusStub } : {}),
+    ...(options.fileActions === true ? { fileActions: fileActionsStub } : {})
+  });
+
   expect(registrations).toHaveLength(1);
 
   // Package-local chunks, served the way `dsh-client-modules` serves them: the file is fetched
@@ -986,6 +1083,37 @@ function createHarness(
     inject: string[];
   };
 
+  /**
+   * The host's `getTriggerProps` contract, small enough to drive: run the caller's handlers
+   * first (as the real one does), then open the captured target on right-click / Shift+F10.
+   */
+  const fakeGetTriggerProps = (
+    target: { kind: string; value: Record<string, unknown> },
+    handlers: Record<string, unknown> = {}
+  ): Record<string, unknown> => ({
+    ...handlers,
+    tabIndex: typeof handlers.tabIndex === 'number' ? handlers.tabIndex : 0,
+    'data-at-terminal-context-menu-target': target.kind,
+    onContextMenu(event: { preventDefault?(): void; stopPropagation?(): void; clientX?: number; clientY?: number }) {
+      (handlers.onContextMenu as ((value: unknown) => void) | undefined)?.(event);
+      if ((event as { defaultPrevented?: boolean }).defaultPrevented === true) return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      contextMenuOpens.push({ target, point: { x: event.clientX ?? 0, y: event.clientY ?? 0 } });
+    },
+    onKeyDown(event: { key?: string; shiftKey?: boolean; preventDefault?(): void; defaultPrevented?: boolean; repeat?: boolean }) {
+      (handlers.onKeyDown as ((value: unknown) => void) | undefined)?.(event);
+      if (event.defaultPrevented === true || event.repeat === true) return;
+      if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey === true)) return;
+      event.preventDefault?.();
+      contextMenuOpens.push({ target, point: { x: 0, y: 0 } });
+    }
+  });
+  const menuRenderProps = (): Record<string, unknown> =>
+    options.contextMenus === true
+      ? { useContextMenu: () => ({ getTriggerProps: fakeGetTriggerProps }) }
+      : {};
+
   const harness: Harness = {
     tree: null,
     registrations,
@@ -1018,6 +1146,9 @@ function createHarness(
     clipboard,
     confirms,
     documentListeners,
+    contextMenuRegistrations,
+    contextMenuOpens,
+    fileActionCalls,
     shim,
     setRpcHandler(method, handler) {
       rpcHandlers.set(method, handler);
@@ -1117,7 +1248,10 @@ function createHarness(
         throw new Error(`apply() has not run, or no ${page} pane body was registered`);
       }
       harness.tree = shim.instantiate(
-        body.component(tabRecord === null ? {} : { useTabInfo: () => ({ tab: tabRecord }) })
+        body.component({
+          ...(tabRecord === null ? {} : { useTabInfo: () => ({ tab: tabRecord }) }),
+          ...menuRenderProps()
+        })
       );
       return harness.tree;
     },
@@ -1846,6 +1980,53 @@ describe('client bundle — assets page', () => {
     expect(findAllByClass(harness.tree, 'att-dialog')).toHaveLength(0);
   });
 
+  it('registers the server menu with the host and opens it from the row and its ⋯ button', async () => {
+    const harness = createHarness({ contextMenus: true });
+    harness.apply();
+    primeHappyPath(harness);
+    await harness.settle();
+
+    const provider = harness.contextMenuRegistrations.find((entry) => entry.target === 'at-terminal.server');
+    expect(provider, 'one provider for the at-terminal.server family').toBeDefined();
+
+    const row = findByAttribute(harness.tree, 'data-at-terminal-row');
+    expect(row?.props['data-at-terminal-context-menu-target']).toBe('at-terminal.server');
+    (row?.props.onContextMenu as (event: unknown) => void)({
+      preventDefault() {},
+      stopPropagation() {},
+      clientX: 40,
+      clientY: 60
+    });
+    expect(harness.contextMenuOpens, 'right-click asks the host to open the captured target').toHaveLength(1);
+    const opened = harness.contextMenuOpens[0];
+    expect(opened.point).toEqual({ x: 40, y: 60 });
+    // Plain JSON identifiers only: the tab key plus the server id, never the mutable record.
+    expect(opened.target).toEqual({
+      kind: 'at-terminal.server',
+      value: { tabKey: 'anonymous', serverId: 'srv-prod-1' }
+    });
+
+    const actions = provider?.resolve(opened.target.value) ?? [];
+    expect(actions.map((action) => action.id)).toEqual(['connect', 'monitor', 'edit', 'copy', 'remove']);
+    expect(actions.every((action) => typeof action.label === 'string' && action.label !== '')).toBe(true);
+
+    // The visible ⋯ button is the same menu, opened at the button's rect for a keyboard click.
+    (findByAction(harness.tree, 'row-menu')?.props.onClick as (event: unknown) => void)({
+      stopPropagation() {},
+      clientX: 0,
+      clientY: 0,
+      currentTarget: { getBoundingClientRect: () => ({ left: 30, bottom: 50 }) }
+    });
+    expect(harness.contextMenuOpens).toHaveLength(2);
+    expect(harness.contextMenuOpens[1].point).toEqual({ x: 30, y: 50 });
+
+    // And the action really runs the 0.3.0 behaviour: 删除 opens the same confirm dialog.
+    const remove = actions.find((action) => action.id === 'remove');
+    (remove?.run as () => void)();
+    await harness.settle();
+    expect(collectText(harness.tree)).toContain('删除服务器');
+  });
+
   it('copies the row address through the context menu', async () => {
     const harness = createHarness();
     harness.apply();
@@ -2007,6 +2188,58 @@ describe('client bundle — import/export dialogs', () => {
     expect(harness.anchors).toHaveLength(1);
     expect(harness.anchors[0].download).toBe('assets.at-terminal-assets');
     expect(collectText(harness.tree)).toContain('已导出');
+  });
+
+  it('routes an asset export through fileActions, showing a path only for a native save', async () => {
+    const saved = createHarness({
+      fileActions: true,
+      fileActionsResult: { status: 'saved', path: '/Users/me/Desktop/assets.at-terminal-assets' }
+    });
+    saved.apply();
+    primeHappyPath(saved);
+    saved.setRpcHandler('assets.export', () => ({
+      filename: 'assets.at-terminal-assets',
+      envelope: '{"v":1}',
+      omissions: 0
+    }));
+    await saved.settle();
+    (findByAction(saved.tree, 'export')?.props.onClick as () => void)();
+    saved.render();
+    (findByAction(saved.tree, 'export-password')?.props.onChange as (event: unknown) => void)({
+      target: { value: 'pw' }
+    });
+    saved.render();
+    (findByAction(saved.tree, 'export-submit')?.props.onClick as () => void)();
+    await saved.settle();
+
+    expect(saved.fileActionCalls).toHaveLength(1);
+    expect(saved.fileActionCalls[0].mode).toBe('download');
+    expect(saved.fileActionCalls[0].source.name).toBe('assets.at-terminal-assets');
+    expect(saved.fileActionCalls[0].source.mediaType).toBe('application/json');
+    expect(saved.anchors).toHaveLength(0);
+    expect(collectText(saved.tree)).toContain('/Users/me/Desktop/assets.at-terminal-assets');
+
+    const requested = createHarness({ fileActions: true, fileActionsResult: { status: 'requested' } });
+    requested.apply();
+    primeHappyPath(requested);
+    requested.setRpcHandler('assets.export', () => ({
+      filename: 'assets.at-terminal-assets',
+      envelope: '{"v":1}',
+      omissions: 0
+    }));
+    await requested.settle();
+    (findByAction(requested.tree, 'export')?.props.onClick as () => void)();
+    requested.render();
+    (findByAction(requested.tree, 'export-password')?.props.onChange as (event: unknown) => void)({
+      target: { value: 'pw' }
+    });
+    requested.render();
+    (findByAction(requested.tree, 'export-submit')?.props.onClick as () => void)();
+    await requested.settle();
+    const requestedText = collectText(requested.tree);
+    expect(requestedText).toContain('assets.at-terminal-assets');
+    expect(requestedText).not.toContain('/Users/');
+    expect(requested.anchors).toHaveLength(0);
   });
 
   it('sends the picked file bytes to the Host for import and renders the counters', async () => {
@@ -2786,7 +3019,6 @@ describe('client bundle — the file tree (DSH-23)', () => {
     await harness.settle();
     openFilesPage(harness);
     await harness.settle();
-
     expect(sftpNode(harness.tree, 'active')).toBeNull();
     // `..` is the first row, then the root's entries, in the Host's order.
     const rowNames = findAllByClass(harness.tree, 'att-tree-name').map((node) => collectText(node.props.children));
@@ -2997,8 +3229,10 @@ describe('client bundle — the file tree (DSH-23)', () => {
   /* --------------------------- the file operations --------------------------- */
 
   /** A live tree holding one file and one directory, which every case below starts from. */
-  async function liveTree(): Promise<Harness> {
-    const harness = await createSessionHarness();
+  async function liveTree(
+    options: Parameters<typeof createSessionHarness>[0] = {}
+  ): Promise<Harness> {
+    const harness = await createSessionHarness(options);
     harness.setRpcHandler('sftp.list', () => ({
       kind: 'active',
       rootPath: '/home/root',
@@ -3084,6 +3318,58 @@ describe('client bundle — the file tree (DSH-23)', () => {
     // indistinguishable from a silently changed one.
     expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-file-eol')?.props['data-at-terminal-sftp-file-eol'])
       .toBe('crlf');
+  });
+
+  it('keeps the tree beside the file at 560px and over, without copying tree state', async () => {
+    const harness = await liveTree({ panelWidth: 700 });
+    harness.setRpcHandler('sftp.readFile', () => ({
+      path: '/home/root/app.js',
+      text: 'const a = 1;\n',
+      eol: 'lf',
+      size: 13,
+      modifiedAt: 5,
+      truncated: false
+    }));
+
+    (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    harness.render();
+    (findByAction(harness.tree, 'sftp-file-view')?.props.onClick as () => void)();
+    await harness.settle();
+
+    const root = findByAttribute(harness.tree, 'data-at-terminal-sftp-split');
+    expect(root?.props['data-at-terminal-sftp-split']).toBe('true');
+    // The tree is still there — the same compact `SftpTree`, with the file's row selected.
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-compact')).not.toBeNull();
+    expect(findAllByClass(harness.tree, 'sftp-split-tree')).toHaveLength(1);
+    expect(rowFor(harness.tree, '/home/root/app.js')).not.toBeNull();
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-viewer')).not.toBeNull();
+    // Expansion state belongs to the body, not to the pane: the tree column reports the same
+    // row identity the 文件 page uses (`data-at-terminal-sftp-row`), so a toggle keeps working.
+    expect(
+      findByAttribute(harness.tree, 'data-at-terminal-sftp-row')?.props['data-at-terminal-sftp-row']
+    ).toBe('parent');
+  });
+
+  it('keeps the single-column layout below 560px', async () => {
+    const harness = await liveTree({ panelWidth: 480 });
+    harness.setRpcHandler('sftp.readFile', () => ({
+      path: '/home/root/app.js',
+      text: 'x',
+      eol: 'lf',
+      size: 1,
+      modifiedAt: 1,
+      truncated: false
+    }));
+
+    (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    harness.render();
+    (findByAction(harness.tree, 'sftp-file-view')?.props.onClick as () => void)();
+    await harness.settle();
+
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-split')?.props['data-at-terminal-sftp-split']).toBe('false');
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-compact')).toBeNull();
+    expect(findAllByClass(harness.tree, 'sftp-split-tree')).toHaveLength(0);
+    expect(findByAttribute(harness.tree, 'data-at-terminal-sftp-viewer')).not.toBeNull();
   });
 
   it('edits in place and saves with the stat the read reported, so a conflict is detectable', async () => {
@@ -3198,6 +3484,90 @@ describe('client bundle — the file tree (DSH-23)', () => {
     // The bytes reach the anchor's download attribute — the name the **Host** chose, not one
     // reassembled here from the path (a remote name the local filesystem could not hold is
     // sanitised on the Host, so a second opinion here would disagree with it).
+    expect(harness.anchors[0].download).toBe('app.js');
+  });
+
+  it('saves a download through fileActions and shows the native path only for `saved`', async () => {
+    const harness = await liveTree({
+      fileActions: true,
+      fileActionsResult: { status: 'saved', path: '/Users/me/Downloads/app.js' }
+    });
+    harness.setRpcHandler('sftp.download', () => ({
+      path: '/home/root/app.js',
+      name: 'app.js',
+      size: 5,
+      modifiedAt: 1,
+      base64: 'aGVsbG8='
+    }));
+
+    (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    harness.render();
+    (findByAction(harness.tree, 'sftp-download')?.props.onClick as () => void)();
+    await harness.settle();
+
+    expect(harness.fileActionCalls).toHaveLength(1);
+    expect(harness.fileActionCalls[0].mode).toBe('download');
+    expect(harness.fileActionCalls[0].source.name).toBe('app.js');
+    expect(harness.fileActionCalls[0].source.mediaType).toBe('application/octet-stream');
+    // The read callback is the file's bytes, not a URL: the service never fetches for us.
+    const blob = await harness.fileActionCalls[0].source.read?.(new AbortController().signal);
+    expect((blob as unknown as { parts?: unknown[] })?.parts?.length).toBeGreaterThan(0);
+    // `saved` is the one status that knows a destination, so it is the one that may show it.
+    expect(collectText(harness.tree)).toContain('/Users/me/Downloads/app.js');
+    expect(harness.anchors, 'no browser anchor when the native save succeeded').toHaveLength(0);
+  });
+
+  it('keeps a browser `requested` download pathless, and a cancelled one silent', async () => {
+    const requested = await liveTree({ fileActions: true, fileActionsResult: { status: 'requested' } });
+    requested.setRpcHandler('sftp.download', () => ({
+      path: '/home/root/app.js',
+      name: 'app.js',
+      size: 5,
+      modifiedAt: 1,
+      base64: 'aGVsbG8='
+    }));
+    (rowFor(requested.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    requested.render();
+    (findByAction(requested.tree, 'sftp-download')?.props.onClick as () => void)();
+    await requested.settle();
+    const requestedText = collectText(requested.tree);
+    expect(requestedText).toContain('已下载');
+    expect(requestedText).not.toContain('/Users/');
+    expect(requested.anchors).toHaveLength(0);
+
+    const cancelled = await liveTree({ fileActions: true, fileActionsResult: { status: 'cancelled' } });
+    cancelled.setRpcHandler('sftp.download', () => ({
+      path: '/home/root/app.js',
+      name: 'app.js',
+      size: 5,
+      modifiedAt: 1,
+      base64: 'aGVsbG8='
+    }));
+    (rowFor(cancelled.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    cancelled.render();
+    (findByAction(cancelled.tree, 'sftp-download')?.props.onClick as () => void)();
+    await cancelled.settle();
+    // A native cancel is a decision, not a failure: no notice, no fallback download.
+    expect(collectText(cancelled.tree)).not.toContain('已下载');
+    expect(cancelled.anchors).toHaveLength(0);
+  });
+
+  it('falls back to saveBytes when the file-actions service rejects', async () => {
+    const harness = await liveTree({ fileActions: true, fileActionsFails: true });
+    harness.setRpcHandler('sftp.download', () => ({
+      path: '/home/root/app.js',
+      name: 'app.js',
+      size: 5,
+      modifiedAt: 1,
+      base64: 'aGVsbG8='
+    }));
+    (rowFor(harness.tree, '/home/root/app.js')?.props.onClick as () => void)();
+    harness.render();
+    (findByAction(harness.tree, 'sftp-download')?.props.onClick as () => void)();
+    await harness.settle();
+
+    expect(harness.fileActionCalls).toHaveLength(1);
+    expect(harness.anchors).toHaveLength(1);
     expect(harness.anchors[0].download).toBe('app.js');
   });
 
@@ -3421,6 +3791,48 @@ describe('client bundle — the file tree (DSH-23)', () => {
     }
 
     (findByAction(harness.tree, 'sftp-menu-copy-path')?.props.onClick as () => void)();
+    harness.render();
+    expect(harness.clipboard).toEqual(['/home/root/app.js']);
+  });
+
+  it('registers the SFTP menu with the host and dispatches a plain-data entry target', async () => {
+    const harness = await liveTree({ contextMenus: true });
+    const provider = harness.contextMenuRegistrations.find(
+      (entry) => entry.target === 'at-terminal.sftp-entry'
+    );
+    expect(provider, 'one provider for the at-terminal.sftp-entry family').toBeDefined();
+    expect(
+      harness.contextMenuRegistrations.some((entry) => entry.target === 'at-terminal.sftp-container')
+    ).toBe(true);
+
+    const row = rowFor(harness.tree, '/home/root/app.js');
+    expect(row?.props['data-at-terminal-context-menu-target']).toBe('at-terminal.sftp-entry');
+    (row?.props.onContextMenu as (event: unknown) => void)({
+      preventDefault() {},
+      stopPropagation() {},
+      clientX: 12,
+      clientY: 34
+    });
+    const opened = harness.contextMenuOpens[harness.contextMenuOpens.length - 1];
+    expect(typeof opened.target.value.tabKey).toBe('string');
+    expect(opened.target.value).toMatchObject({
+      rowKind: 'entry',
+      entryType: 'file',
+      path: '/home/root/app.js',
+      name: 'app.js',
+      targetDir: '/home/root'
+    });
+
+    const actions = provider?.resolve(opened.target.value) ?? [];
+    expect(actions.map((action) => action.id)).toEqual([
+      'view',
+      'edit',
+      'download',
+      'new-file',
+      'copy-path',
+      'delete'
+    ]);
+    (actions.find((action) => action.id === 'copy-path')?.run as () => void)();
     harness.render();
     expect(harness.clipboard).toEqual(['/home/root/app.js']);
   });

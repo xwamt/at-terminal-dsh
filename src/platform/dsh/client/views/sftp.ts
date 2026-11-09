@@ -55,12 +55,19 @@ import {
   type El,
   type PanelMode
 } from './shared';
+import type { GetTriggerProps, MenuTarget } from '../menuFocus';
 
 export interface SftpViewProps {
   t: Translate;
   visible: boolean;
   mode: PanelMode;
   onMode(mode: PanelMode): void;
+  /**
+   * Compact tree, used as the left column of the wide file pane (U3). It renders only the
+   * status lines and the tree — no page nav, upload toolbar, path bar or selection bar —
+   * because the file pane beside it already owns the header and the toolbar.
+   */
+  compact?: boolean;
   state: AsyncState<unknown>;
   /**
    * A failure from an action rather than the read — `sftp.goUp` against a terminal that
@@ -113,6 +120,7 @@ export interface SftpViewProps {
    * that appears above the tree and goes away on the next read.
    */
   notice: string | null;
+  /** Old local menu (host without `contextMenus`). */
   onRowContextMenu?(
     event: { preventDefault(): void; stopPropagation?(): void; clientX: number; clientY: number },
     row: SftpRow
@@ -120,6 +128,15 @@ export interface SftpViewProps {
   onContainerContextMenu?(
     event: { preventDefault(): void; clientX: number; clientY: number }
   ): void;
+  /**
+   * Host menu route. The row and container targets carry only `tabKey`/`terminalId`/path
+   * metadata; the action callback re-reads the live listing before acting. When absent the
+   * old local menu above is used unchanged.
+   */
+  getTriggerProps?: GetTriggerProps;
+  menuTarget?(row: SftpRow): MenuTarget;
+  containerMenuTarget?(): MenuTarget;
+  onOpenMenu?(target: MenuTarget, point: { x: number; y: number }): void;
 }
 
 /**
@@ -327,6 +344,37 @@ function rowGlyph(row: SftpRow): El | null {
 }
 
 /**
+ * The row's interaction props, from one of two owners.
+ *
+ * With the host menu the trigger factory owns right-click, Shift+F10 and the ContextMenu key,
+ * and its own `tabIndex` default would turn every row into a Tab stop — so the roving value is
+ * passed through explicitly. Without it the old local handler is attached verbatim, which is
+ * the 0.2.1 behaviour the fallback test suite pins.
+ */
+function rowInteraction(
+  props: SftpViewProps,
+  row: SftpRow,
+  focused: boolean,
+  handlers: Record<string, unknown>
+): Record<string, unknown> {
+  const host = typeof props.getTriggerProps === 'function' && typeof props.menuTarget === 'function';
+  if (!host) {
+    return {
+      ...handlers,
+      onContextMenu: (event: { preventDefault(): void; stopPropagation?(): void; clientX: number; clientY: number }) => {
+        event.preventDefault();
+        event.stopPropagation?.();
+        props.onRowContextMenu?.(event, row);
+      }
+    };
+  }
+  return props.getTriggerProps?.(props.menuTarget?.(row) as MenuTarget, {
+    ...handlers,
+    tabIndex: focused ? 0 : -1
+  }) ?? handlers;
+}
+
+/**
  * One tree row.
  *
  * `focusedKey` is threaded in rather than read from a module global here, so the
@@ -349,14 +397,11 @@ function renderRow(t: Translate, row: SftpRow, props: SftpViewProps, focusedKey:
         style: pad,
         'data-at-terminal-action': 'sftp-up',
         title: t('sftp.goUp'),
-        onClick: () => props.onGoUp(),
-        onContextMenu: (event: { preventDefault(): void; stopPropagation?(): void; clientX: number; clientY: number }) => {
-          event.preventDefault();
-          event.stopPropagation?.();
-          props.onRowContextMenu?.(event, row);
-        },
-        onKeyDown: (event: { key: string; currentTarget: Element | null; preventDefault(): void }) =>
-          onRowKeyDown(event, row, props)
+        ...rowInteraction(props, row, focused, {
+          onClick: () => props.onGoUp(),
+          onKeyDown: (event: { key: string; currentTarget: Element | null; preventDefault(): void }) =>
+            onRowKeyDown(event, row, props)
+        })
       },
       h('span', { className: 'att-tree-glyph', 'aria-hidden': 'true' }, '↑'),
       h('span', { className: 'att-tree-name' }, '..'),
@@ -466,17 +511,14 @@ function renderRow(t: Translate, row: SftpRow, props: SftpViewProps, focusedKey:
       'data-at-terminal-sftp': 'entry',
       'data-at-terminal-entry': entry.type,
       title: entry.path,
-      onClick: selectable ? () => props.onSelect(entry.path) : undefined,
-      // Double-click is the gesture the 资产 list already taught this panel for "open the
-      // thing this row names", so it opens the viewer rather than inventing a second one.
-      onDoubleClick: selectable ? () => props.onOpen(entry.path, 'view') : undefined,
-      onContextMenu: (event: { preventDefault(): void; stopPropagation?(): void; clientX: number; clientY: number }) => {
-        event.preventDefault();
-        event.stopPropagation?.();
-        props.onRowContextMenu?.(event, row);
-      },
-      onKeyDown: (event: { key: string; currentTarget: Element | null; preventDefault(): void }) =>
-        onRowKeyDown(event, row, props)
+      ...rowInteraction(props, row, focused, {
+        onClick: selectable ? () => props.onSelect(entry.path) : undefined,
+        // Double-click is the gesture the 资产 list already taught this panel for "open the
+        // thing this row names", so it opens the viewer rather than inventing a second one.
+        onDoubleClick: selectable ? () => props.onOpen(entry.path, 'view') : undefined,
+        onKeyDown: (event: { key: string; currentTarget: Element | null; preventDefault(): void }) =>
+          onRowKeyDown(event, row, props)
+      })
     },
     renderDisclosure(t, row, props.onToggle),
     h(
@@ -891,7 +933,15 @@ function renderPath(t: Translate, props: SftpViewProps): El {
   );
 }
 
-export function renderSftpView(props: SftpViewProps): El {
+/**
+ * The tree surface itself — status lines plus the tree — with no page chrome.
+ *
+ * Split out so U3's left column reuses the *same* rows, focus memory, scroll handler and
+ * context menu as the full 文件 page. The only shared-state assumption is the caller's: both
+ * placements must hand it the body's own `scrollRef`, which they do; rendering this twice at
+ * once would fight over one scroll node, so the body renders exactly one of them per page.
+ */
+export function SftpTree(props: SftpViewProps): El {
   const { t } = props;
   // Rendering stays free of side effects, so the caret is not reset here. It does not
   // need to be: a hidden page is out of the tab order entirely, and `sftpTreeFocusKey`
@@ -899,6 +949,67 @@ export function renderSftpView(props: SftpViewProps): El {
   // does. Coming back to the same directory therefore *restores* the row the user left,
   // which is what a tree is supposed to do.
   const focusedKey = sftpTreeFocusKey(props.rows, focusedRowKey);
+  const hostContainer =
+    typeof props.getTriggerProps === 'function' && typeof props.containerMenuTarget === 'function'
+      ? props.getTriggerProps(props.containerMenuTarget(), { tabIndex: -1 })
+      : {
+          onContextMenu: (event: { preventDefault(): void; clientX: number; clientY: number }) => {
+            event.preventDefault();
+            props.onContainerContextMenu?.(event);
+          }
+        };
+  return h(
+    'div',
+    {
+      className: 'att-content',
+      ref: props.scrollRef,
+      onScroll: (event: { currentTarget?: { scrollTop?: unknown } }) =>
+        props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0)),
+      ...hostContainer
+    },
+    renderStatus(t, props),
+    props.failure === null
+      ? null
+      : h('div', { key: 'action-failed' }, renderFailure(t, props.failure)),
+    h(
+      'div',
+      {
+        role: 'tree',
+        // The listing is the page's whole content, so the page's own title names it;
+        // `sftp.title` is already that string in both locales.
+        'aria-label': t('sftp.title'),
+        // A read in flight is exactly what `aria-busy` is for, and it is the only
+        // thing on this page that changes without the user's hands on the keyboard.
+        'aria-busy': props.state.kind === 'pending',
+        'data-at-terminal-sftp-tree': 'true'
+      },
+      renderTree(t, props, focusedKey)
+    )
+  );
+}
+
+export function renderSftpView(props: SftpViewProps): El {
+  const { t } = props;
+  /*
+   * Compact: the wide file pane's left column. It is the same `SftpTree`, not a copy, so
+   * expansion, focus and scroll are one implementation. The page's nav/toolbar/path bar
+   * belong to the file pane's header in that layout and would be duplicated here.
+   */
+  if (props.compact === true) {
+    return h(
+      'div',
+      {
+        className: 'att-page att-sftp-page',
+        key: 'sftp',
+        hidden: !props.visible,
+        role: 'region',
+        'aria-label': t('sftp.title'),
+        'data-at-terminal-sftp-compact': 'true',
+        style: { display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }
+      },
+      SftpTree(props)
+    );
+  }
   return h(
     'div',
     {
@@ -913,37 +1024,7 @@ export function renderSftpView(props: SftpViewProps): El {
     },
     renderToolbar(t, props),
     renderFileActions(t, props),
-    h(
-      'div',
-      {
-        className: 'att-content',
-        ref: props.scrollRef,
-        onScroll: (event: { currentTarget?: { scrollTop?: unknown } }) =>
-          props.onScrollTop?.(Number(event?.currentTarget?.scrollTop ?? 0)),
-        onContextMenu: (event: { preventDefault(): void; clientX: number; clientY: number }) => {
-          event.preventDefault();
-          props.onContainerContextMenu?.(event);
-        }
-      },
-      renderStatus(t, props),
-      props.failure === null
-        ? null
-        : h('div', { key: 'action-failed' }, renderFailure(t, props.failure)),
-      h(
-        'div',
-        {
-          role: 'tree',
-          // The listing is the page's whole content, so the page's own title names it;
-          // `sftp.title` is already that string in both locales.
-          'aria-label': t('sftp.title'),
-          // A read in flight is exactly what `aria-busy` is for, and it is the only
-          // thing on this page that changes without the user's hands on the keyboard.
-          'aria-busy': props.state.kind === 'pending',
-          'data-at-terminal-sftp-tree': 'true'
-        },
-        renderTree(t, props, focusedKey)
-      )
-    ),
+    SftpTree(props),
     renderPath(t, props)
   );
 }

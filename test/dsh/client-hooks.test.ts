@@ -185,3 +185,47 @@ describe('client half — hook discipline', () => {
     expect(sessionBody).toMatch(/postBodyRendered\(key,\s*session\.page\);\s*},\s*\[key,\s*session\.page\]\);/);
   });
 });
+
+describe('optional host UI services stay optional', () => {
+  it('never imports a @deepseek-ai client-ui implementation', () => {
+    // The browser module table is frozen: only `dsh.client.inject` + ctx services are
+    // available, and a direct import would fail at load (or, worse, silently duplicate the
+    // host's component). This covers every client source, including the new menu/file code.
+    const offenders: string[] = [];
+    for (const file of clientSources()) {
+      const code = readFileSync(file, 'utf8');
+      // Only real import statements count: the comments in body.ts and icons/ name these
+      // packages precisely to explain why they are *not* imported.
+      const match = /(?:^|\n)\s*import[^\n]*@deepseek-ai\/dsh-client-ui-[A-Za-z0-9-]+/.exec(code);
+      if (match !== null) offenders.push(`${file.slice(CLIENT_ROOT.length + 1)}: ${match[0].trim()}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('probes contextMenus/fileActions with ctx.get and keeps the old fallback', () => {
+    const main = readFileSync(join(CLIENT_ROOT, 'main.ts'), 'utf8');
+    // Feature detection, not a required inject entry: a 0.2.1 host has neither service and
+    // must keep the local menus and the saveBytes download.
+    expect(main).toContain("optionalService<ContextMenuService>(ctx, 'contextMenus')");
+    expect(main).toContain("optionalService(ctx, 'fileActions')");
+    expect(main).toContain("typeof ctx.inject === 'function'");
+    expect(main).toMatch(/export const inject = \['slots', 'sidebarRightTabs', 'locale', 'shortcuts', 'sidebarRight'\]/);
+    // The package manifest still asks the loader for the optional plugins, so a 0.2.2 host
+    // mounts them; the service probes above decide whether this build uses them.
+    const pkg = JSON.parse(readFileSync(join(CLIENT_ROOT, '..', '..', '..', '..', 'dsh', 'package.json'), 'utf8')) as {
+      dsh?: { client?: { inject?: string[] } };
+    };
+    expect(pkg.dsh?.client?.inject).toContain('@deepseek-ai/dsh-client-ui-context-menu');
+    expect(pkg.dsh?.client?.inject).toContain('@deepseek-ai/dsh-client-ui-file-actions');
+  });
+
+  it('keeps both bodies on the local menu when the host service is absent', () => {
+    const body = readFileSync(join(CLIENT_ROOT, 'body.ts'), 'utf8');
+    const sessionBody = readFileSync(join(CLIENT_ROOT, 'body-session.ts'), 'utf8');
+    // The fallback render is guarded, not deleted: menu !== null && !hostMenu.
+    expect(body).toContain('if (menu !== null && !hostMenu)');
+    expect(sessionBody).toContain('if (sftpMenu !== null && !hostMenu)');
+    expect(body).toContain('useMenuFocus(menu !== null');
+    expect(sessionBody).toContain('useMenuFocus(sftpMenu !== null');
+  });
+});

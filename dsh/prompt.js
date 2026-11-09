@@ -38,20 +38,107 @@ const TRUST_UNREAD = 'not read yet (call at_terminal_list_ssh_servers)';
 let cachedTrust = TRUST_UNREAD;
 
 /**
- * The section text.
+ * Tools whose usefulness depends on a configured SSH server.
+ *
+ * This is the single source of truth for the prompt's "is there anything to explain" test
+ * and for the host half's `{ when }` conditional registration. Keep the names in sync with
+ * `dsh/tools.js`; `test/dsh/index-wiring.test.ts` measures the visible subset against the
+ * actual definitions, so a name that drifts out of the list shows up as a size regression.
+ */
+export const SERVER_TOOL_NAMES = Object.freeze([
+  'at_terminal_run_remote_command',
+  'at_terminal_sftp_list_directory',
+  'at_terminal_sftp_stat_path',
+  'at_terminal_sftp_read_file',
+  'at_terminal_sftp_edit_file',
+  'at_terminal_sftp_write_file',
+  'at_terminal_sftp_create_file',
+  'at_terminal_sftp_create_directory',
+  'at_terminal_sftp_rename',
+  'at_terminal_sftp_delete',
+  'at_terminal_open_monitor',
+  'at_terminal_get_hardware_metrics'
+])
+
+/**
+ * The section text, written once with the two job-control names as parameters.
  *
  * Written as data, not as prose for humans: the model reads it once per request, so it has
  * to carry the decisions the tool names cannot. ASCII only — a byte budget is a budget.
+ * The standard preset uses the host's `job_output` / `job_kill`; a composition without
+ * `dsh-tool-jobs` sees the plugin's `at_terminal_job_*` fallback instead, and the section
+ * must name whichever pair is actually in the tool set.
+ *
+ * @param {{ output: string, kill: string }} jobs
  */
-export const PROMPT_SECTION_TEXT = `AT Terminal acts on configured SSH servers through three tool families: commands (at_terminal_run_remote_command), SFTP (at_terminal_sftp_*), and monitoring (at_terminal_open_monitor, at_terminal_get_hardware_metrics). For files prefer SFTP: it is authorized per path and returns structured results. The order that works is sftp_stat_path, then sftp_read_file, then sftp_write_file with overwrite. A file that is already on this machine goes up through sftp_write_file localPath: the Host reads it, so a binary or a large file is never inlined as content.
+function buildSectionText({ output, kill }) {
+  return `AT Terminal acts on configured SSH servers through three tool families: commands (at_terminal_run_remote_command), SFTP (at_terminal_sftp_*), and monitoring (at_terminal_open_monitor, at_terminal_get_hardware_metrics). For files prefer SFTP: it is authorized per path and returns structured results. The order that works is sftp_stat_path, then sftp_read_file, then sftp_edit_file for a literal replacement or sftp_write_file with overwrite for a whole-file rewrite. Pass the size/modifiedAt you just read as expectedSize/expectedModifiedAt: a file that changed since the read is refused, so re-read it and retry instead of overwriting blindly. A file that is already on this machine goes up through sftp_write_file localPath: the Host reads it, so a binary or a large file is never inlined as content.
 
 Trust decides who answers: "none" asks before every command, "policy" asks unless the command policy proves the command read-only, "full" runs ordinary commands without asking. SFTP writes, renames and deletes ask at every trust level except "full", and a sensitive path asks even then. A localPath upload asks even on full trust.
 
-A result larger than the inline budget is written to a file and its spillPath is returned: read that path with offset/limit instead of re-running the command. Truncated or spilled is not the same as failed. A background command returns a job id: collect it with at_terminal_job_output, end it with at_terminal_job_kill, and a killed job means the remote process is gone.
+A result larger than the inline budget is written to a file and its spillPath is returned: read that path with offset/limit instead of re-running the command. Truncated or spilled is not the same as failed. A background command returns a job id: collect it with ${output}, end it with ${kill}, and a job reported killed means the remote process group is gone.
 
 When several servers are connected, name serverId on every write or execute call (sftp_write_file, sftp_create_file, sftp_create_directory, sftp_rename, sftp_delete, run_remote_command). Those calls refuse to guess rather than act on the wrong host. Read calls and open_monitor may omit it: they use the active terminal and report resolvedBy as "implicit" with the candidate list, or "single-connected" when only one server was connected.
 
-Servers and trust right now: {{${TRUST_VARIABLE}}}`;
+Servers and trust right now: {{${TRUST_VARIABLE}}}`
+}
+
+/** The standard-preset text: the host owns `job_output` / `job_kill`. */
+export const PROMPT_SECTION_TEXT = buildSectionText({ output: 'job_output', kill: 'job_kill' })
+
+/** The fallback text for a composition where this bundle supplies `at_terminal_job_*`. */
+export const PROMPT_SECTION_TEXT_FALLBACK = buildSectionText({
+  output: 'at_terminal_job_output',
+  kill: 'at_terminal_job_kill'
+})
+
+/**
+ * The tool names visible to the step being assembled, or `undefined` when the host did not
+ * pass an admission set (registration-time inspection, older host). `undefined` means "do
+ * not hide anything": the section is guidance, and losing it is worse than an unused line.
+ *
+ * @param {{ view?: (scope: unknown) => Map<string, unknown> } | Iterable<string> | undefined} toolSet
+ * @param {unknown} [scope]
+ * @returns {string[] | undefined}
+ */
+function visibleToolNames(toolSet, scope) {
+  if (toolSet === undefined || toolSet === null) return undefined
+  try {
+    const view = typeof toolSet.view === 'function' ? toolSet.view(scope) : toolSet
+    if (view === undefined || view === null) return undefined
+    if (typeof view.keys === 'function') return [...view.keys()]
+    if (Array.isArray(view)) return view
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether the step can see any tool that acts on a server.
+ *
+ * The four resident tools (`ping`, `list_ssh_servers`, `get_terminal_context`,
+ * `get_agent_execution_status`) are deliberately not enough: with no server configured the
+ * section would describe capabilities the model cannot use. This is what makes the section
+ * empty in the no-server profile.
+ *
+ * @param {unknown} toolSet
+ * @param {unknown} [scope]
+ */
+export function hasVisibleAtTerminalTool(toolSet, scope) {
+  const names = visibleToolNames(toolSet, scope)
+  if (names === undefined) return true
+  return SERVER_TOOL_NAMES.some((name) => names.includes(name))
+}
+
+/** The job pair visible to this step; the host pair is the default because it is the standard preset. */
+function visibleJobToolNames(toolSet, scope) {
+  const names = visibleToolNames(toolSet, scope)
+  if (names !== undefined && names.includes('at_terminal_job_output')) {
+    return { output: 'at_terminal_job_output', kill: 'at_terminal_job_kill' }
+  }
+  return { output: 'job_output', kill: 'job_kill' }
+}
 
 /** One line naming each server and its trust, bounded so a big inventory stays one line. */
 function describe(servers) {
@@ -118,6 +205,11 @@ export function sectionStatusText() {
  * literal here would be a copy that drifts. `section()` itself rejects a non-finite order,
  * so the check here only exists to fail with a message that names the cause.
  *
+ * The text is a function, not a string: the host resolves it per model step against the
+ * step's admitted `toolSet`. When no server-facing tool is visible the section returns empty
+ * and `dsh-system-prompt` drops it, so a no-server session pays neither schemas nor guidance.
+ * With no `toolSet` (registration-time inspection, older host) it stays visible — fail-open.
+ *
  * @param {{ order: number }} options
  */
 export function promptSection({ order }) {
@@ -126,5 +218,13 @@ export function promptSection({ order }) {
       'at-terminal: the prompt section needs a finite order; ctx.systemPrompt.getSectionOrder("TOOL_BASH") returned nothing'
     );
   }
-  return { name: PROMPT_SECTION_NAME, order, text: PROMPT_SECTION_TEXT };
+  return {
+    name: PROMPT_SECTION_NAME,
+    order,
+    text: ({ scope, toolSet } = {}) => {
+      if (!hasVisibleAtTerminalTool(toolSet, scope)) return ''
+      const jobs = visibleJobToolNames(toolSet, scope)
+      return jobs.output === 'at_terminal_job_output' ? PROMPT_SECTION_TEXT_FALLBACK : PROMPT_SECTION_TEXT
+    }
+  };
 }

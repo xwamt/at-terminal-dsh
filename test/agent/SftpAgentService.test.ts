@@ -5,6 +5,14 @@ import {
   type AgentSftpSession
 } from '../../src/agent/SftpAgentService';
 import type { ServerConfig } from '../../src/config/schema';
+import {
+  SftpEditMatchError,
+  SftpNotObservedError,
+  SftpPatchRejectedError,
+  SftpPatchSyntaxError,
+  SftpStaleVersionError
+} from '../../src/sftp/SftpErrors';
+import { applyHunks, PatchParseError, parsePatch } from '../../src/sftp/patch';
 import type { SftpEntry } from '../../src/sftp/SftpTypes';
 import type { TransferProgress } from '../../src/sftp/TransferService';
 import { TerminalContextRegistry } from '../../src/terminal/TerminalContext';
@@ -68,6 +76,130 @@ function authorizer() {
     requireWrite: vi.fn(async () => undefined),
     requireDelete: vi.fn(async () => undefined),
     requireUpload: vi.fn(async () => undefined)
+  };
+}
+
+/**
+ * A session over an in-memory file whose stat, read and write stay consistent with each
+ * other. Edit/version tests need that consistency: the subject reads a stat, then the file,
+ * then writes, then stats again — three separate mocks that disagree would pass or fail for
+ * reasons unrelated to the guard.
+ */
+function statefulSession(initial: string | Buffer, modifiedAt = 100) {
+  let bytes = Buffer.isBuffer(initial) ? Buffer.from(initial) : Buffer.from(initial, 'utf8');
+  let mtime = modifiedAt;
+  const session = makeSession({
+    stat: vi.fn(async () => ({ size: bytes.length, modifiedAt: mtime })),
+    readFile: vi.fn(async (_path: string, maxBytes: number) => bytes.subarray(0, maxBytes)),
+    writeFile: vi.fn(async (_path: string, content: Buffer) => {
+      bytes = Buffer.from(content);
+      mtime += 1;
+    })
+  });
+  return {
+    session,
+    get bytes(): Buffer {
+      return bytes;
+    },
+    get text(): string {
+      return bytes.toString('utf8');
+    },
+    setText(text: string): void {
+      bytes = Buffer.from(text, 'utf8');
+    },
+    touch(): void {
+      mtime += 1;
+    }
+  };
+}
+
+/**
+ * An in-memory remote filesystem session for apply-patch tests.
+ *
+ * A patch touches many paths in sequence, and several operations may share a path; the fake
+ * therefore keeps one authoritative `Map` for stat/read/create/write/delete/rename/list, so a
+ * test can assert the final tree instead of counting calls.
+ */
+function patchSession(initial: Record<string, string | Buffer> = {}, base = '/home/deploy') {
+  const files = new Map<string, Buffer>(
+    Object.entries(initial).map(([path, value]) => [
+      path,
+      Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(value, 'utf8')
+    ])
+  );
+  const mtimes = new Map<string, number>(Object.keys(initial).map((path) => [path, 100]));
+  const touch = (path: string): void => {
+    mtimes.set(path, (mtimes.get(path) ?? 100) + 1);
+  };
+  const dirnameOf = (path: string): string => {
+    const normalized = path.replace(/\/+$/, '');
+    const index = normalized.lastIndexOf('/');
+    return index <= 0 ? '/' : normalized.slice(0, index);
+  };
+  const basenameOf = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
+  const statPath = (path: string) => {
+    if (path === base) return { size: 0, modifiedAt: 1, type: 'directory' as const };
+    const file = files.get(path);
+    if (file !== undefined) {
+      return { size: file.length, modifiedAt: mtimes.get(path) ?? 100, type: 'file' as const };
+    }
+    if (Array.from(files.keys()).some((key) => key.startsWith(`${path}/`))) {
+      return { size: 0, modifiedAt: 1, type: 'directory' as const };
+    }
+    throw missingPathError();
+  };
+  const session = makeSession({
+    realpath: vi.fn(async (path = '.') => (path === '.' ? base : path)),
+    stat: vi.fn(async (path: string) => statPath(path)),
+    readFile: vi.fn(async (path: string, maxBytes: number, offset = 0) =>
+      (files.get(path) ?? Buffer.alloc(0)).subarray(offset, offset + maxBytes)
+    ),
+    writeFile: vi.fn(async (path: string, content: Buffer) => {
+      files.set(path, Buffer.from(content));
+      touch(path);
+    }),
+    createFile: vi.fn(async (path: string) => {
+      if (files.has(path)) throw new Error(`already exists: ${path}`);
+      files.set(path, Buffer.alloc(0));
+      mtimes.set(path, 100);
+      touch(path);
+    }),
+    deleteFile: vi.fn(async (path: string) => {
+      if (!files.delete(path)) throw new Error(`not found: ${path}`);
+      mtimes.delete(path);
+    }),
+    rename: vi.fn(async (oldPath: string, newPath: string) => {
+      const content = files.get(oldPath);
+      if (content === undefined) throw new Error(`not found: ${oldPath}`);
+      if (files.has(newPath)) throw new Error(`already exists: ${newPath}`);
+      files.set(newPath, content);
+      files.delete(oldPath);
+      const oldMtime = mtimes.get(oldPath) ?? 100;
+      mtimes.delete(oldPath);
+      mtimes.set(newPath, oldMtime + 1);
+    }),
+    listDirectory: vi.fn(async (dir: string) =>
+      Array.from(files.keys())
+        .filter((path) => dirnameOf(path) === dir)
+        .map((path) => ({
+          name: basenameOf(path),
+          path,
+          type: 'file' as const,
+          size: files.get(path)?.length ?? 0,
+          modifiedAt: mtimes.get(path) ?? 100
+        }))
+    )
+  });
+  return {
+    session,
+    files,
+    text(path: string): string | undefined {
+      return files.get(path)?.toString('utf8');
+    },
+    setText(path: string, text: string): void {
+      files.set(path, Buffer.from(text, 'utf8'));
+      touch(path);
+    }
   };
 }
 
@@ -1616,5 +1748,701 @@ describe('SftpAgentService local file upload', () => {
     const [row] = record.mock.calls[0];
     expect(row.path).toBe(REMOTE_TARGET);
     expect(row.command).toBeUndefined();
+  });
+});
+
+/**
+ * R1 — the service half of `at_terminal_sftp_edit_file`.
+ *
+ * The tool adds no matching logic of its own; these cases pin the semantics the model sees:
+ * one literal occurrence unless `replaceAll`, line endings preserved, binary and oversized
+ * files refused before anything is written, and the same authorizer prompt as a write.
+ */
+describe('SftpAgentService editFile', () => {
+  const FILE = '/home/deploy/app.conf';
+
+  function editService(state: ReturnType<typeof statefulSession>, auth = authorizer()) {
+    return {
+      auth,
+      service: new SftpAgentService({
+        terminalContext: connectedRegistry(),
+        createSession: () => state.session as never,
+        authorizer: auth
+      })
+    };
+  }
+
+  it('replaces one literal string and reports the post-write stat', async () => {
+    const state = statefulSession('alpha\nbeta\ngamma\n');
+    const { service, auth } = editService(state);
+
+    const result = await service.editFile({ path: FILE, oldString: 'beta', newString: 'BETA' });
+
+    expect(state.text).toBe('alpha\nBETA\ngamma\n');
+    expect(result).toEqual({
+      terminalId: 'terminal-1',
+      serverId: 'server-1',
+      path: FILE,
+      replacements: 1,
+      bytesWritten: Buffer.byteLength('alpha\nBETA\ngamma\n'),
+      size: Buffer.byteLength('alpha\nBETA\ngamma\n'),
+      modifiedAt: 101
+    });
+    expect(state.session.writeFile).toHaveBeenCalledWith(FILE, Buffer.from('alpha\nBETA\ngamma\n', 'utf8'));
+    expect(auth.requireWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'write_file', path: FILE, overwrite: true })
+    );
+  });
+
+  it('reports zero matches with Found 0 occurrences and writes nothing', async () => {
+    const state = statefulSession('alpha\nbeta\n');
+    const { service } = editService(state);
+
+    const error = await service.editFile({ path: FILE, oldString: 'missing', newString: 'x' }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SftpEditMatchError);
+    expect(error).toMatchObject({ name: 'SftpEditMatchError', code: 'sftp-edit-match', occurrences: 0 });
+    expect(error.message).toContain('Found 0 occurrences');
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses an ambiguous match unless replaceAll is set', async () => {
+    const state = statefulSession('token\ntoken\n');
+    const { service } = editService(state);
+
+    const error = await service.editFile({ path: FILE, oldString: 'token', newString: 'x' }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SftpEditMatchError);
+    expect(error).toMatchObject({ occurrences: 2 });
+    expect(error.message).toContain('Found 2 occurrences; pass replaceAll or provide a longer match');
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('replaces every occurrence with replaceAll and counts them', async () => {
+    const state = statefulSession('token\ntoken\ntoken\n');
+    const { service } = editService(state);
+
+    const result = await service.editFile({ path: FILE, oldString: 'token', newString: 'value', replaceAll: true });
+
+    expect(state.text).toBe('value\nvalue\nvalue\n');
+    expect(result.replacements).toBe(3);
+  });
+
+  it('keeps CRLF line endings when the file used them', async () => {
+    const state = statefulSession('one\r\ntwo\r\nthree\r\n');
+    const { service } = editService(state);
+
+    const result = await service.editFile({ path: FILE, oldString: 'two', newString: 'TWO' });
+
+    expect(result.replacements).toBe(1);
+    // A text editor that normalised to LF would rewrite every line of the file, not one.
+    expect(state.text).toBe('one\r\nTWO\r\nthree\r\n');
+    expect(state.session.writeFile).toHaveBeenCalledWith(FILE, Buffer.from('one\r\nTWO\r\nthree\r\n', 'utf8'));
+  });
+
+  it('refuses binary content with a message that names binary', async () => {
+    const state = statefulSession(Buffer.from([0x61, 0x00, 0x62]));
+    const { service } = editService(state);
+
+    const error = await service.editFile({ path: FILE, oldString: 'a', newString: 'b' }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/binary/);
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a file over the 2 MiB edit limit before reading it', async () => {
+    const session = makeSession({
+      stat: vi.fn(async () => ({ size: 2 * 1024 * 1024 + 1, modifiedAt: 1 }))
+    });
+    const { service } = editService({ session } as never);
+
+    await expect(service.editFile({ path: FILE, oldString: 'a', newString: 'b' })).rejects.toThrow(
+      /limit for remote edit/
+    );
+    expect(session.readFile).not.toHaveBeenCalled();
+    expect(session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('goes through requireWrite, and a cancelled confirmation leaves the file alone', async () => {
+    const state = statefulSession('alpha\n');
+    const auth = authorizer();
+    auth.requireWrite.mockRejectedValue(new Error('SFTP write was cancelled.'));
+    const { service } = editService(state, auth);
+
+    await expect(service.editFile({ path: FILE, oldString: 'alpha', newString: 'beta' })).rejects.toThrow(
+      'SFTP write was cancelled.'
+    );
+
+    expect(auth.requireWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'write_file', path: FILE, overwrite: true })
+    );
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+    expect(state.text).toBe('alpha\n');
+  });
+
+  it('rejects an empty oldString before reading the file', async () => {
+    const state = statefulSession('alpha\n');
+    const { service } = editService(state);
+
+    await expect(service.editFile({ path: FILE, oldString: '', newString: 'x' })).rejects.toThrow(
+      'oldString must be a non-empty string'
+    );
+    expect(state.session.readFile).not.toHaveBeenCalled();
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * R2 — remote version protection for agent writes, edits and deletes.
+ *
+ * The service is the only place that sees both the caller's expected stat and the server's
+ * current one, so every mode is exercised here: `observe` only enforces what the caller
+ * explicitly carried, `strict` additionally requires that this connection read the file, and
+ * `off` is the 0.3.0 behaviour. Reconnect clearing is asserted at the end because a version
+ * is only evidence about the connection it was read over.
+ */
+describe('SftpAgentService remote write guard', () => {
+  const FILE = '/home/deploy/app.conf';
+
+  function guardedService(session: ReturnType<typeof makeSession>, auth = authorizer()) {
+    return {
+      auth,
+      service: new SftpAgentService({
+        terminalContext: connectedRegistry(),
+        createSession: () => session as never,
+        authorizer: auth
+      })
+    };
+  }
+
+  it('writes when expectedSize and expectedModifiedAt match the server', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await expect(
+      service.writeFile({
+        path: FILE,
+        content: 'new\n',
+        overwrite: true,
+        expectedSize: Buffer.byteLength('old\n'),
+        expectedModifiedAt: 100
+      })
+    ).resolves.toMatchObject({ path: FILE, bytesWritten: Buffer.byteLength('new\n') });
+    expect(state.text).toBe('new\n');
+  });
+
+  it('refuses a stale size with sftp-stale-version and re-read advice', async () => {
+    const state = statefulSession('old\n');
+    const { service, auth } = guardedService(state.session);
+
+    const error = await service
+      .writeFile({ path: FILE, content: 'new\n', overwrite: true, expectedSize: 999, expectedModifiedAt: 100 })
+      .catch((e) => e);
+
+    expect(error).toBeInstanceOf(SftpStaleVersionError);
+    expect(error).toMatchObject({ name: 'SftpStaleVersionError', code: 'sftp-stale-version' });
+    expect(error.message).toContain('re-read it, then retry');
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+    // A doomed write must not consume the user's approval decision.
+    expect(auth.requireWrite).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale modifiedAt as well as a stale size', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await expect(
+      service.writeFile({ path: FILE, content: 'new\n', overwrite: true, expectedModifiedAt: 99 })
+    ).rejects.toMatchObject({ code: 'sftp-stale-version' });
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the 0.3.0 behaviour when sftpWriteGuard is off, even with mismatched expected values', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await expect(
+      service.writeFile({
+        path: FILE,
+        content: 'new\n',
+        overwrite: true,
+        expectedSize: 999,
+        expectedModifiedAt: 99,
+        sftpWriteGuard: 'off'
+      })
+    ).resolves.toMatchObject({ bytesWritten: 4 });
+    expect(state.text).toBe('new\n');
+  });
+
+  it('requires a prior read in strict mode and says which action fixes it', async () => {
+    const state = statefulSession('old\n');
+    const { service, auth } = guardedService(state.session);
+
+    const error = await service
+      .writeFile({ path: FILE, content: 'new\n', overwrite: true, sftpWriteGuard: 'strict' })
+      .catch((e) => e);
+
+    expect(error).toBeInstanceOf(SftpNotObservedError);
+    expect(error).toMatchObject({ name: 'SftpNotObservedError', code: 'sftp-not-observed' });
+    expect(error.message).toContain('read the file, then retry');
+    expect(auth.requireWrite).not.toHaveBeenCalled();
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('allows a strict write after readFile recorded the version', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await service.readFile({ path: FILE });
+    await expect(
+      service.writeFile({ path: FILE, content: 'new\n', overwrite: true, sftpWriteGuard: 'strict' })
+    ).resolves.toMatchObject({ bytesWritten: 4 });
+    expect(state.text).toBe('new\n');
+  });
+
+  it('allows a strict write after statPath recorded the version', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await service.statPath({ path: FILE });
+    await expect(
+      service.writeFile({ path: FILE, content: 'new\n', overwrite: true, sftpWriteGuard: 'strict' })
+    ).resolves.toBeDefined();
+  });
+
+  it('refuses a strict write when the file changed after the read', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await service.readFile({ path: FILE });
+    state.touch();
+
+    await expect(
+      service.writeFile({ path: FILE, content: 'new\n', overwrite: true, sftpWriteGuard: 'strict' })
+    ).rejects.toMatchObject({ code: 'sftp-stale-version' });
+    expect(state.text).toBe('old\n');
+  });
+
+  it('refreshes the observation after a successful write, so a second strict write needs no re-read', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await service.readFile({ path: FILE });
+    await service.writeFile({ path: FILE, content: 'mid\n', overwrite: true, sftpWriteGuard: 'strict' });
+    await expect(
+      service.writeFile({ path: FILE, content: 'new\n', overwrite: true, sftpWriteGuard: 'strict' })
+    ).resolves.toBeDefined();
+    expect(state.text).toBe('new\n');
+  });
+
+  it('forgets versions when a terminal connection is dropped, so strict asks for a fresh read', async () => {
+    const first = statefulSession('old\n');
+    const second = statefulSession('old\n');
+    let created = 0;
+    const service = new SftpAgentService({
+      terminalContext: connectedRegistry(),
+      createSession: () => (created++ === 0 ? first.session : second.session) as never,
+      authorizer: authorizer()
+    });
+
+    await service.readFile({ path: FILE });
+    service.disposeTerminal('terminal-1');
+
+    await expect(
+      service.writeFile({ path: FILE, content: 'new\n', overwrite: true, sftpWriteGuard: 'strict' })
+    ).rejects.toMatchObject({ code: 'sftp-not-observed' });
+    expect(second.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('applies the expected version to deleteFile', async () => {
+    const state = statefulSession('old\n');
+    state.session.listDirectory.mockResolvedValue([
+      { name: 'app.conf', path: FILE, type: 'file' as const, size: 4, modifiedAt: 100 }
+    ]);
+    const { service } = guardedService(state.session);
+
+    await expect(
+      service.deleteFile({ path: FILE, expectedSize: 999, expectedModifiedAt: 100 })
+    ).rejects.toMatchObject({ code: 'sftp-stale-version' });
+    expect(state.session.deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('requires a prior read for a strict delete', async () => {
+    const state = statefulSession('old\n');
+    state.session.listDirectory.mockResolvedValue([
+      { name: 'app.conf', path: FILE, type: 'file' as const, size: 4, modifiedAt: 100 }
+    ]);
+    const { service } = guardedService(state.session);
+
+    await expect(
+      service.deleteFile({ path: FILE, sftpWriteGuard: 'strict' })
+    ).rejects.toMatchObject({ code: 'sftp-not-observed' });
+    expect(state.session.deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('applies the strict read requirement to editFile as well', async () => {
+    const state = statefulSession('old\n');
+    const { service } = guardedService(state.session);
+
+    await expect(
+      service.editFile({ path: FILE, oldString: 'old', newString: 'new', sftpWriteGuard: 'strict' })
+    ).rejects.toMatchObject({ code: 'sftp-not-observed' });
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A1 — remote apply_patch.
+ *
+ * The contract mirrors the Host's local `apply_patch`: parse and preflight the whole patch
+ * before any write, then commit in order and stop on the first failure without rollback. The
+ * fake keeps a real file map because these tests care about the resulting tree, not call
+ * counts.
+ */
+describe('SftpAgentService applyPatch', () => {
+  const A = '/home/deploy/a.txt';
+  const B = '/home/deploy/b.txt';
+
+  function patchService(state: ReturnType<typeof patchSession>, auth = authorizer()) {
+    return {
+      auth,
+      service: new SftpAgentService({
+        terminalContext: connectedRegistry(),
+        createSession: () => state.session as never,
+        authorizer: auth
+      })
+    };
+  }
+
+  it('applies an Add, Update and Delete in one patch', async () => {
+    const state = patchSession({
+      [A]: 'one\ntwo\n',
+      '/home/deploy/gone.txt': 'bye\n'
+    });
+    const { service } = patchService(state);
+    const patch = [
+      '*** Begin Patch',
+      '*** Add File: new.txt',
+      '+hello',
+      '*** Update File: a.txt',
+      '@@',
+      ' one',
+      '-two',
+      '+TWO',
+      '*** Delete File: gone.txt',
+      '*** End Patch'
+    ].join('\n');
+
+    const result = await service.applyPatch({ path: '.', input: patch });
+
+    expect(result.phase).toBe('commit');
+    expect(result.cancelled).toBe(false);
+    expect(result.operations.map((operation) => operation.status)).toEqual([
+      'completed',
+      'completed',
+      'completed'
+    ]);
+    expect(state.text('/home/deploy/new.txt')).toBe('hello\n');
+    expect(state.text(A)).toBe('one\nTWO\n');
+    expect(state.files.has('/home/deploy/gone.txt')).toBe(false);
+    expect(result.affectedPaths).toEqual(
+      expect.arrayContaining(['/home/deploy/new.txt', A, '/home/deploy/gone.txt'])
+    );
+  });
+
+  it('applies multiple hunks to one file in order', async () => {
+    const state = patchSession({ [A]: 'a\nb\nc\nd\n' });
+    const { service } = patchService(state);
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: a.txt',
+      '@@',
+      ' a',
+      '-b',
+      '+B',
+      '@@',
+      ' c',
+      '-d',
+      '+D',
+      '*** End Patch'
+    ].join('\n');
+
+    const result = await service.applyPatch({ path: '.', input: patch });
+
+    expect(result.operations[0]).toMatchObject({ kind: 'update', status: 'completed' });
+    expect(state.text(A)).toBe('a\nB\nc\nD\n');
+  });
+
+  it('restores a CRLF file after applying a hunk against LF-normalized text', async () => {
+    const state = patchSession({ [A]: 'one\r\ntwo\r\nthree\r\n' });
+    const { service } = patchService(state);
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: a.txt',
+      '@@',
+      ' one',
+      '-two',
+      '+TWO',
+      ' three',
+      '*** End Patch'
+    ].join('\n');
+
+    await service.applyPatch({ path: '.', input: patch });
+
+    expect(state.text(A)).toBe('one\r\nTWO\r\nthree\r\n');
+    expect(state.session.writeFile).toHaveBeenCalledWith(A, Buffer.from('one\r\nTWO\r\nthree\r\n', 'utf8'));
+  });
+
+  it('rejects the whole patch when one file fails preflight, before any write', async () => {
+    const state = patchSession({ [A]: 'a\n', [B]: 'b\n' });
+    const { service } = patchService(state);
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: a.txt',
+      '-a',
+      '+A',
+      '*** Update File: b.txt',
+      '-missing',
+      '+B',
+      '*** End Patch'
+    ].join('\n');
+
+    const error = await service.applyPatch({ path: '.', input: patch }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SftpPatchRejectedError);
+    expect(error).toMatchObject({ name: 'SftpPatchRejectedError', code: 'sftp-patch-preflight' });
+    expect(error.refusals).toHaveLength(1);
+    expect(error.refusals[0]).toMatchObject({ kind: 'update', path: B, code: 'sftp-patch-mismatch' });
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+    expect(state.text(A)).toBe('a\n');
+    expect(state.text(B)).toBe('b\n');
+  });
+
+  it('reports a syntax error with the parser line and touches no file', async () => {
+    const state = patchSession({ [A]: 'a\n' });
+    const { service } = patchService(state);
+    const error = await service
+      .applyPatch({ path: '.', input: '*** Begin Patch\n*** Update File: a.txt\n*** End Patch' })
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SftpPatchSyntaxError);
+    expect(error).toMatchObject({ name: 'SftpPatchSyntaxError', code: 'sftp-patch-syntax' });
+    expect(state.session.readFile).not.toHaveBeenCalled();
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects binary files during preflight', async () => {
+    const state = patchSession({ [A]: Buffer.from([0x61, 0x00, 0x62]) });
+    const { service } = patchService(state);
+    const patch = ['*** Begin Patch', '*** Update File: a.txt', '-a', '+b', '*** End Patch'].join('\n');
+
+    const error = await service.applyPatch({ path: '.', input: patch }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SftpPatchRejectedError);
+    expect(error.refusals[0].code).toBe('sftp-patch-binary');
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects a file above the 2 MiB patch limit before reading it', async () => {
+    const state = patchSession({ [A]: Buffer.alloc(2 * 1024 * 1024 + 1, 0x61) });
+    const { service } = patchService(state);
+    const patch = ['*** Begin Patch', '*** Update File: a.txt', '-a', '+b', '*** End Patch'].join('\n');
+
+    const error = await service.applyPatch({ path: '.', input: patch }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SftpPatchRejectedError);
+    expect(error.refusals[0].code).toBe('sftp-patch-too-large');
+    expect(state.session.readFile).not.toHaveBeenCalled();
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects a path that escapes the base directory', async () => {
+    const state = patchSession({ [A]: 'a\n' });
+    const { service } = patchService(state);
+    const patch = ['*** Begin Patch', '*** Delete File: ../outside.txt', '*** End Patch'].join('\n');
+
+    const error = await service.applyPatch({ path: '.', input: patch }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SftpPatchRejectedError);
+    expect(error.refusals[0].code).toBe('sftp-patch-path-escape');
+    expect(state.session.deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('moves a file with an unchanged hunk via rename', async () => {
+    const state = patchSession({ '/home/deploy/old.txt': 'hello\n' });
+    const { service } = patchService(state);
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: old.txt',
+      '*** Move to: new.txt',
+      ' hello',
+      '*** End Patch'
+    ].join('\n');
+
+    const result = await service.applyPatch({ path: '.', input: patch });
+
+    expect(result.operations[0]).toMatchObject({
+      kind: 'move',
+      path: '/home/deploy/old.txt',
+      destination: '/home/deploy/new.txt',
+      status: 'completed'
+    });
+    expect(state.files.has('/home/deploy/old.txt')).toBe(false);
+    expect(state.text('/home/deploy/new.txt')).toBe('hello\n');
+    expect(state.session.rename).toHaveBeenCalledWith('/home/deploy/old.txt', '/home/deploy/new.txt');
+  });
+
+  it('moves a file with changed content by writing the destination then deleting the source', async () => {
+    const state = patchSession({ '/home/deploy/old.txt': 'old\n' });
+    const { service } = patchService(state);
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: old.txt',
+      '*** Move to: new.txt',
+      '-old',
+      '+new',
+      '*** End Patch'
+    ].join('\n');
+
+    await service.applyPatch({ path: '.', input: patch });
+
+    expect(state.files.has('/home/deploy/old.txt')).toBe(false);
+    expect(state.text('/home/deploy/new.txt')).toBe('new\n');
+  });
+
+  it('returns completed/failed/skipped statuses when a later commit detects a stale file', async () => {
+    const state = patchSession({ [A]: 'a\n', [B]: 'b\n' });
+    const { service } = patchService(state);
+    // The first write makes b change between preflight and its turn; the commit must stop.
+    const write = state.session.writeFile as unknown as { mockImplementation(fn: (path: string, content: Buffer) => Promise<void>): void };
+    write.mockImplementation(async (path: string, content: Buffer) => {
+      state.files.set(path, Buffer.from(content));
+      if (path === A) state.setText(B, 'b changed\n');
+    });
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: a.txt',
+      '-a',
+      '+A',
+      '*** Update File: b.txt',
+      '-b',
+      '+B',
+      '*** End Patch'
+    ].join('\n');
+
+    const result = await service.applyPatch({ path: '.', input: patch });
+
+    expect(result.operations.map((operation) => operation.status)).toEqual(['completed', 'failed']);
+    expect(result.operations[1]).toMatchObject({ kind: 'update', status: 'failed', code: 'sftp-stale-version' });
+    expect(result.affectedPaths).toEqual([A]);
+    expect(state.text(A)).toBe('A\n');
+    expect(state.text(B)).toBe('b changed\n');
+  });
+
+  it('refuses a sensitive delete during preflight', async () => {
+    const state = patchSession({ '/etc/passwd': 'root:x:0:0\n' }, '/');
+    const { service } = patchService(state);
+    const patch = ['*** Begin Patch', '*** Delete File: etc/passwd', '*** End Patch'].join('\n');
+
+    const error = await service.applyPatch({ path: '/', input: patch }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SftpPatchRejectedError);
+    expect(error.refusals[0].code).toBe('sftp-patch-sensitive-path');
+    expect(state.session.deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('lets strict guarding pass because preflight reads count as the required observation', async () => {
+    const state = patchSession({ [A]: 'a\n' });
+    const { service } = patchService(state);
+    const patch = ['*** Begin Patch', '*** Update File: a.txt', '-a', '+A', '*** End Patch'].join('\n');
+
+    await expect(service.applyPatch({ path: '.', input: patch, sftpWriteGuard: 'strict' })).resolves.toMatchObject({
+      phase: 'commit',
+      operations: [{ status: 'completed' }]
+    });
+    expect(state.text(A)).toBe('A\n');
+  });
+
+  it('accepts an empty patch without touching the remote', async () => {
+    const state = patchSession({ [A]: 'a\n' });
+    const { service } = patchService(state);
+
+    await expect(service.applyPatch({ path: '.', input: '*** Begin Patch\n*** End Patch\n' })).resolves.toMatchObject({
+      phase: 'commit',
+      cancelled: false,
+      operations: [],
+      affectedPaths: []
+    });
+    expect(state.session.writeFile).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The vendored `dsh-fs-patch` core.
+ *
+ * The service tests above exercise it end to end, but the parser's own shapes are the contract
+ * the apply-patch planner relies on: a kind/path/lineNumber record for every operation and a
+ * structured, line-numbered failure when a hunk does not match. These assertions also pin the
+ * vendoring against accidental drift from the upstream behavior.
+ */
+describe('vendored @deepseek-ai/dsh-fs-patch compat', () => {
+  it('parses ordered operations with one-based line numbers and move targets', () => {
+    const operations = parsePatch(
+      [
+        '*** Begin Patch',
+        '*** Update File: old.txt',
+        '*** Move to: new.txt',
+        ' hello',
+        '*** Add File: added.txt',
+        '+x',
+        '*** Delete File: gone.txt',
+        '*** End Patch'
+      ].join('\n')
+    );
+
+    expect(operations).toEqual([
+      {
+        kind: 'update',
+        path: 'old.txt',
+        lineNumber: 2,
+        moveTo: 'new.txt',
+        hunks: [
+          {
+            lineNumber: 4,
+            oldLines: ['hello'],
+            newLines: ['hello'],
+            isEndOfFile: false
+          }
+        ]
+      },
+      { kind: 'add', path: 'added.txt', lineNumber: 5, content: 'x\n' },
+      { kind: 'delete', path: 'gone.txt', lineNumber: 7 }
+    ]);
+  });
+
+  it('accepts a literal heredoc wrapper and reports syntax failures with a line', () => {
+    const operations = parsePatch("<<'EOF'\n*** Begin Patch\n*** Add File: x.txt\n+a\n*** End Patch\nEOF");
+    expect(operations).toEqual([{ kind: 'add', path: 'x.txt', lineNumber: 3, content: 'a\n' }]);
+    expect(() => parsePatch('*** Begin Patch\nnot a file header\n*** End Patch')).toThrow(PatchParseError);
+  });
+
+  it('returns structured match failures without partial text', () => {
+    const operations = parsePatch('*** Begin Patch\n*** Update File: x.txt\n-missing\n+x\n*** End Patch');
+    const update = operations[0];
+    if (update.kind !== 'update') throw new Error('expected update');
+    const result = applyHunks('present\n', update.hunks);
+
+    expect(result).toEqual({
+      ok: false,
+      failure: {
+        hunkLineNumber: 3,
+        stage: 'oldLines',
+        searchStart: 0,
+        pattern: ['missing']
+      }
+    });
   });
 });

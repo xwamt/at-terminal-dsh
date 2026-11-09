@@ -50,11 +50,16 @@ export const TOOL_POLICY = Object.freeze({
   at_terminal_sftp_list_directory: Object.freeze({ risk: 'read' }),
   at_terminal_sftp_stat_path: Object.freeze({ risk: 'read' }),
   at_terminal_sftp_read_file: Object.freeze({ risk: 'read' }),
+  at_terminal_sftp_edit_file: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_write_file: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_create_file: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_create_directory: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_rename: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_delete: Object.freeze({ risk: 'destructive', guard: 'refuse-sensitive-path' }),
+  // A patch is a write through SFTP; `SftpWriteAuthorizer` owns every per-file prompt, and
+  // the service refuses sensitive delete/move targets during its own preflight. It is not a
+  // `command`: nothing reaches a shell.
+  at_terminal_sftp_apply_patch: Object.freeze({ risk: 'write-remote' }),
   at_terminal_open_monitor: Object.freeze({ risk: 'ui' }),
   at_terminal_get_hardware_metrics: Object.freeze({ risk: 'read', probe: 'builtin' }),
   at_terminal_get_agent_execution_status: Object.freeze({ risk: 'read' }),

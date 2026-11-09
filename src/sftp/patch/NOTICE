@@ -1,0 +1,15 @@
+@deepseek-ai/dsh-fs-patch
+Version: 0.2.2-rc.1
+Source: DeepSeek Harness Desktop 0.2.2-rc.1, app.asar -> dsh/node_modules/@deepseek-ai/dsh-fs-patch/lib/index.js
+Upstream repository: https://github.com/deepseek-ai/deepseek-harness (packages/fs/fs-patch)
+
+This directory contains a source-available vendoring of the package's pure
+parsePatch / applyHunks implementation, converted from the published JavaScript
+to TypeScript without semantic changes.
+
+License: MIT for DeepSeek contributions; the portions adapted from OpenAI
+Codex rust-v0.158.0 remain under Apache License 2.0. The full notice and both
+license texts are in the adjacent LICENSE file.
+
+Copyright 2025 OpenAI. Apache-2.0 portions and modification notice: see LICENSE.
+Copyright (c) 2026 DeepSeek. MIT License: see LICENSE.

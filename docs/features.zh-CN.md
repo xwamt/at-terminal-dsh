@@ -70,6 +70,8 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `sftp_list_directory` | 只读 | 通过已连接的 AT Terminal SFTP 会话列出远程目录。最多返回 `maxEntries` 条（默认 500，硬顶 5000），并带 `truncated`/`total`；`offset` 可对大目录分页。 |
 | `sftp_stat_path` | 只读 | 返回远程文件或目录的元信息。 |
 | `sftp_read_file` | 只读 | 读取有限大小的 UTF-8 远程文本文件；默认 `maxBytes` 65536（硬顶 262144）；`offset` 可续读，负值从文件尾部读取；疑似二进制内容会被拒绝。 |
+| `sftp_edit_file` | 写入 | 替换远程 UTF-8 文件中的一处字面量文本；除非 `replaceAll: true`，否则必须恰好匹配一次——匹配 0 次或多次都会带出现次数报错而不写入。保留文件原有 CRLF/LF 换行风格，拒绝二进制与超过 2 MiB 的文件，并接受上次读取得到的 `expectedSize` / `expectedModifiedAt`，版本已变时拒绝覆盖。 |
+| `sftp_apply_patch` | 写入 | 可选，默认关闭（`enableApplyPatch`）。用一份 Codex 风格 patch 一次修改多个远程 UTF-8 文件（Add/Update/Delete/Move）。先整体解析与预检——语法错误、文件缺失、二进制/超限文件或 hunk 不匹配都会拒绝整份 patch 且零写入——再按顺序提交，首个失败即停止，逐项返回 `completed` / `failed` / `unknown` / `skipped`。远程 patch 不进 DSH Review；SFTP 没有事务，部分结果会如实报告。 |
 | `sftp_write_file` | 写入 | 向远程文件写入 UTF-8 文本；覆盖已有文件需要 `overwrite: true`。用 `localPath` 则改为上传「宿主进程所在机器上的文件」，不传 `content`：由宿主读取并流式传输，二进制或大文件不进入模型上下文；这类上传即使完全信任也会询问。 |
 | `sftp_create_file` | 写入 | 创建远程文件，可选写入 UTF-8 内容。 |
 | `sftp_create_directory` | 写入 | 创建远程目录。 |
@@ -104,6 +106,12 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 Host 侧插件看不到。系统判断不准时，把设置项 **`dialogLanguage`** 钉成 `zh-CN` 或 `en` 即可；
 默认 `auto` 跟随系统。实际生效的选择可以从插件通道的 `state.get` 读到
 （`dialogLanguage: {setting, system, language, strings}`），所以语言不对时不用花一次模型回合去排查。
+
+同一个表单里还有两个写相关的设置。**`sftpWriteGuard`**（`off` / `observe` / `strict`，默认
+`observe`）决定 Agent 的 SFTP 写入对「读到的旧版本」防到什么程度：`observe` 只校验模型回传的
+`expectedSize` / `expectedModifiedAt`，其余保持 0.3.0 行为；`strict` 还要求本连接内先读过该文件，
+否则拒绝写入；`off` 关闭检查。**`enableApplyPatch`**（默认 `false`）用于注册可选的多文件
+`at_terminal_sftp_apply_patch` 工具；关闭时该工具根本不出现在模型的工具表里。
 
 | 分区 | 内容 |
 |---|---|
@@ -167,7 +175,7 @@ terminal_close({ sessionId })
 - 只读工具不会返回密码、私钥或 SecretStorage 内容。
 - 后台命令的确认在**作业启动之前**完成，绝不在作业内部发起：作业已脱离这次调用，此时弹窗会出现在没有工具调用在飞的状态下，用户无处回答。若当前组合没有作业注册表，该调用会降级为前台执行，并在 `notice` 里说明原因。
 - 取消后台命令会向远端**进程组**发 `SIGTERM`，并等到它真正消失才把作业结算为 killed——只关闭本地 SSH 通道会让进程继续跑。被信号的 pid 来自作业在远端写下的文件（以 job id 命名），发送信号前先删除该文件。
-- 同时连着多台服务器时，「没有指定 serverId」的调用按它能不能改远端来区别对待。**写类与执行类**（`sftp_write_file`、`sftp_create_file`、`sftp_create_directory`、`sftp_rename`、`sftp_delete`、`run_remote_command`）直接报错并列出所有已连接服务器，**一个字都不会发到任何主机**——打错机器的写入会返回一个看起来像成功的 `exitCode: 0`，比失败更危险。**读类**（`sftp_list_directory`、`sftp_stat_path`、`sftp_read_file`、`get_hardware_metrics`）仍跟随当前活动终端，但结果里写 `resolvedBy: "implicit"` 并附候选列表；只连一台时写 `"single-connected"`。`open_monitor` 按读类处理：它只切换面板，不改远端。
+- 同时连着多台服务器时，「没有指定 serverId」的调用按它能不能改远端来区别对待。**写类与执行类**（`sftp_write_file`、`sftp_edit_file`、`sftp_apply_patch`、`sftp_create_file`、`sftp_create_directory`、`sftp_rename`、`sftp_delete`、`run_remote_command`）直接报错并列出所有已连接服务器，**一个字都不会发到任何主机**——打错机器的写入会返回一个看起来像成功的 `exitCode: 0`，比失败更危险。**读类**（`sftp_list_directory`、`sftp_stat_path`、`sftp_read_file`、`get_hardware_metrics`）仍跟随当前活动终端，但结果里写 `resolvedBy: "implicit"` 并附候选列表；只连一台时写 `"single-connected"`。`open_monitor` 按读类处理：它只切换面板，不改远端。
 - SFTP 读取有大小限制，避免把大文件直接灌入 Agent 上下文。
 - SFTP 的读取、列目录与 stat 有 30 秒上限：通道卡住时会以带路径的超时失败，而不是返回一个看起来像空文件的结果；写入与删除的确认另有 60 秒预算。`localPath` 上传有自己的 300 秒预算：超时会中止这次传输并断开它所在的 SSH 连接，错误里说明远端文件可能不完整、依赖它之前先检查一遍——传输开始时目标文件就已经被截断，所以这个期限无法只停止写入而不关连接；要替换它需要 `overwrite: true`。外层工具调用上限为 480 秒，位于这两个预算之外，只用来兜住服务自身计时器之外的卡死。
 - 写入工具会解析远程路径，不允许修改远程根路径。

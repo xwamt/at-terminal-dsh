@@ -50,6 +50,13 @@ export const CAPABILITIES = Object.freeze([
   // SFTP and remote commands look unavailable even though every tool below was registered.
   'remote-command-execution',
   'sftp-file-operations',
+  // The editing half of SFTP: literal replacement without a whole-file rewrite. Listed
+  // separately from `sftp-file-operations` because a caller deciding whether it may patch a
+  // config in place needs to know the primitive exists, not just that files can be moved.
+  'sftp-file-edit',
+  // Optional multi-file patch primitive. The tool definition is always present so policy and
+  // schema gates can see it, but dsh/index.js hides it until `enableApplyPatch` is true.
+  'sftp-apply-patch',
   'hardware-metrics',
   'agent-execution-status',
   // Every tool that can block declares a `timeoutMs`, and the *Host* enforces it
@@ -67,9 +74,9 @@ export const CAPABILITIES = Object.freeze([
   // composition, not on this bundle: a preset without `dsh-tool-jobs` still runs commands,
   // and a caller reading this list needs to know which of the two it is in.
   'background-jobs',
-  // The pair that reads and stops those jobs. Listed separately because a composition can
-  // have the registry without them — that is exactly what the desktop build does — and a
-  // caller deciding whether to background a command needs to know which case it is in.
+  // The fallback pair that reads and stops those jobs. The standard preset uses the host's
+  // own `job_output` / `job_kill`; this capability is about the plugin's pair, registered
+  // only when the composition has a job registry without those host tools.
   'job-control',
   // Registered a prompt section plus the variable it interpolates. Listed separately because
   // a composition without `dsh-system-prompt` keeps the tools and loses the guidance.
@@ -116,6 +123,18 @@ export const EMPTY_PARAMETERS = Object.freeze({
 const SFTP_TARGET_PROPERTIES = Object.freeze({
   terminalId: { type: 'string' },
   serverId: { type: 'string' }
+})
+
+/**
+ * The optional version fields shared by every agent SFTP mutation.
+ *
+ * They are the `size` / `modifiedAt` an earlier `sftp_read_file` or `sftp_stat_path` returned,
+ * not a checksum: SFTP's stat is the only version primitive the protocol gives us. Passing
+ * them is what lets the service refuse to overwrite a file that changed in between.
+ */
+const SFTP_EXPECTED_VERSION_PROPERTIES = Object.freeze({
+  expectedSize: { type: 'integer' },
+  expectedModifiedAt: { type: 'integer' }
 })
 
 /**
@@ -194,6 +213,23 @@ function requireEnum(toolName, input, key, allowed) {
     throw new Error(`${toolName}: "${key}" must be one of: ${allowed.join(', ')}.`)
   }
   return value
+}
+
+/**
+ * Read the agent SFTP write-guard mode from whichever settings shape the host handed us.
+ *
+ * Production passes the resolved accessor map (`readSettings`), where each field is a
+ * `.get()` accessor. A `ConfigSection` (`get(key, fallback)`) is the other documented form;
+ * accepting both here is what keeps `sftpWriteGuard` a consumed setting rather than a field
+ * the settings form renders and nothing reads.
+ */
+function readSftpWriteGuard(config) {
+  const fallback = readSettings(config).sftpWriteGuard
+  if (config !== null && typeof config === 'object' && typeof config.get === 'function') {
+    const value = config.get('sftpWriteGuard', fallback)
+    return value === undefined ? fallback : value
+  }
+  return fallback
 }
 
 /** Format a Unix epoch in *seconds* (SFTP `mtime`) as an ISO timestamp. */
@@ -343,7 +379,7 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
   }
 }
 
-export function createListSshServersTool({ resolveAgentService, runInContext } = {}) {
+export function createListSshServersTool({ resolveAgentService, runInContext, onServersListed } = {}) {
   return {
     name: 'at_terminal_list_ssh_servers',
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
@@ -410,6 +446,10 @@ export function createListSshServersTool({ resolveAgentService, runInContext } =
         // prompt section's dynamic fact is refreshed here rather than by a poll that would
         // keep opening the state store for a string nobody asked for.
         updateTrustFact(servers)
+        // The host half keeps a server-count cache for tool conditionalisation. The count is
+        // set from what this read actually returned, not from a second read: this is the one
+        // moment the plugin knows the inventory without doing extra I/O per model step.
+        onServersListed?.(servers)
         return { servers }
       })
     }
@@ -478,6 +518,7 @@ export function createRunRemoteCommandTool({
   runInContext,
   resolveSpillStore,
   resolveJobs,
+  resolveJobToolNames,
   logger
 } = {}) {
   return {
@@ -538,10 +579,15 @@ export function createRunRemoteCommandTool({
       },
       render(_args, val) {
         if (val.kind === 'background') {
+          // The controls are whichever pair the current composition exposes: the host's
+          // `job_output`/`job_kill` in a standard preset, the plugin's fallback pair when
+          // that preset has no job tools. Naming the wrong pair sends the model to a tool it
+          // cannot see; the resolver is updated by the job-tool `when` during step admission.
+          const names = resolveJobToolNames?.() ?? { output: 'job_output', kill: 'job_kill' }
           return [
             {
               type: 'text',
-              text: `started background job ${val.jobId}; read it with job_output, stop it with job_kill.`
+              text: `started background job ${val.jobId}; read it with ${names.output}, stop it with ${names.kill}.`
             }
           ]
         }
@@ -882,7 +928,96 @@ export function createSftpReadFileTool({ resolveAgentService, runInContext, reso
   }
 }
 
-export function createSftpWriteFileTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
+export function createSftpEditFileTool({ resolveAgentService, runInContext, setCurrentCallContext, config } = {}) {
+  return {
+    name: 'at_terminal_sftp_edit_file',
+    // One full-file read (up to 2 MiB), one stat-before-write and one write. The service has
+    // its own per-operation deadlines; this bound only has to sit outside their sum.
+    timeoutMs: 180_000,
+    description:
+      'Edit remote UTF-8 text by replacing one literal string; pass replaceAll for repeated matches.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        ...SFTP_TARGET_PROPERTIES,
+        path: { type: 'string' },
+        oldString: { type: 'string', description: 'Literal text to replace; must match exactly once unless replaceAll.' },
+        newString: { type: 'string', description: 'Replacement text; may be empty to delete.' },
+        replaceAll: { type: 'boolean' },
+        ...SFTP_EXPECTED_VERSION_PROPERTIES
+      },
+      required: ['path', 'oldString', 'newString']
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          terminalId: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          serverId: { type: 'string' },
+          path: { type: 'string' },
+          replacements: { type: 'integer' },
+          bytesWritten: { type: 'integer' },
+          size: { type: 'integer' },
+          modifiedAt: { type: 'integer' }
+        }
+      },
+      render(_args, val) {
+        return [
+          {
+            type: 'text',
+            text: `Edited ${val.path}: ${val.replacements} replacement(s), wrote ${val.bytesWritten} bytes; size=${val.size}B, modifiedAt=${formatEpochSeconds(val.modifiedAt)}`
+          }
+        ]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_edit_file', args)
+      requireNonEmptyString('at_terminal_sftp_edit_file', input, 'path')
+      // `oldString` may be whitespace in principle but never empty: an empty needle matches
+      // everywhere and the only two outcomes are "0 occurrences" or a nonsense insertion.
+      if (typeof input.oldString !== 'string' || input.oldString === '') {
+        throw new Error('at_terminal_sftp_edit_file: "oldString" is required and must be a non-empty string.')
+      }
+      if (typeof input.newString !== 'string') {
+        throw new Error('at_terminal_sftp_edit_file: "newString" is required and must be a string.')
+      }
+      if (input.replaceAll !== undefined && typeof input.replaceAll !== 'boolean') {
+        throw new Error('at_terminal_sftp_edit_file: "replaceAll" must be a boolean when provided.')
+      }
+      const callCtx = {
+        agent: exec?.agent ?? 'default',
+        callId: exec?.callId ?? exec?.id,
+        signal: exec?.signal
+      }
+      const run =
+        runInContext ??
+        ((ctx, fn) => {
+          setCurrentCallContext?.(ctx)
+          return fn()
+        })
+      return run(callCtx, async () => {
+        const service = resolveAgentService()
+        // Read per call, not captured at registration: the setting is volatile and a user
+        // switching it must affect the next write, not the next plugin reload.
+        const res = await service.sftpEditFile({ ...input, sftpWriteGuard: readSftpWriteGuard(config) })
+        return {
+          terminalId: res.terminalId ?? null,
+          serverId: res.serverId,
+          path: res.path,
+          replacements: typeof res.replacements === 'number' ? res.replacements : 0,
+          bytesWritten: typeof res.bytesWritten === 'number' ? res.bytesWritten : 0,
+          size: typeof res.size === 'number' ? res.size : 0,
+          modifiedAt: typeof res.modifiedAt === 'number' ? res.modifiedAt : 0
+        }
+      })
+    }
+  }
+}
+
+export function createSftpWriteFileTool({ resolveAgentService, runInContext, setCurrentCallContext, config } = {}) {
   return {
     name: 'at_terminal_sftp_write_file',
     // A streamed upload is bounded by link speed, not by the context budget: the service's own
@@ -904,7 +1039,8 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
         // it, so its bytes never enter the model's context. `content` is for text the model
         // already holds; both at once is ambiguous, so `execute()` refuses it.
         localPath: { type: 'string', description: 'Local file on this machine; streamed, never enters context.' },
-        overwrite: { type: 'boolean' }
+        overwrite: { type: 'boolean' },
+        ...SFTP_EXPECTED_VERSION_PROPERTIES
       },
       required: ['path']
     },
@@ -974,7 +1110,9 @@ export function createSftpWriteFileTool({ resolveAgentService, runInContext, set
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpWriteFile(input)
+        // Volatile settings are read per call so a live switch between observe/strict lands
+        // on the very next write rather than after a plugin reload.
+        const res = await service.sftpWriteFile({ ...input, sftpWriteGuard: readSftpWriteGuard(config) })
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -1175,7 +1313,7 @@ export function createSftpRenameTool({ resolveAgentService, runInContext, setCur
   }
 }
 
-export function createSftpDeleteTool({ resolveAgentService, runInContext, setCurrentCallContext } = {}) {
+export function createSftpDeleteTool({ resolveAgentService, runInContext, setCurrentCallContext, config } = {}) {
   return {
     name: 'at_terminal_sftp_delete',
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
@@ -1188,7 +1326,8 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
       additionalProperties: false,
       properties: {
         ...SFTP_TARGET_PROPERTIES,
-        path: { type: 'string' }
+        path: { type: 'string' },
+        ...SFTP_EXPECTED_VERSION_PROPERTIES
       },
       required: ['path']
     },
@@ -1224,7 +1363,9 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
         })
       return run(callCtx, async () => {
         const service = resolveAgentService()
-        const res = await service.sftpDelete(input)
+        // Delete has a version question too: removing the file someone else just replaced is
+        // a destructive action aimed at bytes that are no longer there.
+        const res = await service.sftpDelete({ ...input, sftpWriteGuard: readSftpWriteGuard(config) })
         return {
           terminalId: res.terminalId ?? null,
           serverId: res.serverId,
@@ -1234,6 +1375,150 @@ export function createSftpDeleteTool({ resolveAgentService, runInContext, setCur
       })
     }
   }
+}
+
+export function createSftpApplyPatchTool({ resolveAgentService, runInContext, setCurrentCallContext, config } = {}) {
+  return {
+    name: 'at_terminal_sftp_apply_patch',
+    // Multi-file read/preflight/commit over SFTP; the service owns the per-operation
+    // deadlines. This outer bound only has to sit outside a realistic patch of several
+    // small config files.
+    timeoutMs: 300_000,
+    description:
+      'Apply one Codex-style patch to multiple remote UTF-8 files after whole-patch preflight; commits in order and stops at the first failure.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        ...SFTP_TARGET_PROPERTIES,
+        path: { type: 'string', description: 'Remote base directory; patch paths are relative to it.' },
+        input: {
+          type: 'string',
+          description: 'Codex patch text: *** Begin Patch ... *** End Patch with Add/Update/Delete/Move operations.'
+        }
+      },
+      required: ['path', 'input']
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          terminalId: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          serverId: { type: 'string' },
+          phase: { type: 'string', enum: ['commit'] },
+          cancelled: { type: 'boolean' },
+          operations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                index: { type: 'integer' },
+                kind: { type: 'string', enum: ['add', 'update', 'delete', 'move'] },
+                path: { type: 'string' },
+                destination: { type: 'string' },
+                patchLine: { type: 'integer' },
+                status: { type: 'string', enum: ['completed', 'failed', 'unknown', 'skipped'] },
+                code: { type: 'string' },
+                message: { type: 'string' },
+                hunkLine: { type: 'integer' },
+                bytesWritten: { type: 'integer' }
+              }
+            }
+          },
+          affectedPaths: { type: 'array', items: { type: 'string' } }
+        }
+      },
+      render(_args, val) {
+        return [{ type: 'text', text: renderPatchResult(val) }]
+      }
+    },
+    async execute(args, exec) {
+      if (exec?.signal?.aborted) throw new Error('Operation was aborted.')
+      const input = argsOf('at_terminal_sftp_apply_patch', args)
+      requireNonEmptyString('at_terminal_sftp_apply_patch', input, 'path')
+      if (typeof input.input !== 'string' || input.input.trim() === '') {
+        throw new Error('at_terminal_sftp_apply_patch: "input" is required and must be a non-empty string.')
+      }
+      const callCtx = {
+        agent: exec?.agent ?? 'default',
+        callId: exec?.callId ?? exec?.id,
+        signal: exec?.signal
+      }
+      const run =
+        runInContext ??
+        ((ctx, fn) => {
+          setCurrentCallContext?.(ctx)
+          return fn()
+        })
+      return run(callCtx, async () => {
+        const service = resolveAgentService()
+        // Read the volatile setting per call; the registration condition in index.js only
+        // decides whether the tool is visible, not which guard the commit uses.
+        const res = await service.sftpApplyPatch({
+          ...input,
+          signal: exec?.signal,
+          sftpWriteGuard: readSftpWriteGuard(config)
+        })
+        return {
+          terminalId: res.terminalId ?? null,
+          serverId: res.serverId,
+          phase: 'commit',
+          cancelled: Boolean(res.cancelled),
+          operations: (res.operations || []).map((operation) => ({
+            index: typeof operation.index === 'number' ? operation.index : 0,
+            kind: operation.kind,
+            path: operation.path,
+            ...(operation.destination === undefined ? {} : { destination: operation.destination }),
+            patchLine: typeof operation.patchLine === 'number' ? operation.patchLine : 0,
+            status: operation.status,
+            ...(operation.code === undefined ? {} : { code: operation.code }),
+            ...(operation.message === undefined ? {} : { message: operation.message }),
+            ...(operation.hunkLine === undefined ? {} : { hunkLine: operation.hunkLine }),
+            ...(operation.bytesWritten === undefined ? {} : { bytesWritten: operation.bytesWritten })
+          })),
+          affectedPaths: (res.affectedPaths || []).map((path) => String(path))
+        }
+      })
+    }
+  }
+}
+
+/** One A/M/D line for a completed patch operation, with move destinations named. */
+function renderPatchLine(operation) {
+  const label = operation.kind === 'add' ? 'A' : operation.kind === 'delete' ? 'D' : 'M'
+  return `${label} ${operation.kind === 'move' ? operation.destination : operation.path}`
+}
+
+/** Compact model-facing summary; full file contents stay out of the result. */
+function renderPatchResult(value) {
+  const operations = Array.isArray(value.operations) ? value.operations : []
+  if (operations.length === 0) {
+    return 'Success. No operations in patch.'
+  }
+  const stopped = value.cancelled === true || operations.some((operation) => operation.status !== 'completed')
+  if (!stopped) {
+    return ['Success. Updated the following files:', ...operations.map(renderPatchLine)].join('\n')
+  }
+  const completed = operations.filter((operation) => operation.status === 'completed')
+  const lines = [`Patch stopped after ${completed.length} of ${operations.length} operations.`]
+  if (completed.length > 0) lines.push('Completed:', ...completed.map(renderPatchLine))
+  for (const [status, title] of [
+    ['failed', 'Failed:'],
+    ['unknown', 'Outcome unknown:'],
+    ['skipped', 'Not executed:']
+  ]) {
+    const matching = operations.filter((operation) => operation.status === status)
+    if (matching.length === 0) continue
+    lines.push(title)
+    for (const operation of matching) {
+      const destination = operation.destination === undefined ? '' : ` -> ${operation.destination}`
+      const label = `- operation ${operation.index + 1} (${operation.kind} ${operation.path}${destination}, patch line ${operation.patchLine})`
+      lines.push(status === 'skipped' ? label : `${label}: ${operation.message ?? operation.code ?? 'failed'}`)
+    }
+  }
+  return lines.join('\n')
 }
 
 export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}) {
@@ -1558,8 +1843,10 @@ export function createJobOutputTool({ resolveJobs } = {}) {
   return {
     name: 'at_terminal_job_output',
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this
-    // into TOOL_TIMEOUT. Long enough to cover a `wait` and the read that follows it.
-    timeoutMs: 90000,
+    // into TOOL_TIMEOUT. `wait` accepts up to 600,000 ms (see the budget below); a smaller
+    // tool timeout would let the host cancel a legitimate wait as TOOL_TIMEOUT before the
+    // tool's own semantics could return `[status: running]`. 620 s leaves the read that follows.
+    timeoutMs: 620000,
     description:
       'Read a job output since the last read; wait settles it or times out.',
     parameters: {
@@ -1708,6 +1995,8 @@ export function createTools({
   runWithCallContext,
   resolveSpillStore,
   resolveJobs,
+  resolveJobToolNames,
+  onServersListed,
   logger,
   now
 } = {}) {
@@ -1725,6 +2014,8 @@ export function createTools({
     runInContext,
     resolveSpillStore,
     resolveJobs,
+    resolveJobToolNames,
+    onServersListed,
     logger
   }
   return [
@@ -1735,11 +2026,13 @@ export function createTools({
     createSftpListDirectoryTool(shared),
     createSftpStatPathTool(shared),
     createSftpReadFileTool(shared),
+    createSftpEditFileTool(shared),
     createSftpWriteFileTool(shared),
     createSftpCreateFileTool(shared),
     createSftpCreateDirectoryTool(shared),
     createSftpRenameTool(shared),
     createSftpDeleteTool(shared),
+    createSftpApplyPatchTool(shared),
     createOpenMonitorTool(shared),
     createGetHardwareMetricsTool(shared),
     createGetAgentExecutionStatusTool(shared),

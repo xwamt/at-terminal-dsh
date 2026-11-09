@@ -40,6 +40,8 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import semver from 'semver'
+
 import { extractPackages, findDshAsar, openAsar } from './lib/asar.mjs'
 import { REPO_RESOLVED, VENDORED } from './vendor.mjs'
 import {
@@ -60,7 +62,7 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
 /** Ceiling for the serialized tool definitions; see the tools check. */
-const PROMPT_BUDGET_BYTES = 5400
+const PROMPT_BUDGET_BYTES = 7000
 const BUNDLE_DIR = path.resolve(HERE, '..')
 const SANDBOX_DIR = path.join(BUNDLE_DIR, '.cache', 'dsh-sandbox')
 const SANDBOX_MODULES = path.join(SANDBOX_DIR, 'node_modules')
@@ -371,6 +373,42 @@ function lineOf(source, offset) {
 const manifest = readJson(path.join(BUNDLE_DIR, 'package.json'))
 const patchFile = path.join(BUNDLE_DIR, manifest.dsh?.bundle?.patch ?? '')
 
+/* ------------------------- sandbox-backed checks 5 and 6 ---------------------- */
+
+/** `@deepseek-ai/dsh-tools` is imported first so its closure lands in the sandbox. */
+const archive = skipSandbox ? null : findDshAsar()
+const sandboxSkipReason = skipSandbox
+  ? '--no-sandbox'
+  : archive === null
+    ? 'no DeepSeek Harness install found; set DSH_ASAR to its app.asar'
+    : null
+
+/**
+ * Version of the installed Harness, read from the archive's own `@deepseek-ai/dsh`
+ * manifest. That manifest carries `name`/`description`/`version` and **no commit**, so
+ * this stamp can only ever be a version plus an extraction timestamp — recording a
+ * commit here would be an invention.
+ *
+ * @returns {string | null} `null` when there is no install or it cannot be read.
+ */
+function readHostVersion() {
+  if (archive === null) return null
+  let asar
+  try {
+    asar = openAsar(archive)
+    const buffer = asar.read('/dsh/node_modules/@deepseek-ai/dsh/package.json')
+    if (buffer === null) return null
+    const version = JSON.parse(buffer.toString('utf8'))?.version
+    return typeof version === 'string' ? version : null
+  } catch {
+    return null
+  } finally {
+    asar?.close()
+  }
+}
+
+const HOST_VERSION = readHostVersion()
+
 /* ---------------------------------- 1. syntax --------------------------------- */
 
 await check('syntax', 'Shipped JavaScript parses', () => {
@@ -404,6 +442,47 @@ await check('manifest', 'Bundle manifest satisfies the dsh contract', () => {
     manifest.exports['./package.json'],
     'exports["./package.json"] is required: the Host half reads its own version'
   )
+
+  // DSH 0.2.2's plugin manager decides compatibility from `engines.dsh` (and refuses to
+  // update a bundle whose declaration does not cover the running Harness). An absent range
+  // silently degrades to "unknown", so the gate requires one and proves it covers this
+  // install — both under DSH's `includePrerelease` semantics and under plain semver.
+  assert.equal(manifest.dsh?.manifestVersion, 1, 'dsh.manifestVersion must be 1')
+  assert.equal(typeof manifest.engines?.node, 'string', 'engines.node must be declared')
+  assert.equal(typeof manifest.engines?.dsh, 'string', 'engines.dsh must be declared')
+  assert.ok(
+    semver.satisfies('24.9.0', manifest.engines.node),
+    `engines.node "${manifest.engines.node}" must accept Node >=24.9`
+  )
+  if (HOST_VERSION !== null) {
+    assert.ok(
+      semver.satisfies(HOST_VERSION, manifest.engines.dsh, { includePrerelease: true }),
+      `engines.dsh "${manifest.engines.dsh}" does not cover the installed Harness ${HOST_VERSION}`
+    )
+    assert.ok(
+      semver.satisfies(HOST_VERSION, manifest.engines.dsh),
+      `engines.dsh "${manifest.engines.dsh}" only matches ${HOST_VERSION} with includePrerelease; plain semver must match too`
+    )
+    assert.ok(
+      !semver.satisfies('0.3.0-alpha.1', manifest.engines.dsh, { includePrerelease: true }),
+      `engines.dsh "${manifest.engines.dsh}" must exclude 0.3.0 prereleases`
+    )
+  }
+
+  // The optional bundle is a second DSH-loaded manifest; the same compatibility contract
+  // applies, and forgetting it there bypasses the plugin manager's check for that row.
+  const optInManifestPath = path.resolve(BUNDLE_DIR, '..', 'dsh-terminal-ssh', 'package.json')
+  if (fs.existsSync(optInManifestPath)) {
+    const optInManifest = readJson(optInManifestPath)
+    assert.equal(typeof optInManifest.engines?.node, 'string', 'dsh-terminal-ssh engines.node must be declared')
+    assert.equal(typeof optInManifest.engines?.dsh, 'string', 'dsh-terminal-ssh engines.dsh must be declared')
+    if (HOST_VERSION !== null) {
+      assert.ok(
+        semver.satisfies(HOST_VERSION, optInManifest.engines.dsh, { includePrerelease: true }),
+        `dsh-terminal-ssh engines.dsh "${optInManifest.engines.dsh}" does not cover ${HOST_VERSION}`
+      )
+    }
+  }
 
   const patchRel = manifest.dsh?.bundle?.patch
   assert.equal(typeof patchRel, 'string', 'dsh.bundle.patch must be declared')
@@ -560,41 +639,36 @@ await check('deps', 'Shipped files only import resolvable bare specifiers', () =
   return `${shipped.length} file(s), ${specifierCount} specifier(s), ${vendoredNote}${repoNote}`
 })
 
-/* ------------------------- sandbox-backed checks 5 and 6 ---------------------- */
-
-/** `@deepseek-ai/dsh-tools` is imported first so its closure lands in the sandbox. */
-const archive = skipSandbox ? null : findDshAsar()
-const sandboxSkipReason = skipSandbox
-  ? '--no-sandbox'
-  : archive === null
-    ? 'no DeepSeek Harness install found; set DSH_ASAR to its app.asar'
-    : null
+/* ------------------------------ 4b. package files ------------------------------ */
 
 /**
- * Version of the installed Harness, read from the archive's own `@deepseek-ai/dsh`
- * manifest. That manifest carries `name`/`description`/`version` and **no commit**, so
- * this stamp can only ever be a version plus an extraction timestamp — recording a
- * commit here would be an invention.
- *
- * @returns {string | null} `null` when there is no install or it cannot be read.
+ * `files` is npm's only publication filter, and a missing entry is invisible locally:
+ * a `link:` install reads the working tree, while a registry install has exactly what
+ * the tarball carries. This walks every relative import of the three Host entry files
+ * and proves the target is listed, so adding a module without adding it to `files`
+ * fails the gate instead of producing a package that dies with ERR_MODULE_NOT_FOUND.
  */
-function readHostVersion() {
-  if (archive === null) return null
-  let asar
-  try {
-    asar = openAsar(archive)
-    const buffer = asar.read('/dsh/node_modules/@deepseek-ai/dsh/package.json')
-    if (buffer === null) return null
-    const version = JSON.parse(buffer.toString('utf8'))?.version
-    return typeof version === 'string' ? version : null
-  } catch {
-    return null
-  } finally {
-    asar?.close()
+await check('package-files', 'Every relative import of the Host entry is listed in files', () => {
+  const entries = ['index.js', 'tools.js', 'channel.js']
+  const listed = new Set(manifest.files ?? [])
+  const problems = []
+  let count = 0
+  for (const entry of entries) {
+    const source = fs.readFileSync(path.join(BUNDLE_DIR, entry), 'utf8')
+    for (const { specifier, pos } of findModuleSpecifiers(source)) {
+      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue
+      count += 1
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(entry), specifier))
+      if (!listed.has(target)) {
+        problems.push(`${entry}:${lineOf(source, pos)} imports "${specifier}" (${target}) but files does not list it`)
+      }
+    }
   }
-}
+  assert.deepEqual(problems, [], `runtime modules missing from the npm package:\n  ${problems.join('\n  ')}`)
+  return `${count} relative import(s) across ${entries.length} Host entry files`
+})
 
-const HOST_VERSION = readHostVersion()
+
 
 /** Read the sandbox stamp, or `null` when there is none (or it is unreadable). */
 function readSandboxStamp() {
@@ -733,6 +807,8 @@ if (sandboxSkipReason !== null) {
       at_terminal_sftp_list_directory: { path: '/tmp' },
       at_terminal_sftp_stat_path: { path: '/tmp' },
       at_terminal_sftp_read_file: { path: '/tmp/test.txt' },
+      at_terminal_sftp_edit_file: { path: '/tmp/test.txt', oldString: 'hello', newString: 'world' },
+      at_terminal_sftp_apply_patch: { path: '/tmp', input: '*** Begin Patch\n*** End Patch' },
       at_terminal_sftp_write_file: { path: '/tmp/test.txt', content: 'hello' },
       at_terminal_sftp_create_file: { path: '/tmp/test.txt' },
       at_terminal_sftp_create_directory: { path: '/tmp/testdir' },
@@ -855,6 +931,27 @@ if (sandboxSkipReason !== null) {
           modifiedAt: 1700000000000
         }
       },
+      async sftpApplyPatch(input) {
+        return {
+          terminalId: input.terminalId || 'term-1',
+          serverId: input.serverId || 'srv-1',
+          phase: 'commit',
+          cancelled: false,
+          operations: [],
+          affectedPaths: []
+        }
+      },
+      async sftpEditFile(input) {
+        return {
+          terminalId: input.terminalId || 'term-1',
+          serverId: input.serverId || 'srv-1',
+          path: input.path,
+          replacements: 1,
+          bytesWritten: 11,
+          size: 11,
+          modifiedAt: 1700000000000
+        }
+      },
       async sftpWriteFile(input) {
         return {
           terminalId: input.terminalId || 'term-1',
@@ -946,7 +1043,7 @@ if (sandboxSkipReason !== null) {
       resolveAgentService: () => mockService,
       resolveJobs: () => loopJobs
     })
-    assert.equal(definitions.length, 17, 'bundle must contribute exactly 17 tools')
+    assert.equal(definitions.length, 19, 'bundle must contribute exactly 19 tools')
 
     // The prompt budget. These definitions are sent on every single request, so the total is
     // a requirement rather than a nicety, and the guidance that used to be repeated inside
@@ -1195,6 +1292,8 @@ const ILLEGAL_SETTINGS = [
   { field: 'idleDisconnectMinutes', value: -5, why: 'below the minimum of 0' },
   { field: 'zebraStripes', value: 'yes', why: 'not a boolean' },
   { field: 'dialogLanguage', value: 'fr', why: 'not one of auto / zh-CN / en' },
+  { field: 'sftpWriteGuard', value: 'sometimes', why: 'not one of off / observe / strict' },
+  { field: 'enableApplyPatch', value: 'yes', why: 'not a boolean' },
 ]
 
 /** Inclusive boundaries and documented defaults must stay accepted. */
@@ -1204,7 +1303,9 @@ const LEGAL_SETTINGS = [
   { terminalFontSize: 200 },
   { scrollback: 100 },
   { idleDisconnectMinutes: 0 },
-  { terminalFontFamily: 'Menlo, monospace' }
+  { terminalFontFamily: 'Menlo, monospace' },
+  { sftpWriteGuard: 'strict' },
+  { enableApplyPatch: true }
 ]
 
 if (sandboxSkipReason !== null) {
@@ -1215,7 +1316,7 @@ if (sandboxSkipReason !== null) {
     // form is addressed by must be the row this bundle inserts.
     assert.equal(SETTINGS_SECTION_ID, AT_TERMINAL_PLUGIN_ID, 'SETTINGS_SECTION_ID must match the patch row id')
     assert.ok(Object.isFrozen(SETTINGS_FIELDS), 'SETTINGS_FIELDS must be frozen')
-    assert.equal(SETTINGS_FIELDS.length, 7, 'the bundle documents seven settings fields')
+    assert.equal(SETTINGS_FIELDS.length, 9, 'the bundle documents nine settings fields')
     for (const field of SETTINGS_FIELDS) {
       // `null` marks a dsh-only field (the dialog language: dsh keeps the UI language in the
       // renderer and has no `sshManager.<key>` to mirror). A string still has to mirror the
@@ -1320,7 +1421,9 @@ if (sandboxSkipReason !== null) {
       zebraStripes: true,
       // `en` rather than the `auto` default, so the round-trip proves the pinned value survives
       // instead of coinciding with what the schema would have produced anyway.
-      dialogLanguage: 'en'
+      dialogLanguage: 'en',
+      sftpWriteGuard: 'strict',
+      enableApplyPatch: true
     }
     const custom = schema(overrides)
     assert.deepEqual(readSettings(custom), overrides, 'valid overrides must round-trip through readSettings')

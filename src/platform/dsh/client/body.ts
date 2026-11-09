@@ -34,7 +34,15 @@ import {
   type Translate
 } from './models';
 import { useTabBadge } from './sessions';
-import { useMenuFocus } from './menuFocus';
+import {
+  SERVER_MENU_TARGET,
+  setServerMenuBuilder,
+  useMenuFocus,
+  type ContextMenuService,
+  type GetTriggerProps,
+  type MenuAction,
+  type MenuTarget
+} from './menuFocus';
 import { readAssetsState, saveAssetsState } from './tabState';
 import { serverRegular, terminalRegular } from './icons';
 import { renderAssetsView, type AssetSummary } from './views/assets';
@@ -70,11 +78,53 @@ const DEFAULT_UI_SETTINGS: TerminalUiSettings = {
  */
 export const BodyLocale = React.createContext<Translate>((key) => key);
 
+/**
+ * The host's original-file saver, as this client half uses it.
+ *
+ * Declared structurally instead of importing `@deepseek-ai/dsh-client-ui-file-actions`:
+ * no `src/**` file may import a `@deepseek-ai/*` implementation. `save` never buffers more
+ * than the caller's own bytes, and only a native `saved` result carries a destination —
+ * a browser `requested` download never knows where the file went.
+ */
+export interface FileActionSource {
+  read?: (signal: AbortSignal) => Promise<Blob>;
+  name?: string;
+  mediaType?: string;
+}
+
+export type FileActionResult =
+  | { status: 'cancelled' }
+  | { status: 'requested' }
+  | { status: 'saved'; path: string };
+
+export interface FileActionsService {
+  canSaveAs?: boolean;
+  save(source: FileActionSource, mode: 'download' | 'saveAs'): Promise<FileActionResult>;
+}
+
+/**
+ * The file-actions service handed to a body, if the host has one.
+ *
+ * `apply` passes a getter rather than the value: the service is optional and may be provided
+ * by a sibling client plugin whose activation order is not ours to assume. A missing
+ * lookup is the old `saveBytes` path, never a crash.
+ */
+export function fileActionsFrom(props: Record<string, unknown> | undefined): FileActionsService | undefined {
+  const value = props?.fileActions;
+  const candidate = typeof value === 'function' ? (value as () => unknown)() : value;
+  if (candidate === null || typeof candidate !== 'object') return undefined;
+  return typeof (candidate as FileActionsService).save === 'function'
+    ? (candidate as FileActionsService)
+    : undefined;
+}
+
 /** What `apply` lends a body beyond copy: the one action a body cannot perform itself. */
 export interface BodyExtras {
   openSessionTab?: (serverId: string) => boolean;
   openMonitorTab?: (options?: { serverId?: string; target?: 'hardware' | 'agent_execution'; mode?: 'hud' | 'tab' }) => boolean;
   onFloat?: (tabId: string) => void;
+  contextMenus?: ContextMenuService | (() => ContextMenuService | undefined);
+  fileActions?: FileActionsService | (() => FileActionsService | undefined);
   [key: string]: unknown;
 }
 
@@ -493,6 +543,30 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
       ? (props.openMonitorTab as (options?: { serverId?: string; target?: 'hardware' | 'agent_execution' }) => boolean)
       : undefined;
 
+  /**
+   * The host's shared menu, when this host has it.
+   *
+   * Both halves are probed: `contextMenus` is the service `apply` found through `ctx.get`, and
+   * `useContextMenu` is the root prop the menu plugin injects into every Slot scope. A host
+   * with the service but a Slot scope that has not been re-rendered yet gets the local menu,
+   * which is exactly the old behaviour rather than a dead right-click.
+   */
+  const contextMenuValue = props.contextMenus;
+  const contextMenus =
+    typeof contextMenuValue === 'function'
+      ? (contextMenuValue as () => ContextMenuService | undefined)()
+      : contextMenuValue !== null && typeof contextMenuValue === 'object'
+        ? (contextMenuValue as ContextMenuService)
+        : undefined;
+  const useContextMenu = props.useContextMenu as
+    | (() => { getTriggerProps?: GetTriggerProps })
+    | undefined;
+  const getTriggerProps =
+    contextMenus !== undefined && typeof useContextMenu === 'function'
+      ? useContextMenu().getTriggerProps
+      : undefined;
+  const hostMenu = contextMenus !== undefined && typeof getTriggerProps === 'function';
+
   const [formOpen, setFormOpen] = React.useState(restored?.formOpen ?? false);
   const [dialog, setDialog] = React.useState<'none' | 'import' | 'export'>('none');
   const [menu, setMenu] = React.useState<MenuState | null>(null);
@@ -663,6 +737,48 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
   const importBusy = importState.kind === 'pending';
   const busy = exportBusy || importBusy || saveState.kind === 'pending';
 
+  /**
+   * Write an exported envelope through the host's file service when it exists.
+   *
+   * Three outcomes matter and they are not interchangeable: `saved` is the only one that may
+   * claim a local path; `requested` is a browser download whose destination the page cannot
+   * know; `cancelled` is the user closing the native dialog and must stay silent. A service
+   * that throws is a service that is not usable, so the old anchor download runs instead —
+   * the envelope has already been produced and losing it to a version skew would be a
+   * regression, not a graceful degradation.
+   */
+  async function saveExportEnvelope(filename: string, envelope: unknown): Promise<string | null> {
+    const fileActions = fileActionsFrom(props);
+    if (fileActions === undefined) {
+      saveDownload(filename, envelope);
+      return filename;
+    }
+    const text = typeof envelope === 'string' ? envelope : JSON.stringify(envelope, null, 2);
+    try {
+      const result = await fileActions.save(
+        {
+          read: async () => new Blob([text], { type: 'application/json' }),
+          name: filename,
+          mediaType: 'application/json'
+        },
+        'download'
+      );
+      if (result.status === 'cancelled') return null;
+      // Only a native save knows its destination; `requested` keeps the suggested filename.
+      return result.status === 'saved' && result.path !== '' ? result.path : filename;
+    } catch (error) {
+      postDiagnostic(
+        'warn',
+        `fileActions.save failed; falling back to saveDownload: ${String((error as Error)?.message ?? error)}`,
+        'export',
+        null,
+        null
+      );
+      saveDownload(filename, envelope);
+      return filename;
+    }
+  }
+
   function runExport(): void {
     if (exportBusy) return;
     if (exportPassword === '') {
@@ -675,12 +791,18 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
       includePrivateKeys,
       packagePassword: exportPassword
     }).then(
-      (result) => {
+      async (result) => {
         const payload = (result ?? {}) as { filename?: unknown; omissions?: unknown; envelope?: unknown };
         const filename = text(payload.filename) || 'at-terminal-assets.at-terminal-assets';
         try {
-          saveDownload(filename, payload.envelope);
-          setExportState({ kind: 'ok', filename, omissions: count(payload.omissions) });
+          const shownName = await saveExportEnvelope(filename, payload.envelope);
+          // `null` is a cancelled native dialog: nothing was written and there is nothing to
+          // report, so the dialog goes back to its idle state instead of claiming success.
+          if (shownName === null) {
+            setExportState({ kind: 'idle' });
+            return;
+          }
+          setExportState({ kind: 'ok', filename: shownName, omissions: count(payload.omissions) });
         } catch (error) {
           setExportState({ kind: 'failed', ...asFailure(error) });
         }
@@ -820,6 +942,53 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
     window.setTimeout(() => setCopied(null), 2000);
   }
 
+  /**
+   * The host menu's actions for one captured server target.
+   *
+   * Built at open time, not at registration time: the menu service is page-lifetime, while
+   * this body's server list, `t`, busy flags and handlers are per mount. The target carries
+   * only the id; the record is looked up again so an action never fires against a stale row
+   * object after a refresh replaced it.
+   */
+  function serverMenuActions(value: Record<string, unknown>): MenuAction[] {
+    const serverId = text(value.serverId);
+    const server = servers.find((entry) => text(entry.id) === serverId);
+    if (server === undefined) return [];
+    const actions: MenuAction[] = [
+      {
+        id: 'connect',
+        label: t('menu.connect'),
+        // 连接 opens a session tab too, exactly like the double-click: this body has no
+        // terminal to connect *in*.
+        run: () => openAssetInSessionTab(server)
+      }
+    ];
+    if (openMonitorTab !== undefined) {
+      actions.push({
+        id: 'monitor',
+        label: t('monitor.title'),
+        run: () => openMonitorTab({ serverId, target: 'hardware' })
+      });
+    }
+    actions.push(
+      { id: 'edit', label: t('menu.edit'), run: () => startEdit(server) },
+      { id: 'copy', label: t('menu.copy'), run: () => copyAddress(server) },
+      { id: 'remove', label: t('menu.remove'), run: () => runRemove(server), danger: true }
+    );
+    return actions;
+  }
+
+  /*
+   * Publish this body's action builder while it is mounted. The dependency-free effect runs
+   * after every render so the builder always closes over the current server list and handlers;
+   * its cleanup removes only this exact builder (`set…` compares identity), so a rapid
+   * unmount/remount of the same tab cannot leave a dead closure behind.
+   */
+  React.useEffect(() => {
+    if (!hostMenu) return undefined;
+    return setServerMenuBuilder(tabKey, serverMenuActions);
+  });
+
   /* --------------------------------- render ---------------------------------- */
 
   const children: unknown[] = [];
@@ -907,6 +1076,17 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
           server
         });
       },
+      // Host menu route: the row and its `⋯` button both carry this captured target. The value
+      // is plain JSON (the tab key plus the id) — never the mutable `ServerView`.
+      menuTarget: hostMenu
+        ? (server) => ({ kind: SERVER_MENU_TARGET, value: { tabKey, serverId: text(server.id) } })
+        : undefined,
+      getTriggerProps: hostMenu ? getTriggerProps : undefined,
+      onOpenMenu: hostMenu
+        ? (target, point) => {
+            contextMenus?.open?.(target, point);
+          }
+        : undefined,
       onNew: startNew,
       onImport: () => {
         setImportState({ kind: 'idle' });
@@ -987,7 +1167,7 @@ export function AtTerminalBody(props: Record<string, unknown> = {}): ReactElemen
     );
   }
 
-  if (menu !== null) {
+  if (menu !== null && !hostMenu) {
     const item = (key: string, labelKey: string, onClick: () => void, danger = false): El =>
       h(
         'button',

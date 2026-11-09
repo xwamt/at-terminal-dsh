@@ -56,3 +56,36 @@ describe('the settings tab does not scroll sideways', () => {
     expect(SOURCE).toMatch(/const pageStyle = \{[\s\S]{0,300}?boxSizing: 'border-box'/);
   });
 });
+
+describe('the settings tab surfaces optional-bundle activation diagnostics', () => {
+  const optionalState = SOURCE.slice(SOURCE.indexOf('const optionalState'), SOURCE.indexOf('const [audits'));
+
+  it('renders a failed activation as a failure, not as Active', () => {
+    // `enabled` is the saved selection; only `activation: 'active'` may claim components run.
+    expect(optionalState).toContain("state.activation === 'failed'");
+    expect(optionalState).toContain("t('settings.optional.state.failed')");
+    expect(optionalState).toContain("state.activation === 'active'");
+  });
+
+  it('offers the build-script approval and retry action from pendingBuilds', () => {
+    expect(SOURCE).toContain('optional.pendingBuilds.map');
+    expect(SOURCE).toContain("t('settings.optional.pendingBuilds.title')");
+    expect(SOURCE).toContain("t('settings.optional.approveBuilds')");
+    expect(SOURCE).toContain("runOptional('terminal.optionalBundle.install', { approvedBuilds: pending })");
+  });
+
+  it('puts the install failure diagnostic behind a details entry point', () => {
+    expect(SOURCE).toMatch(/h\(\s*'details'/);
+    expect(SOURCE).toMatch(/h\(\s*'summary'/);
+    expect(SOURCE).toContain("t('settings.optional.details')");
+    expect(SOURCE).toContain('optional.diagnostic');
+  });
+
+  it('does not render a bare enabled state before checking activation', () => {
+    // The order matters: a selected-but-failed bundle must never paint "Active".
+    const failedAt = optionalState.indexOf("state.activation === 'failed'");
+    const activeAt = optionalState.indexOf("state.activation === 'active'");
+    expect(failedAt).toBeGreaterThan(-1);
+    expect(activeAt).toBeGreaterThan(failedAt);
+  });
+});

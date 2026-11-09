@@ -51,6 +51,16 @@ describe('the runtime skill catalog', () => {
     expect(edit.content).toContain('never pass through you');
   });
 
+  it('points at the job tool visible in the current tool table, not a preset-specific name', () => {
+    // The standard preset supplies the host's job_output/job_kill while a fallback
+    // composition uses the plugin's at_terminal_job_*; the skill cannot know which one a
+    // given step has, so it must not hardcode either pair as the only answer.
+    const inspection = RUNTIME_SKILLS.find((skill: { name: string }) => skill.name === 'at-terminal-inspection')!;
+    expect(inspection.content).toContain('job-output tool visible in the current tool table');
+    expect(inspection.content).not.toContain('`at_terminal_job_output`');
+    expect(inspection.content).not.toContain('`at_terminal_job_kill`');
+  });
+
   it('registers every skill, and the catalog agrees', async () => {
     recordSkillStatus('reset for test');
     const skills = fakeSkills();

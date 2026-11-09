@@ -11093,13 +11093,13 @@ var makeIssue = (params) => {
       path: fullPath,
       message: issueData.message
     };
-  let errorMessage2 = "", maps = errorMaps.filter((m3) => !!m3).slice().reverse();
+  let errorMessage3 = "", maps = errorMaps.filter((m3) => !!m3).slice().reverse();
   for (let map of maps)
-    errorMessage2 = map(fullIssue, { data, defaultError: errorMessage2 }).message;
+    errorMessage3 = map(fullIssue, { data, defaultError: errorMessage3 }).message;
   return {
     ...issueData,
     path: fullPath,
-    message: errorMessage2
+    message: errorMessage3
   };
 }, EMPTY_PATH = [];
 function addIssueToContext(ctx, issueData) {
@@ -14444,6 +14444,63 @@ var SftpConflictError = class extends Error {
 function isSftpConflictError(error) {
   return error instanceof SftpConflictError ? !0 : typeof error == "object" && error !== null && error.name === "SftpConflictError" && typeof error.path == "string";
 }
+var SftpEditMatchError = class extends Error {
+  constructor(path, occurrences) {
+    super(
+      occurrences === 0 ? `Found 0 occurrences of oldString in ${path}. The file may have changed; re-read it and retry with the exact text.` : `Found ${occurrences} occurrences; pass replaceAll or provide a longer match (${path}).`
+    );
+    this.path = path;
+    this.occurrences = occurrences;
+  }
+  name = "SftpEditMatchError";
+  code = "sftp-edit-match";
+}, SftpNotObservedError = class extends Error {
+  constructor(path) {
+    super(`Cannot modify "${path}": file has not been read \u2014 read the file, then retry.`);
+    this.path = path;
+  }
+  name = "SftpNotObservedError";
+  code = "sftp-not-observed";
+}, SftpStaleVersionError = class extends Error {
+  constructor(path, expected, actual) {
+    let expectedText = expectedSummary(expected), actualText = actual === void 0 ? "" : `; now ${actual.size} bytes / modifiedAt ${actual.modifiedAt}`;
+    super(
+      `Remote file changed since it was read (${path})${expectedText === "" ? "" : `: expected ${expectedText}`}${actualText}. re-read it, then retry.`
+    );
+    this.path = path;
+    this.expected = expected;
+    this.actual = actual;
+  }
+  name = "SftpStaleVersionError";
+  code = "sftp-stale-version";
+};
+function expectedSummary(expected) {
+  if (expected === void 0) return "";
+  let parts2 = [];
+  return expected.size !== void 0 && parts2.push(`${expected.size} bytes`), expected.modifiedAt !== void 0 && parts2.push(`modifiedAt ${expected.modifiedAt}`), parts2.join(" / ");
+}
+var SftpPatchSyntaxError = class extends Error {
+  constructor(lineNumber, reason) {
+    super(`Invalid patch at line ${lineNumber}: ${reason}`);
+    this.lineNumber = lineNumber;
+    this.reason = reason;
+  }
+  name = "SftpPatchSyntaxError";
+  code = "sftp-patch-syntax";
+}, SftpPatchRejectedError = class extends Error {
+  constructor(refusals) {
+    super(
+      `Patch rejected before any change (${refusals.length} problem${refusals.length === 1 ? "" : "s"}):
+` + refusals.map(
+        (refusal) => `- operation ${refusal.index + 1} (${refusal.kind} ${refusal.path}${refusal.destination === void 0 ? "" : ` -> ${refusal.destination}`}, patch line ${refusal.patchLine}): ${refusal.message}`
+      ).join(`
+`)
+    );
+    this.refusals = refusals;
+  }
+  name = "SftpPatchRejectedError";
+  code = "sftp-patch-preflight";
+};
 
 // src/sftp/TransferService.ts
 var noopProgress = {
@@ -15661,7 +15718,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
       throw coded(SFTP_ERROR_BAD_PARAMS, "a non-empty remote path is required");
     return value;
   }
-  async function statIfPresent(path) {
+  async function statIfPresent2(path) {
     try {
       return await manager.stat(path);
     } catch (error) {
@@ -15675,7 +15732,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
       if (bytes[index] === 0) return !0;
     return !1;
   }
-  function detectEol(bytes) {
+  function detectEol2(bytes) {
     let crlf = 0, lf = 0;
     for (let index = 0; index < bytes.length; index += 1)
       bytes[index] === 10 && (index > 0 && bytes[index - 1] === 13 ? crlf += 1 : lf += 1);
@@ -15760,7 +15817,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
           // tricked by a `\r` it will not reproduce (see `DshSftpFileText.text`).
           text: bytes.toString("utf8").replace(/\r\n/g, `
 `),
-          eol: detectEol(bytes),
+          eol: detectEol2(bytes),
           size: stat.size,
           modifiedAt: stat.modifiedAt,
           truncated
@@ -15839,7 +15896,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
         );
       return await runTransfer(request?.terminalId, "write", path, async () => {
         if (request.overwrite !== !0) {
-          let existing = await statIfPresent(path);
+          let existing = await statIfPresent2(path);
           if (existing !== void 0 && existing.type === "directory")
             throw coded(SFTP_ERROR_NOT_A_FILE, `${path} is a directory, so a file cannot be written over it.`);
           if (existing !== void 0)
@@ -15856,7 +15913,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
     async createFile(request) {
       let path = requiredRemotePath(request?.path);
       return await runTransfer(request?.terminalId, "write", path, async () => {
-        if (await statIfPresent(path) !== void 0)
+        if (await statIfPresent2(path) !== void 0)
           throw coded(
             SFTP_ERROR_CONFLICT,
             `${path} already exists on the server.`
@@ -15867,7 +15924,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
     async delete(request) {
       let path = requiredRemotePath(request?.path);
       return await runTransfer(request?.terminalId, "write", path, async () => {
-        let existing = await statIfPresent(path);
+        let existing = await statIfPresent2(path);
         if (existing === void 0)
           throw coded(SFTP_ERROR_NO_SUCH_FILE, `No such file or directory: ${path}`);
         let name2 = path.split("/").filter(Boolean).pop() || "";
@@ -16726,6 +16783,42 @@ var AgentToolService = class {
       }), error;
     }
   }
+  async sftpEditFile(input) {
+    try {
+      let res = await this.requireSftp().editFile(input);
+      return this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_edit_file",
+        command: `edit ${input.path}`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_edit_file",
+        command: `edit ${input.path}`,
+        reasonCode: sftpWriteFailureReason(error),
+        serverId: input.serverId
+      }), error;
+    }
+  }
+  async sftpApplyPatch(input) {
+    try {
+      let res = await this.requireSftp().applyPatch(input);
+      return this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_apply_patch",
+        command: `patch ${input.path} (${input.input.length} chars)`,
+        reasonCode: "policy_allowed",
+        serverId: input.serverId
+      }), res;
+    } catch (error) {
+      throw this.dependencies.executionBridge?.recordAudit({
+        tool: "at_terminal_sftp_apply_patch",
+        command: `patch ${input.path} (${input.input.length} chars)`,
+        reasonCode: sftpWriteFailureReason(error),
+        serverId: input.serverId
+      }), error;
+    }
+  }
   async sftpCreateFile(input) {
     try {
       let res = await this.requireSftp().createFile(input);
@@ -16858,7 +16951,7 @@ function auditReasonForError(error, fallback) {
 }
 function sftpWriteFailureReason(error) {
   let message = error instanceof Error ? error.message : String(error);
-  return message.includes("was cancelled") ? "user_cancelled" : message.startsWith("Timed out uploading") ? "upload_timeout" : "error";
+  return message.includes("was cancelled") ? "user_cancelled" : message.startsWith("Timed out uploading") ? "upload_timeout" : message.includes("file has not been read") ? "not_observed" : message.includes("changed since it was read") ? "stale_version" : "error";
 }
 
 // src/agent/HardwareMetricsCollector.ts
@@ -17413,6 +17506,9 @@ function utf8SafeEnd(buffer) {
   return length;
 }
 
+// src/agent/SftpAgentService.ts
+import { posix } from "node:path";
+
 // src/sftp/FileSize.ts
 var UNITS = ["B", "KB", "MB", "GB", "TB"];
 function formatFileSize(bytes) {
@@ -17424,16 +17520,326 @@ function formatFileSize(bytes) {
   return `${Number.isInteger(value) ? value.toString() : value.toFixed(1).replace(/\.0$/, "")} ${UNITS[unitIndex]}`;
 }
 
+// src/sftp/patch/index.ts
+var PatchParseError = class extends Error {
+  constructor(lineNumber, reason) {
+    super(`Invalid patch at line ${lineNumber}: ${reason}`);
+    this.lineNumber = lineNumber;
+    this.reason = reason;
+  }
+  name = "PatchParseError";
+}, WHITE_SPACE = new RegExp("\\p{White_Space}", "u"), BEGIN = "*** Begin Patch", END = "*** End Patch", EOF = "*** End of File", MOVE = "*** Move to: ", ADD = "*** Add File: ", DELETE = "*** Delete File: ", UPDATE = "*** Update File: ";
+function trim(value) {
+  let start2 = 0;
+  for (; start2 < value.length && WHITE_SPACE.test(value.charAt(start2)); ) start2 += 1;
+  return trimEnd(value.slice(start2));
+}
+function trimEnd(value) {
+  let end = value.length;
+  for (; end > 0 && WHITE_SPACE.test(value.charAt(end - 1)); ) end -= 1;
+  return value.slice(0, end);
+}
+function patchLines(patch) {
+  let offset = patch.slice(0, patch.length - patch.replace(new RegExp("^\\p{White_Space}+", "u"), "").length).split(`
+`).length - 1, lines = trim(patch).split(/\r?\n/u).map((text, index) => ({ text, number: offset + index + 1 })), first = lines[0], last = lines[lines.length - 1];
+  ["<<EOF", "<<'EOF'", '<<"EOF"'].includes(first.text) && last.text.endsWith("EOF") && lines.length >= 4 && (lines = lines.slice(1, -1));
+  let start2 = lines[0], end = lines[lines.length - 1];
+  if (trim(start2.text) !== BEGIN) throw new PatchParseError(start2.number, `Expected '${BEGIN}'`);
+  if (trim(end.text) !== END) throw new PatchParseError(end.number, `Expected '${END}'`);
+  return lines.map(
+    (line, index) => index < lines.length - 1 ? {
+      ...line,
+      text: line.text.replace(/\r$/u, "")
+    } : line
+  );
+}
+function emptyHunk(hunk) {
+  return hunk.oldLines.length === 0 && hunk.newLines.length === 0;
+}
+function ensureUpdate(operation, lineNumber) {
+  if (operation?.kind !== "update") return;
+  let last = operation.hunks[operation.hunks.length - 1];
+  if (last === void 0)
+    throw new PatchParseError(operation.lineNumber, `Update for '${operation.path}' requires at least one hunk`);
+  if (emptyHunk(last))
+    throw new PatchParseError(lineNumber, "Update hunk must contain context, added, or removed lines");
+}
+function newHunk(lineNumber) {
+  return {
+    lineNumber,
+    oldLines: [],
+    newLines: [],
+    isEndOfFile: !1
+  };
+}
+function readUpdate(operation, line) {
+  let text = trimEnd(line.text), previous = operation.hunks[operation.hunks.length - 1], marker = text === "@@" || text.startsWith("@@ ");
+  if (previous?.isEndOfFile) {
+    if (text === "") return;
+    if (!marker) throw new PatchParseError(line.number, "Expected '@@' after '*** End of File'");
+  }
+  if (previous === void 0 && operation.moveTo === void 0 && text.startsWith(MOVE)) {
+    operation.moveTo = text.slice(13);
+    return;
+  }
+  if (marker) {
+    if (previous !== void 0 && emptyHunk(previous))
+      throw new PatchParseError(line.number, "Update hunk must contain context, added, or removed lines");
+    let hunk2 = newHunk(line.number);
+    text.startsWith("@@ ") && (hunk2.context = text.slice(3)), operation.hunks.push(hunk2);
+    return;
+  }
+  if (text === EOF) {
+    if (previous !== void 0) {
+      if (emptyHunk(previous))
+        throw new PatchParseError(line.number, "Update hunk must contain context, added, or removed lines");
+      previous.isEndOfFile = !0;
+    }
+    return;
+  }
+  let prefix = line.text[0];
+  if (line.text !== "" && prefix !== " " && prefix !== "+" && prefix !== "-")
+    throw new PatchParseError(
+      line.number,
+      "Expected a context (' '), added ('+'), removed ('-') line, or '@@'"
+    );
+  let hunk = previous ?? newHunk(line.number);
+  previous === void 0 && operation.hunks.push(hunk);
+  let content = line.text.slice(1);
+  prefix === "+" ? hunk.newLines.push(content) : prefix === "-" ? hunk.oldLines.push(content) : (hunk.oldLines.push(content), hunk.newLines.push(content));
+}
+function parsePatch(patch) {
+  let lines = patchLines(patch), operations = [], ended = !1;
+  for (let line of lines.slice(1)) {
+    let operation = operations[operations.length - 1], header = operation?.kind === "update" && line !== lines[lines.length - 1] ? trimEnd(line.text) : trim(line.text);
+    if (ended && line !== lines[lines.length - 1]) {
+      if (trim(line.text) !== "") throw new PatchParseError(line.number, `Unexpected content after '${END}'`);
+      continue;
+    }
+    if (header === END)
+      ensureUpdate(operation, line.number), ended = !0;
+    else if (header.startsWith(ADD))
+      ensureUpdate(operation, line.number), operations.push({
+        kind: "add",
+        path: header.slice(14),
+        lineNumber: line.number,
+        content: ""
+      });
+    else if (header.startsWith(DELETE))
+      ensureUpdate(operation, line.number), operations.push({
+        kind: "delete",
+        path: header.slice(17),
+        lineNumber: line.number
+      });
+    else if (header.startsWith(UPDATE))
+      ensureUpdate(operation, line.number), operations.push({
+        kind: "update",
+        path: header.slice(17),
+        lineNumber: line.number,
+        hunks: []
+      });
+    else {
+      if (operations.length === 0 && header.startsWith("*** Environment ID:"))
+        throw new PatchParseError(
+          line.number,
+          "Environment ID headers are unsupported; the caller selects the filesystem provider"
+        );
+      if (operation?.kind === "add" && line.text.startsWith("+"))
+        operation.content += `${line.text.slice(1)}
+`;
+      else if (operation?.kind === "update")
+        readUpdate(operation, line);
+      else
+        throw new PatchParseError(
+          line.number,
+          "Expected an Add File, Delete File, or Update File header; added content must start with +"
+        );
+    }
+  }
+  return operations;
+}
+var WHITE_SPACE_APPLY = new RegExp("\\p{White_Space}", "u");
+function trimWhitespace(value, leading) {
+  let start2 = 0, end = value.length;
+  if (leading) for (; start2 < end && WHITE_SPACE_APPLY.test(value.charAt(start2)); ) start2 += 1;
+  for (; end > start2 && WHITE_SPACE_APPLY.test(value.charAt(end - 1)); ) end -= 1;
+  return value.slice(start2, end);
+}
+function normalizePunctuation(value) {
+  return trimWhitespace(value, !0).replace(/[\u2010-\u2015\u2212]/gu, "-").replace(/[\u2018-\u201B]/gu, "'").replace(/[\u201C-\u201F]/gu, '"').replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/gu, " ");
+}
+var MATCH_PASSES = [
+  (value) => value,
+  (value) => trimWhitespace(value, !1),
+  (value) => trimWhitespace(value, !0),
+  normalizePunctuation
+];
+function seekSequence(lines, pattern, start2, eof) {
+  if (pattern.length === 0) return start2;
+  if (pattern.length > lines.length) return;
+  let last = lines.length - pattern.length, first = eof ? last : start2;
+  for (let normalize2 of MATCH_PASSES) {
+    let expected = pattern.map(normalize2);
+    for (let index = first; index <= last; index += 1)
+      if (expected.every((line, offset) => normalize2(lines[index + offset]) === line)) return index;
+  }
+}
+function applyHunks(before, hunks) {
+  let original = before.split(`
+`);
+  original[original.length - 1] === "" && original.pop();
+  let replacements = [], lineIndex = 0;
+  for (let hunk of hunks) {
+    if (hunk.context !== void 0) {
+      let pattern2 = [hunk.context], found2 = seekSequence(original, pattern2, lineIndex, !1);
+      if (found2 === void 0)
+        return {
+          ok: !1,
+          failure: {
+            hunkLineNumber: hunk.lineNumber,
+            stage: "context",
+            searchStart: lineIndex,
+            pattern: pattern2
+          }
+        };
+      lineIndex = found2 + 1;
+    }
+    if (hunk.oldLines.length === 0) {
+      let start2 = original[original.length - 1] === "" ? original.length - 1 : original.length;
+      replacements.push({
+        start: start2,
+        oldLength: 0,
+        newLines: hunk.newLines
+      });
+      continue;
+    }
+    let pattern = hunk.oldLines, newLines = hunk.newLines, found = seekSequence(original, pattern, lineIndex, hunk.isEndOfFile);
+    if (found === void 0 && pattern[pattern.length - 1] === "" && (pattern = pattern.slice(0, -1), newLines[newLines.length - 1] === "" && (newLines = newLines.slice(0, -1)), found = seekSequence(original, pattern, lineIndex, hunk.isEndOfFile)), found === void 0)
+      return {
+        ok: !1,
+        failure: {
+          hunkLineNumber: hunk.lineNumber,
+          stage: "oldLines",
+          searchStart: lineIndex,
+          pattern: [...hunk.oldLines]
+        }
+      };
+    replacements.push({
+      start: found,
+      oldLength: pattern.length,
+      newLines
+    }), lineIndex = found + pattern.length;
+  }
+  replacements.sort((left, right) => left.start - right.start);
+  let lines = original;
+  for (let replacement of replacements.reverse())
+    lines = [
+      ...lines.slice(0, replacement.start),
+      ...replacement.newLines,
+      ...lines.slice(replacement.start + replacement.oldLength)
+    ];
+  return lines[lines.length - 1] !== "" && lines.push(""), {
+    ok: !0,
+    after: lines.join(`
+`)
+  };
+}
+
+// src/agent/remoteWritePolicy.ts
+function normalizeRemoteDirectory(path) {
+  return path.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
+}
+function isWithinRemoteDirectory(root, path) {
+  let normalizedRoot = normalizeRemoteDirectory(root), normalizedPath = normalizeRemoteDirectory(path);
+  if (normalizedPath === normalizedRoot)
+    return !0;
+  let prefix = normalizedRoot === "/" ? "/" : `${normalizedRoot}/`;
+  return normalizedPath.startsWith(prefix);
+}
+var SENSITIVE_PREFIXES = [
+  "/etc",
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/lib",
+  "/lib64",
+  "/boot",
+  "/root",
+  "/dev",
+  "/proc",
+  "/sys",
+  "/var/spool/cron"
+], SENSITIVE_SEGMENTS = /* @__PURE__ */ new Set([".ssh"]), SENSITIVE_BASENAMES = /* @__PURE__ */ new Set([
+  "authorized_keys",
+  "authorized_keys2",
+  "crontab",
+  ".bashrc",
+  ".bash_profile",
+  ".bash_login",
+  ".profile",
+  ".zshrc"
+]), SENSITIVE_BASENAME_PREFIXES = ["sudoers"], SENSITIVE_BASENAME_SUFFIXES = [".service", ".timer"];
+function isSensitiveRemotePath(path) {
+  let normalized = normalizeRemoteDirectory(path), segments = normalized.split("/").filter(Boolean), basename3 = segments.at(-1) ?? "";
+  return SENSITIVE_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)) || segments.some((segment) => SENSITIVE_SEGMENTS.has(segment)) || SENSITIVE_BASENAMES.has(basename3) || SENSITIVE_BASENAME_PREFIXES.some((prefix) => basename3.startsWith(prefix)) ? !0 : SENSITIVE_BASENAME_SUFFIXES.some((suffix) => basename3.endsWith(suffix));
+}
+var SENSITIVE_LOCAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".dsh"]), SENSITIVE_LOCAL_BASENAMES = /* @__PURE__ */ new Set([
+  "id_rsa",
+  "id_ed25519",
+  "id_ecdsa",
+  "id_dsa",
+  "authorized_keys",
+  ".netrc",
+  ".credentials",
+  ".env"
+]), SENSITIVE_LOCAL_FILES = [
+  { directory: ".kube", name: "config" },
+  { directory: ".docker", name: "config.json" }
+], SENSITIVE_LOCAL_SUFFIXES = [".pem"];
+function isSensitiveLocalPath(path) {
+  let segments = normalizeLocalPath(path).map((segment) => segment.toLowerCase());
+  if (segments.length === 0)
+    return !1;
+  let basename3 = segments.at(-1) ?? "";
+  return segments.some((segment) => SENSITIVE_LOCAL_SEGMENTS.has(segment)) || SENSITIVE_LOCAL_BASENAMES.has(basename3) || SENSITIVE_LOCAL_SUFFIXES.some((suffix) => basename3.endsWith(suffix)) ? !0 : SENSITIVE_LOCAL_FILES.some(
+    ({ directory, name: name2 }) => basename3 === name2 && segments.includes(directory)
+  );
+}
+function normalizeLocalPath(path) {
+  let segments = [];
+  for (let segment of path.replace(/\\/g, "/").split("/"))
+    if (!(segment === "" || segment === ".")) {
+      if (segment === "..") {
+        segments.pop();
+        continue;
+      }
+      segments.push(segment);
+    }
+  return segments;
+}
+
 // src/agent/SftpAgentService.ts
-var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, UPLOAD_TIMEOUT_MS = 3e5, MAX_LOCAL_UPLOAD_BYTES = 1024 * 1024 * 1024, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
+var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, SFTP_EDIT_MAX_BYTES = 2 * 1024 * 1024, UPLOAD_TIMEOUT_MS = 3e5, MAX_LOCAL_UPLOAD_BYTES = 1024 * 1024 * 1024, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
   constructor(options) {
     this.options = options;
+    this.terminalRemovalSubscription = this.options.terminalContext.onDidRemoveContext?.(
+      (terminalId) => this.disposeTerminal(terminalId)
+    );
   }
   /** One session per connected UI terminal; lives until the terminal closes. */
   terminalSessions = /* @__PURE__ */ new Map();
   /** One session per background server, reaped after BACKGROUND_IDLE_TTL_MS idle. */
   backgroundSessions = /* @__PURE__ */ new Map();
   roots = /* @__PURE__ */ new Map();
+  /**
+   * Reads remembered per connection, keyed by scope (`terminal:<id>` / `server:<id>`), then
+   * by `serverId\0resolvedPath`. Two levels because the scope is what a reconnect destroys:
+   * a version read over one SSH connection is not evidence about the file as seen through a
+   * different one, and the file itself can be replaced while the link is down.
+   */
+  observations = /* @__PURE__ */ new Map();
+  /** Removes the terminal-close subscription added in the constructor. */
+  terminalRemovalSubscription;
   async listDirectory(input) {
     return await this.withAudit("sftp_list_directory", input, async () => {
       let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
@@ -17465,18 +17871,18 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     return await this.withAudit("sftp_stat_path", input, async () => {
       let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
       try {
-        let path = await this.resolvePath(lease, input.path);
-        return {
+        let path = await this.resolvePath(lease, input.path), stat = await withTimeout2(
+          lease.session.stat(path),
+          READ_TIMEOUT_MS,
+          `Timed out reading metadata for ${path}.`
+        );
+        return this.observe(target2, lease, path, stat), {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
           resolvedBy: target2.resolvedBy,
           ...target2.candidates === void 0 ? {} : { candidates: target2.candidates },
           path,
-          ...await withTimeout2(
-            lease.session.stat(path),
-            READ_TIMEOUT_MS,
-            `Timed out reading metadata for ${path}.`
-          )
+          ...stat
         };
       } finally {
         lease.release();
@@ -17498,7 +17904,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         )).subarray(0, window2);
         if (looksBinary(buffer))
           throw new Error("Remote file appears to be binary.");
-        return {
+        return this.observe(target2, lease, path, stat), {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
           resolvedBy: target2.resolvedBy,
@@ -17531,10 +17937,10 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         let writable = await this.resolveWritablePath(lease, input.path);
         if (source.kind === "local")
           return await this.uploadLocalSource(source.localPath, input, target2, lease, writable);
-        let exists = await pathExists(lease.session, writable.path);
+        let current = await statIfPresent(lease.session, writable.path), exists = current !== void 0;
         if (exists && !input.overwrite)
           throw new Error("Remote file already exists. Pass overwrite: true to replace it.");
-        await withTimeout2(
+        await this.assertVersionAllowsWrite(target2, lease, writable.path, input, current), await withTimeout2(
           this.options.authorizer.requireWrite(target2.server, {
             operation: "write_file",
             path: writable.path,
@@ -17549,7 +17955,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
           lease.session.writeFile(writable.path, content),
           WRITE_TIMEOUT_MS,
           `Timed out writing remote file ${writable.path}.`
-        ), {
+        ), await this.observeAfterWrite(target2, lease, writable.path), {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
           path: writable.path,
@@ -17562,6 +17968,514 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     });
   }
   /**
+   * Replaces one literal string inside a remote text file.
+   *
+   * The alternative was read-everything + write-everything: for a large config file that
+   * costs the model the whole file twice, and any read window smaller than the file turns a
+   * whole-file write into silent truncation. Here the file is read on the Host, matched
+   * literally, and only the replacement travels back through the tool arguments.
+   *
+   * Line endings are data. `oldString` / `newString` are normalised to LF for matching and
+   * the file's own convention is restored on write, so a CRLF file is not rewritten as LF by
+   * an edit that never mentioned line endings. `replaceAll` has to be opt-in: a short needle
+   * that happens to occur twice is exactly when a blind global replace is wrong.
+   */
+  async editFile(input) {
+    return await this.withAudit("sftp_edit_file", input, async () => {
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
+      try {
+        let writable = await this.resolveWritablePath(lease, input.path), current = await statIfPresent(lease.session, writable.path);
+        if (current === void 0)
+          throw new Error("Remote file was not found.");
+        if (current.size > SFTP_EDIT_MAX_BYTES)
+          throw new Error(tooLargeToEditMessage(current.size));
+        if (typeof input.oldString != "string" || input.oldString === "")
+          throw new Error("oldString must be a non-empty string.");
+        if (typeof input.newString != "string")
+          throw new Error("newString must be a string.");
+        let readLimit = Math.min(current.size + 1, SFTP_EDIT_MAX_BYTES + 1), buffer = await withTimeout2(
+          lease.session.readFile(writable.path, readLimit),
+          READ_TIMEOUT_MS,
+          `Timed out reading remote file ${writable.path}.`
+        );
+        if (buffer.length > SFTP_EDIT_MAX_BYTES)
+          throw new Error(tooLargeToEditMessage(buffer.length));
+        if (buffer.length !== current.size) {
+          let actual = await statIfPresent(lease.session, writable.path);
+          throw new SftpStaleVersionError(
+            writable.path,
+            { size: current.size, modifiedAt: current.modifiedAt },
+            actual ?? { size: buffer.length, modifiedAt: current.modifiedAt }
+          );
+        }
+        if (looksBinary(buffer))
+          throw new Error(
+            `Remote file appears to be binary; refusing to edit ${writable.path}. Download it or change it with a command on the server instead.`
+          );
+        let eol = detectEol(buffer), text = buffer.toString("utf8").replace(/\r\n/g, `
+`), oldString = normalizeEol(input.oldString), newString = normalizeEol(input.newString), occurrences = countOccurrences(text, oldString);
+        if (occurrences === 0)
+          throw new SftpEditMatchError(writable.path, 0);
+        if (occurrences > 1 && input.replaceAll !== !0)
+          throw new SftpEditMatchError(writable.path, occurrences);
+        let replaced = input.replaceAll === !0 ? text.split(oldString).join(newString) : replaceFirst(text, oldString, newString), encodedText = eol === "crlf" ? replaced.replace(/\n/g, `\r
+`) : replaced, content = Buffer.from(encodedText, "utf8");
+        if (content.length > SFTP_EDIT_MAX_BYTES)
+          throw new Error(
+            `The edited text is ${content.length} bytes, over the ${SFTP_EDIT_MAX_BYTES}-byte limit for remote edit.`
+          );
+        await this.assertVersionAllowsWrite(target2, lease, writable.path, input, current), await withTimeout2(
+          this.options.authorizer.requireWrite(target2.server, {
+            // `write_file` is the authorizer's existing vocabulary; the confirmation names a
+            // single path write, which is exactly what an edit is. A new operation string
+            // would require the confirmation copy to learn a synonym for the same decision.
+            operation: "write_file",
+            path: writable.path,
+            overwrite: !0,
+            workspaceRoot: writable.workspaceRoot
+          }),
+          WRITE_TIMEOUT_MS,
+          `Timed out waiting for SFTP edit authorization for ${writable.path}.`
+        ), await withTimeout2(
+          lease.session.writeFile(writable.path, content),
+          WRITE_TIMEOUT_MS,
+          `Timed out writing remote file ${writable.path}.`
+        );
+        let after = await withTimeout2(
+          lease.session.stat(writable.path),
+          READ_TIMEOUT_MS,
+          `Timed out reading metadata for ${writable.path}.`
+        );
+        return this.observe(target2, lease, writable.path, after), {
+          terminalId: target2.terminalId,
+          serverId: target2.server.id,
+          path: writable.path,
+          replacements: input.replaceAll === !0 ? occurrences : 1,
+          bytesWritten: content.length,
+          size: after.size,
+          modifiedAt: after.modifiedAt
+        };
+      } finally {
+        lease.release();
+      }
+    });
+  }
+  /**
+   * Applies one Codex-style patch to a set of remote UTF-8 files.
+   *
+   * SFTP has no transaction: the only honest design is the one the Host's local `apply_patch`
+   * uses -- parse and simulate the whole patch first, refuse everything if any operation cannot
+   * be applied, then commit in order with the first failure stopping later operations. The
+   * returned `operations` array keeps the completed prefix and marks the rest `skipped`; a
+   * mutation whose outcome cannot be known (a timed-out write) is `unknown`, never silently
+   * reported as failed.
+   *
+   * All hunks are matched against LF-normalized text; each file's original CRLF/LF convention
+   * is restored on write. Preflight and commit share one lease, which is also what makes
+   * `strict` write guarding see the reads this method performs.
+   */
+  async applyPatch(input) {
+    return await this.withAudit("sftp_apply_patch", input, async () => {
+      let target2 = await this.resolveTarget(input, "write"), lease = await this.leaseFor(target2);
+      try {
+        let base = await this.resolvePatchBase(lease, input.path), parsed = this.parsePatchInput(input.input);
+        if (parsed.length === 0)
+          return {
+            terminalId: target2.terminalId,
+            serverId: target2.server.id,
+            phase: "commit",
+            cancelled: !1,
+            operations: [],
+            affectedPaths: []
+          };
+        let planned = await this.planPatch(target2, lease, base, parsed);
+        return await this.commitPatch(target2, lease, planned, input.signal, input.sftpWriteGuard);
+      } finally {
+        lease.release();
+      }
+    });
+  }
+  /** Parse the model's patch text, translating the parser's error into the service vocabulary. */
+  parsePatchInput(input) {
+    try {
+      return parsePatch(input);
+    } catch (error) {
+      throw error instanceof PatchParseError ? new SftpPatchSyntaxError(error.lineNumber, error.reason) : error;
+    }
+  }
+  /** Resolve the patch base directory; patch paths are relative to it and cannot escape it. */
+  async resolvePatchBase(lease, path) {
+    let base = await this.resolvePath(lease, path), stat = await withTimeout2(
+      lease.session.stat(base),
+      READ_TIMEOUT_MS,
+      `Timed out reading metadata for ${base}.`
+    );
+    if (stat.type !== void 0 && stat.type !== "directory")
+      throw new Error(`Patch base path is not a directory: ${base}`);
+    return base;
+  }
+  /** Resolve one patch path against the base, rejecting absolute paths and `..` escapes. */
+  async resolvePatchOperationPath(lease, base, rawPath) {
+    let raw = rawPath.trim();
+    if (raw === "")
+      throw new Error("Patch path cannot be empty.");
+    if (raw.startsWith("/"))
+      throw new Error(`Patch path must be relative to the patch base directory: ${rawPath}`);
+    if (raw.startsWith("~"))
+      throw new Error(`Patch path cannot use "~": ${rawPath}`);
+    let candidate = posix.normalize(joinRemotePath(base, raw));
+    if (!isWithinRemoteDirectory(base, candidate))
+      throw new Error(`Patch path escapes the base directory (${base}): ${rawPath}`);
+    return (await this.resolveWritablePath(lease, candidate)).path;
+  }
+  /**
+   * Preflight every operation against one simulated map.
+   *
+   * The map is what catches "the patch looks valid one file at a time but not as a sequence":
+   * an Add followed by an Update must see the added content, a Delete followed by an Add must
+   * see an absent path, and repeated aliases of the same resolved path share one state.
+   */
+  async planPatch(target2, lease, base, parsed) {
+    let states = /* @__PURE__ */ new Map(), operations = [], refusals = [], refuse = (index, kind, path, patchLine, message, code, extra = {}) => {
+      refusals.push({ index, kind, path, patchLine, message, code, ...extra });
+    };
+    for (let [index, operation] of parsed.entries()) {
+      let kind = operation.kind === "update" && operation.moveTo !== void 0 ? "move" : operation.kind, path = operation.path, destination;
+      try {
+        if (path = await this.resolvePatchOperationPath(lease, base, operation.path), operation.kind === "update" && operation.moveTo !== void 0 && (destination = await this.resolvePatchOperationPath(lease, base, operation.moveTo), destination === path)) {
+          refuse(index, "move", path, operation.lineNumber, `cannot move "${path}" to itself`, "sftp-patch-same-target", {
+            destination
+          });
+          continue;
+        }
+        switch (operation.kind) {
+          case "add": {
+            if ((await this.patchState(target2, lease, states, path, !1)).exists) {
+              refuse(index, "add", path, operation.lineNumber, `cannot add "${path}": file already exists`, "sftp-patch-already-exists");
+              break;
+            }
+            operations.push({
+              index,
+              kind: "add",
+              path,
+              patchLine: operation.lineNumber,
+              content: operation.content
+            }), states.set(path, { exists: !0, text: operation.content, eol: "lf", touched: !0 });
+            break;
+          }
+          case "update": {
+            let state = await this.patchState(target2, lease, states, path);
+            if (!state.exists) {
+              refuse(index, kind, path, operation.lineNumber, `cannot update "${path}": file not found`, "sftp-patch-not-found");
+              break;
+            }
+            let applied = applyHunks(state.text ?? "", operation.hunks);
+            if (!applied.ok) {
+              refuse(
+                index,
+                kind,
+                path,
+                operation.lineNumber,
+                `hunk at patch line ${applied.failure.hunkLineNumber} (${applied.failure.stage}) does not match`,
+                "sftp-patch-mismatch",
+                { hunkLine: applied.failure.hunkLineNumber }
+              );
+              break;
+            }
+            if (destination !== void 0) {
+              let destinationState = await this.patchState(target2, lease, states, destination);
+              if (destinationState.exists) {
+                refuse(index, "move", path, operation.lineNumber, `cannot move to "${destination}": destination already exists`, "sftp-patch-already-exists", { destination });
+                break;
+              }
+              if (isSensitiveRemotePath(path)) {
+                refuse(index, "move", path, operation.lineNumber, `cannot move sensitive path "${path}"`, "sftp-patch-sensitive-path", { destination });
+                break;
+              }
+              if (await this.isSymlinkPatchSource(lease, path)) {
+                refuse(index, "move", path, operation.lineNumber, `cannot move "${path}": path is a symbolic link`, "sftp-patch-symlink-source", { destination });
+                break;
+              }
+              operations.push({
+                index,
+                kind: "move",
+                path,
+                destination,
+                patchLine: operation.lineNumber,
+                before: state.text ?? "",
+                content: applied.after,
+                eol: state.eol,
+                sourceStat: state.stat,
+                sourceTouched: state.touched,
+                destinationStat: destinationState.stat
+              }), states.set(path, { exists: !1, eol: state.eol, touched: !0 }), states.set(destination, { exists: !0, text: applied.after, eol: state.eol, touched: !0 });
+              break;
+            }
+            operations.push({
+              index,
+              kind: "update",
+              path,
+              patchLine: operation.lineNumber,
+              before: state.text ?? "",
+              content: applied.after,
+              eol: state.eol,
+              sourceStat: state.stat,
+              sourceTouched: state.touched
+            }), states.set(path, { ...state, text: applied.after, touched: !0 });
+            break;
+          }
+          case "delete": {
+            let state = await this.patchState(target2, lease, states, path, !1);
+            if (!state.exists) {
+              refuse(index, "delete", path, operation.lineNumber, `cannot delete "${path}": file not found`, "sftp-patch-not-found");
+              break;
+            }
+            if (isSensitiveRemotePath(path)) {
+              refuse(index, "delete", path, operation.lineNumber, `cannot delete sensitive path "${path}"`, "sftp-patch-sensitive-path");
+              break;
+            }
+            if (await this.isSymlinkPatchSource(lease, path)) {
+              refuse(index, "delete", path, operation.lineNumber, `cannot delete "${path}": path is a symbolic link`, "sftp-patch-symlink-source");
+              break;
+            }
+            operations.push({
+              index,
+              kind: "delete",
+              path,
+              patchLine: operation.lineNumber,
+              sourceStat: state.stat,
+              sourceTouched: state.touched
+            }), states.set(path, { exists: !1, eol: state.eol, touched: !0 });
+            break;
+          }
+        }
+      } catch (error) {
+        refuse(index, kind, path, operation.lineNumber, errorMessage2(error), patchRefusalCode(error), {
+          ...destination === void 0 ? {} : { destination }
+        });
+      }
+    }
+    if (refusals.length > 0)
+      throw refusals.sort((left, right) => left.index - right.index), new SftpPatchRejectedError(refusals);
+    return operations;
+  }
+  /** Read and cache one file's simulated state for preflight. */
+  async patchState(target2, lease, states, path, readText = !0) {
+    let known = states.get(path);
+    if (known !== void 0)
+      return known;
+    let stat = await statIfPresent(lease.session, path);
+    if (stat === void 0) {
+      let state2 = { exists: !1, eol: "lf", touched: !1 };
+      return states.set(path, state2), state2;
+    }
+    if (stat.type !== void 0 && stat.type !== "file")
+      throw new Error(`Remote path is not a regular file: ${path}`);
+    if (!readText) {
+      this.observe(target2, lease, path, stat);
+      let state2 = { exists: !0, stat, eol: "lf", touched: !1 };
+      return states.set(path, state2), state2;
+    }
+    let content = await this.readPatchFile(target2, lease, path, stat), state = { exists: !0, stat, text: content.text, eol: content.eol, touched: !1 };
+    return states.set(path, state), state;
+  }
+  /** Read a file for patch preflight, enforcing the same text/size/binary rules as editFile. */
+  async readPatchFile(target2, lease, path, stat) {
+    if (stat.size > SFTP_EDIT_MAX_BYTES)
+      throw new Error(tooLargeToPatchMessage(stat.size));
+    let readLimit = Math.min(stat.size + 1, SFTP_EDIT_MAX_BYTES + 1), buffer = await withTimeout2(
+      lease.session.readFile(path, readLimit),
+      READ_TIMEOUT_MS,
+      `Timed out reading remote file ${path}.`
+    );
+    if (buffer.length > SFTP_EDIT_MAX_BYTES)
+      throw new Error(tooLargeToPatchMessage(buffer.length));
+    if (buffer.length !== stat.size)
+      throw new SftpStaleVersionError(path, { size: stat.size, modifiedAt: stat.modifiedAt });
+    if (looksBinary(buffer))
+      throw new Error(`Remote file appears to be binary; refusing to patch ${path}.`);
+    return this.observe(target2, lease, path, stat), {
+      text: buffer.toString("utf8").replace(/\r\n/g, `
+`),
+      eol: detectEol(buffer)
+    };
+  }
+  async isSymlinkPatchSource(lease, path) {
+    return await remoteEntryType(lease.session, path) === "symlink";
+  }
+  /** Commit a fully admitted plan in order; first failure stops later operations. */
+  async commitPatch(target2, lease, operations, signal, guard) {
+    let attempts = operations.map((operation) => ({ operation, status: "skipped" })), cancelled = !1;
+    for (let [index, operation] of operations.entries()) {
+      if (signal?.aborted) {
+        cancelled = !0;
+        break;
+      }
+      let started = !1, result;
+      try {
+        if (operation.kind === "add") {
+          if (await statIfPresent(lease.session, operation.path) !== void 0)
+            throw new Error(`Remote file already exists: ${operation.path}`);
+          await this.patchAuthorizeWrite(target2, lease, operation.path, "create_file", !1), started = !0, await withTimeout2(
+            lease.session.createFile(operation.path),
+            WRITE_TIMEOUT_MS,
+            `Timed out creating remote file ${operation.path}.`
+          );
+          let content = Buffer.from(operation.content ?? "", "utf8");
+          content.length > 0 && await withTimeout2(
+            lease.session.writeFile(operation.path, content),
+            WRITE_TIMEOUT_MS,
+            `Timed out writing remote file ${operation.path}.`
+          );
+          let after = await this.expectPatchStat(lease, operation.path);
+          this.observe(target2, lease, operation.path, after), result = { operation, status: "completed", bytesWritten: content.length };
+        } else if (operation.kind === "update") {
+          let current = await this.readPatchCurrent(target2, lease, operation.path);
+          if (operation.before !== void 0 && current.text !== operation.before)
+            throw new SftpStaleVersionError(operation.path, operation.sourceStat, current.stat);
+          await this.assertVersionAllowsWrite(target2, lease, operation.path, { sftpWriteGuard: guard }, current.stat), await this.patchAuthorizeWrite(target2, lease, operation.path, "write_file", !0), started = !0;
+          let content = Buffer.from(restorePatchEol(operation.content ?? "", operation.eol ?? current.eol), "utf8");
+          await withTimeout2(
+            lease.session.writeFile(operation.path, content),
+            WRITE_TIMEOUT_MS,
+            `Timed out writing remote file ${operation.path}.`
+          );
+          let after = await this.expectPatchStat(lease, operation.path);
+          this.observe(target2, lease, operation.path, after), result = { operation, status: "completed", bytesWritten: content.length };
+        } else if (operation.kind === "delete") {
+          let current = await statIfPresent(lease.session, operation.path);
+          if (current === void 0)
+            throw new SftpStaleVersionError(operation.path, operation.sourceStat);
+          await this.assertPatchVersion(operation, current), await this.assertVersionAllowsWrite(target2, lease, operation.path, { sftpWriteGuard: guard }, current), await this.patchAuthorizeDelete(target2, lease, operation.path), started = !0, await withTimeout2(
+            lease.session.deleteFile(operation.path),
+            WRITE_TIMEOUT_MS,
+            `Timed out deleting remote file ${operation.path}.`
+          ), this.forgetObservation(target2, lease, operation.path), result = { operation, status: "completed" };
+        } else {
+          let current = await this.readPatchCurrent(target2, lease, operation.path);
+          if (operation.before !== void 0 && current.text !== operation.before)
+            throw new SftpStaleVersionError(operation.path, operation.sourceStat, current.stat);
+          if (await this.assertVersionAllowsWrite(target2, lease, operation.path, { sftpWriteGuard: guard }, current.stat), await statIfPresent(lease.session, operation.destination) !== void 0)
+            throw new Error(`Remote destination already exists: ${operation.destination}`);
+          if ((operation.content ?? "") === (operation.before ?? "")) {
+            await this.patchAuthorizeWrite(target2, lease, operation.path, "rename", !1), await this.patchAuthorizeWrite(target2, lease, operation.destination, "rename", !1), started = !0, await withTimeout2(
+              lease.session.rename(operation.path, operation.destination),
+              WRITE_TIMEOUT_MS,
+              `Timed out renaming remote path ${operation.path}.`
+            ), this.forgetObservation(target2, lease, operation.path);
+            let after = await this.expectPatchStat(lease, operation.destination);
+            this.observe(target2, lease, operation.destination, after), result = { operation, status: "completed" };
+          } else {
+            let content = Buffer.from(restorePatchEol(operation.content ?? "", operation.eol ?? current.eol), "utf8");
+            await this.patchAuthorizeWrite(target2, lease, operation.destination, "create_file", !1), started = !0, await withTimeout2(
+              lease.session.createFile(operation.destination),
+              WRITE_TIMEOUT_MS,
+              `Timed out creating remote file ${operation.destination}.`
+            ), content.length > 0 && await withTimeout2(
+              lease.session.writeFile(operation.destination, content),
+              WRITE_TIMEOUT_MS,
+              `Timed out writing remote file ${operation.destination}.`
+            );
+            try {
+              await this.patchAuthorizeDelete(target2, lease, operation.path), await withTimeout2(
+                lease.session.deleteFile(operation.path),
+                WRITE_TIMEOUT_MS,
+                `Timed out deleting remote file ${operation.path}.`
+              );
+            } catch (deleteError) {
+              let destinationAfter = await statIfPresent(lease.session, operation.destination);
+              destinationAfter !== void 0 && this.observe(target2, lease, operation.destination, destinationAfter), result = {
+                operation,
+                status: "failed",
+                code: "sftp-patch-move-partial",
+                message: `destination ${operation.destination} was written but source ${operation.path} could not be removed: ${errorMessage2(deleteError)}`,
+                bytesWritten: content.length
+              }, attempts[index] = result;
+              break;
+            }
+            this.forgetObservation(target2, lease, operation.path);
+            let after = await this.expectPatchStat(lease, operation.destination);
+            this.observe(target2, lease, operation.destination, after), result = { operation, status: "completed", bytesWritten: content.length };
+          }
+        }
+      } catch (error) {
+        let failure = patchCommitFailure(error, started);
+        result = { operation, status: failure.unknown ? "unknown" : "failed", ...failure };
+      }
+      if (attempts[index] = result, result.status !== "completed")
+        break;
+    }
+    let affectedPaths = /* @__PURE__ */ new Set();
+    for (let attempt of attempts)
+      (attempt.status === "completed" || attempt.code === "sftp-patch-move-partial") && (affectedPaths.add(attempt.operation.path), attempt.operation.destination !== void 0 && affectedPaths.add(attempt.operation.destination));
+    return {
+      terminalId: target2.terminalId,
+      serverId: target2.server.id,
+      phase: "commit",
+      cancelled,
+      operations: attempts.map((attempt) => ({
+        index: attempt.operation.index,
+        kind: attempt.operation.kind,
+        path: attempt.operation.path,
+        ...attempt.operation.destination === void 0 ? {} : { destination: attempt.operation.destination },
+        patchLine: attempt.operation.patchLine,
+        status: attempt.status,
+        ...attempt.code === void 0 ? {} : { code: attempt.code },
+        ...attempt.message === void 0 ? {} : { message: attempt.message },
+        ...attempt.hunkLine === void 0 ? {} : { hunkLine: attempt.hunkLine },
+        ...attempt.bytesWritten === void 0 ? {} : { bytesWritten: attempt.bytesWritten }
+      })),
+      affectedPaths: [...affectedPaths]
+    };
+  }
+  async readPatchCurrent(target2, lease, path) {
+    let stat = await statIfPresent(lease.session, path);
+    if (stat === void 0)
+      throw new SftpStaleVersionError(path);
+    if (stat.type !== void 0 && stat.type !== "file")
+      throw new Error(`Remote path is not a regular file: ${path}`);
+    let file = await this.readPatchFile(target2, lease, path, stat);
+    return { stat, ...file };
+  }
+  async expectPatchStat(lease, path) {
+    return await withTimeout2(
+      lease.session.stat(path),
+      READ_TIMEOUT_MS,
+      `Timed out reading metadata for ${path}.`
+    );
+  }
+  async assertPatchVersion(operation, current) {
+    if (!(operation.sourceTouched === !0 || operation.sourceStat === void 0) && (current.size !== operation.sourceStat.size || current.modifiedAt !== operation.sourceStat.modifiedAt))
+      throw new SftpStaleVersionError(operation.path, operation.sourceStat, current);
+  }
+  async patchAuthorizeWrite(target2, lease, path, operation, overwrite) {
+    await withTimeout2(
+      this.options.authorizer.requireWrite(target2.server, {
+        operation,
+        path,
+        overwrite,
+        workspaceRoot: this.scopeWorkspaceRoot(lease)
+      }),
+      WRITE_TIMEOUT_MS,
+      `Timed out waiting for SFTP patch authorization for ${path}.`
+    );
+  }
+  async patchAuthorizeDelete(target2, lease, path) {
+    await withTimeout2(
+      this.options.authorizer.requireDelete(target2.server, {
+        operation: "delete_file",
+        path,
+        overwrite: !1,
+        workspaceRoot: this.scopeWorkspaceRoot(lease)
+      }),
+      WRITE_TIMEOUT_MS,
+      `Timed out waiting for SFTP patch delete confirmation for ${path}.`
+    );
+  }
+  scopeWorkspaceRoot(lease) {
+    return this.roots.get(lease.rootKey) ?? "/";
+  }
+  /**
    * Streams a local file to the remote path.
    *
    * Same gate as a text write — overwrite refusal, human authorization, a deadline — plus the
@@ -17572,10 +18486,10 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
    * evidence of what is in the file.
    */
   async uploadLocalSource(localPath, input, target2, lease, writable) {
-    let local = await statLocalSource(lease.session, localPath), sourcePath = local.realPath, exists = await pathExists(lease.session, writable.path);
+    let local = await statLocalSource(lease.session, localPath), sourcePath = local.realPath, current = await statIfPresent(lease.session, writable.path), exists = current !== void 0;
     if (exists && !input.overwrite)
       throw new Error("Remote file already exists. Pass overwrite: true to replace it.");
-    await withTimeout2(
+    await this.assertVersionAllowsWrite(target2, lease, writable.path, input, current), await withTimeout2(
       this.options.authorizer.requireUpload(target2.server, {
         operation: "upload_local_file",
         path: writable.path,
@@ -17607,7 +18521,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         `Timed out uploading ${sourcePath} to ${writable.path} after ${UPLOAD_TIMEOUT_MS / 1e3} s; the transfer was aborted and the remote file may be incomplete. Check the remote file before relying on it, and retry with overwrite: true if it needs replacing.`
       )) : error;
     }
-    return {
+    return await this.observeAfterWrite(target2, lease, writable.path), {
       terminalId: target2.terminalId,
       serverId: target2.server.id,
       path: writable.path,
@@ -17723,6 +18637,12 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
           throw new Error(
             "sftp_delete removes single files only. For a directory, use at_terminal_run_remote_command (it goes through the command policy and destructive warnings)."
           );
+        if (needsVersionCheck(input)) {
+          let current = await statIfPresent(lease.session, path);
+          if (current === void 0)
+            throw new Error("Remote file was not found.");
+          await this.assertVersionAllowsWrite(target2, lease, path, input, current);
+        }
         return await withTimeout2(
           this.options.authorizer.requireDelete(target2.server, {
             operation: "delete_file",
@@ -17736,7 +18656,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
           lease.session.deleteFile(path),
           WRITE_TIMEOUT_MS,
           `Timed out deleting remote file ${path}.`
-        ), { terminalId: target2.terminalId, serverId: target2.server.id, path, deleted: !0 };
+        ), this.forgetObservation(target2, lease, path), { terminalId: target2.terminalId, serverId: target2.server.id, path, deleted: !0 };
       } finally {
         lease.release();
       }
@@ -17749,7 +18669,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
       (session) => session.dispose(),
       () => {
       }
-    )), this.roots.delete(`terminal:${terminalId}`);
+    )), this.roots.delete(`terminal:${terminalId}`), this.clearObservations(`terminal:${terminalId}`);
   }
   /** Drops every pooled session for a server, e.g. after the server is deleted or edited. */
   disposeServer(serverId) {
@@ -17757,9 +18677,10 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     background && this.evictBackgroundSession(serverId, background);
     for (let [terminalId, entry] of [...this.terminalSessions])
       entry.serverId === serverId && this.disposeTerminal(terminalId);
-    this.roots.delete(`server:${serverId}`);
+    this.roots.delete(`server:${serverId}`), this.clearObservations(`server:${serverId}`);
   }
   dispose() {
+    this.terminalRemovalSubscription?.dispose();
     for (let [serverId, entry] of [...this.backgroundSessions])
       this.evictBackgroundSession(serverId, entry);
     this.backgroundSessions.clear();
@@ -17769,7 +18690,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
         () => {
         }
       );
-    this.terminalSessions.clear(), this.roots.clear();
+    this.terminalSessions.clear(), this.roots.clear(), this.observations.clear();
   }
   /**
    * Resolve the server and session a call acts on.
@@ -17829,7 +18750,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     if (existing)
       return await existing.promise;
     let session = this.options.createSession({ server: context.server }), promise = Promise.resolve().then(async () => (await session.connect(), session)).catch((error) => {
-      throw session.dispose(), this.terminalSessions.delete(context.terminalId), error;
+      throw session.dispose(), this.terminalSessions.delete(context.terminalId), this.clearObservations(`terminal:${context.terminalId}`), error;
     });
     return this.terminalSessions.set(context.terminalId, { serverId: context.server.id, promise }), await promise;
   }
@@ -17865,7 +18786,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     entry.inFlight = Math.max(0, entry.inFlight - 1), !(entry.inFlight > 0 || entry.closed || entry.idleTimer) && (entry.idleTimer = setTimeout(() => this.evictBackgroundSession(serverId, entry), BACKGROUND_IDLE_TTL_MS), entry.idleTimer.unref?.());
   }
   evictBackgroundSession(serverId, entry) {
-    entry.closed || (entry.closed = !0, entry.idleTimer && (clearTimeout(entry.idleTimer), entry.idleTimer = void 0), this.backgroundSessions.get(serverId) === entry && (this.backgroundSessions.delete(serverId), this.roots.delete(`server:${serverId}`)), entry.session.dispose());
+    entry.closed || (entry.closed = !0, entry.idleTimer && (clearTimeout(entry.idleTimer), entry.idleTimer = void 0), this.backgroundSessions.get(serverId) === entry && (this.backgroundSessions.delete(serverId), this.roots.delete(`server:${serverId}`), this.clearObservations(`server:${serverId}`)), entry.session.dispose());
   }
   async withAudit(tool, input, fn2) {
     let started = Date.now();
@@ -17924,16 +18845,106 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     let root = await lease.session.realpath(".");
     return this.roots.set(lease.rootKey, root), root;
   }
+  /** The connection a version belongs to: a terminal session or a pooled background one. */
+  scopeFor(target2, lease) {
+    return target2.terminalId === void 0 ? lease.rootKey : `terminal:${target2.terminalId}`;
+  }
+  observe(target2, lease, path, stat) {
+    if (!Number.isFinite(stat.size) || !Number.isFinite(stat.modifiedAt))
+      return;
+    let scope = this.scopeFor(target2, lease), files = this.observations.get(scope);
+    files === void 0 && (files = /* @__PURE__ */ new Map(), this.observations.set(scope, files)), files.set(observationKey(target2.server.id, path), { size: stat.size, modifiedAt: stat.modifiedAt });
+  }
+  observationFor(target2, lease, path) {
+    return this.observations.get(this.scopeFor(target2, lease))?.get(observationKey(target2.server.id, path));
+  }
+  forgetObservation(target2, lease, path) {
+    let scope = this.scopeFor(target2, lease), files = this.observations.get(scope);
+    files !== void 0 && (files.delete(observationKey(target2.server.id, path)), files.size === 0 && this.observations.delete(scope));
+  }
+  clearObservations(scope) {
+    this.observations.delete(scope);
+  }
+  /**
+   * Refuse a write of an existing file when the caller's version information disagrees with
+   * the server, or when `strict` has no read to compare against.
+   *
+   * `expectedSize` / `expectedModifiedAt` are compared only when supplied. `strict` also
+   * compares the stored observation even when the caller passed no expected values — that is
+   * the whole point of requiring a read; `observe` deliberately does not, because it must not
+   * change the behaviour of a caller that never opted into passing a version.
+   *
+   * A missing `current` means the file does not exist. Creating a new file needs no prior
+   * read; replacing an observed file that has since disappeared does, because the bytes the
+   * caller planned to overwrite are gone and the path may now be something else.
+   */
+  async assertVersionAllowsWrite(target2, lease, path, input, current) {
+    let guard = resolveWriteGuard(input.sftpWriteGuard);
+    if (guard === "off")
+      return;
+    let observed = this.observationFor(target2, lease, path);
+    if (current === void 0) {
+      if (input.expectedSize !== void 0 || input.expectedModifiedAt !== void 0)
+        throw new SftpStaleVersionError(path, {
+          size: input.expectedSize,
+          modifiedAt: input.expectedModifiedAt
+        });
+      if (guard === "strict" && observed !== void 0)
+        throw new SftpStaleVersionError(path, observed);
+      return;
+    }
+    if (input.expectedSize !== void 0 && current.size !== input.expectedSize)
+      throw new SftpStaleVersionError(
+        path,
+        { size: input.expectedSize, modifiedAt: input.expectedModifiedAt },
+        { size: current.size, modifiedAt: current.modifiedAt }
+      );
+    if (input.expectedModifiedAt !== void 0 && current.modifiedAt !== input.expectedModifiedAt)
+      throw new SftpStaleVersionError(
+        path,
+        { size: input.expectedSize, modifiedAt: input.expectedModifiedAt },
+        { size: current.size, modifiedAt: current.modifiedAt }
+      );
+    if (guard === "strict") {
+      if (observed === void 0)
+        throw new SftpNotObservedError(path);
+      if (observed.size !== current.size || observed.modifiedAt !== current.modifiedAt)
+        throw new SftpStaleVersionError(path, observed, { size: current.size, modifiedAt: current.modifiedAt });
+    }
+  }
+  /**
+   * Record the post-write stat a later `strict` check will compare against.
+   *
+   * Best-effort on purpose: the write has already landed, so a stat that fails afterwards
+   * must not turn a successful write into an apparent failure and invite a duplicate edit.
+   * Dropping the observation is the honest fallback — the next strict write asks for a fresh
+   * read instead of comparing against a version nobody could confirm.
+   */
+  async observeAfterWrite(target2, lease, path) {
+    try {
+      let stat = await withTimeout2(
+        lease.session.stat(path),
+        READ_TIMEOUT_MS,
+        `Timed out reading metadata for ${path}.`
+      );
+      this.observe(target2, lease, path, stat);
+    } catch {
+      this.forgetObservation(target2, lease, path);
+    }
+  }
 };
 function expandHome(root, path) {
   return path === "~" ? root : path.startsWith("~/") ? joinRemotePath(root, path.slice(2)) : path;
 }
 async function pathExists(session, path) {
+  return await statIfPresent(session, path) !== void 0;
+}
+async function statIfPresent(session, path) {
   try {
-    return await session.stat(path), !0;
+    return await session.stat(path);
   } catch (error) {
     if (isMissingPathError(error))
-      return !1;
+      return;
     throw error;
   }
 }
@@ -17997,12 +19008,72 @@ function clampListOffset(value) {
 function resolveReadStart(offset, size) {
   return offset === void 0 || !Number.isInteger(offset) || offset === 0 ? 0 : offset < 0 ? Math.max(0, size + offset) : Math.min(offset, size);
 }
+function observationKey(serverId, path) {
+  return `${serverId}\0${path}`;
+}
+function resolveWriteGuard(value) {
+  return value === "off" || value === "strict" || value === "observe" ? value : "observe";
+}
+function needsVersionCheck(input) {
+  return resolveWriteGuard(input.sftpWriteGuard) === "off" ? !1 : input.expectedSize !== void 0 || input.expectedModifiedAt !== void 0 || resolveWriteGuard(input.sftpWriteGuard) === "strict";
+}
+function detectEol(bytes) {
+  let crlf = 0, lf = 0;
+  for (let index = 0; index < bytes.length; index += 1)
+    bytes[index] === 10 && (index > 0 && bytes[index - 1] === 13 ? crlf += 1 : lf += 1);
+  return crlf > 0 && crlf >= lf ? "crlf" : "lf";
+}
+function normalizeEol(text) {
+  return text.replace(/\r\n/g, `
+`);
+}
+function countOccurrences(haystack, needle) {
+  let count = 0, index = 0;
+  for (; ; ) {
+    let found = haystack.indexOf(needle, index);
+    if (found === -1)
+      return count;
+    count += 1, index = found + needle.length;
+  }
+}
+function replaceFirst(haystack, needle, replacement) {
+  let found = haystack.indexOf(needle);
+  return found === -1 ? haystack : haystack.slice(0, found) + replacement + haystack.slice(found + needle.length);
+}
+function tooLargeToEditMessage(size) {
+  return `Remote file is ${formatFileSize(size)}, over the ${formatFileSize(SFTP_EDIT_MAX_BYTES)}-byte limit for remote edit. Use at_terminal_sftp_read_file with offset/limit to inspect it, or change it with a command on the server.`;
+}
+function tooLargeToPatchMessage(size) {
+  return `Remote file is ${formatFileSize(size)}, over the ${formatFileSize(SFTP_EDIT_MAX_BYTES)}-byte limit for remote patch. Split the change or use a command on the server for a file this large.`;
+}
+function restorePatchEol(text, eol) {
+  return eol === "lf" ? text : text.replace(/\r\n/g, `
+`).replace(/\n/g, `\r
+`);
+}
+function errorMessage2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function patchRefusalCode(error) {
+  if (error instanceof SftpStaleVersionError) return "sftp-stale-version";
+  if (error instanceof SftpNotObservedError) return "sftp-not-observed";
+  let message = errorMessage2(error);
+  return message.includes("appears to be binary") ? "sftp-patch-binary" : message.includes("limit for remote patch") ? "sftp-patch-too-large" : message.includes("escapes the base directory") ? "sftp-patch-path-escape" : message.includes("not a regular file") ? "sftp-patch-not-regular-file" : message.includes("not found") ? "sftp-patch-not-found" : "sftp-patch-failed";
+}
+function patchCommitFailure(error, started) {
+  let message = errorMessage2(error);
+  return error instanceof SftpStaleVersionError ? { unknown: !1, code: "sftp-stale-version", message } : error instanceof SftpNotObservedError ? { unknown: !1, code: "sftp-not-observed", message } : started && /^Timed out (?:writing|creating|deleting|renaming)/.test(message) ? {
+    unknown: !0,
+    code: "sftp-patch-unknown",
+    message: `${message} \u2014 re-read the affected files before retrying.`
+  } : { unknown: !1, code: patchRefusalCode(error), message };
+}
 function looksBinary(buffer) {
   return buffer.includes(0);
 }
 function auditReasonForError2(error) {
   let message = error instanceof Error ? error.message : String(error);
-  return message.includes("was cancelled") ? "user_cancelled" : message.includes("does not allow background connections") ? "background_denied" : message.includes("Timed out waiting for SFTP") ? "confirmation_timeout" : message.includes("Timed out reading") || message.includes("Timed out listing") ? "read_timeout" : message.includes("Timed out uploading") ? "upload_timeout" : message.startsWith("Local file was not found:") ? "local_not_found" : message.startsWith("Local path is not a regular file:") ? "local_not_regular_file" : message.startsWith("Local file is too large to upload:") ? "local_too_large" : "error";
+  return message.includes("was cancelled") ? "user_cancelled" : message.includes("does not allow background connections") ? "background_denied" : message.includes("Timed out waiting for SFTP") ? "confirmation_timeout" : message.includes("Timed out reading") || message.includes("Timed out listing") ? "read_timeout" : message.includes("Timed out uploading") ? "upload_timeout" : message.startsWith("Local file was not found:") ? "local_not_found" : message.startsWith("Local path is not a regular file:") ? "local_not_regular_file" : message.startsWith("Local file is too large to upload:") ? "local_too_large" : message.includes("file has not been read") ? "not_observed" : message.includes("changed since it was read") ? "stale_version" : message.startsWith("Found 0 occurrences") || message.includes("pass replaceAll or provide a longer match") ? "edit_match_failed" : message.includes("appears to be binary") ? "binary_file" : message.includes("limit for remote edit") ? "file_too_large" : "error";
 }
 async function withTimeout2(promise, timeoutMs, message) {
   promise.catch(() => {
@@ -18018,79 +19089,6 @@ async function withTimeout2(promise, timeoutMs, message) {
   } finally {
     timer && clearTimeout(timer);
   }
-}
-
-// src/agent/remoteWritePolicy.ts
-function normalizeRemoteDirectory(path) {
-  return path.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
-}
-function isWithinRemoteDirectory(root, path) {
-  let normalizedRoot = normalizeRemoteDirectory(root), normalizedPath = normalizeRemoteDirectory(path);
-  if (normalizedPath === normalizedRoot)
-    return !0;
-  let prefix = normalizedRoot === "/" ? "/" : `${normalizedRoot}/`;
-  return normalizedPath.startsWith(prefix);
-}
-var SENSITIVE_PREFIXES = [
-  "/etc",
-  "/usr",
-  "/bin",
-  "/sbin",
-  "/lib",
-  "/lib64",
-  "/boot",
-  "/root",
-  "/dev",
-  "/proc",
-  "/sys",
-  "/var/spool/cron"
-], SENSITIVE_SEGMENTS = /* @__PURE__ */ new Set([".ssh"]), SENSITIVE_BASENAMES = /* @__PURE__ */ new Set([
-  "authorized_keys",
-  "authorized_keys2",
-  "crontab",
-  ".bashrc",
-  ".bash_profile",
-  ".bash_login",
-  ".profile",
-  ".zshrc"
-]), SENSITIVE_BASENAME_PREFIXES = ["sudoers"], SENSITIVE_BASENAME_SUFFIXES = [".service", ".timer"];
-function isSensitiveRemotePath(path) {
-  let normalized = normalizeRemoteDirectory(path), segments = normalized.split("/").filter(Boolean), basename3 = segments.at(-1) ?? "";
-  return SENSITIVE_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`)) || segments.some((segment) => SENSITIVE_SEGMENTS.has(segment)) || SENSITIVE_BASENAMES.has(basename3) || SENSITIVE_BASENAME_PREFIXES.some((prefix) => basename3.startsWith(prefix)) ? !0 : SENSITIVE_BASENAME_SUFFIXES.some((suffix) => basename3.endsWith(suffix));
-}
-var SENSITIVE_LOCAL_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".dsh"]), SENSITIVE_LOCAL_BASENAMES = /* @__PURE__ */ new Set([
-  "id_rsa",
-  "id_ed25519",
-  "id_ecdsa",
-  "id_dsa",
-  "authorized_keys",
-  ".netrc",
-  ".credentials",
-  ".env"
-]), SENSITIVE_LOCAL_FILES = [
-  { directory: ".kube", name: "config" },
-  { directory: ".docker", name: "config.json" }
-], SENSITIVE_LOCAL_SUFFIXES = [".pem"];
-function isSensitiveLocalPath(path) {
-  let segments = normalizeLocalPath(path).map((segment) => segment.toLowerCase());
-  if (segments.length === 0)
-    return !1;
-  let basename3 = segments.at(-1) ?? "";
-  return segments.some((segment) => SENSITIVE_LOCAL_SEGMENTS.has(segment)) || SENSITIVE_LOCAL_BASENAMES.has(basename3) || SENSITIVE_LOCAL_SUFFIXES.some((suffix) => basename3.endsWith(suffix)) ? !0 : SENSITIVE_LOCAL_FILES.some(
-    ({ directory, name: name2 }) => basename3 === name2 && segments.includes(directory)
-  );
-}
-function normalizeLocalPath(path) {
-  let segments = [];
-  for (let segment of path.replace(/\\/g, "/").split("/"))
-    if (!(segment === "" || segment === ".")) {
-      if (segment === "..") {
-        segments.pop();
-        continue;
-      }
-      segments.push(segment);
-    }
-  return segments;
 }
 
 // src/agent/SftpWriteAuthorizer.ts

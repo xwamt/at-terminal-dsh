@@ -71,6 +71,8 @@ AT Terminal MCP publishes tools through the shared **AT Series** hub (`~/.at-ser
 | `sftp_list_directory` | read-only | Lists a remote directory through a connected AT Terminal SFTP session. Returns at most `maxEntries` (default 500, hard cap 5000) plus `truncated`/`total`; `offset` pages through large listings. |
 | `sftp_stat_path` | read-only | Returns metadata for a remote file or directory. |
 | `sftp_read_file` | read-only | Reads bounded UTF-8 text from a remote file. Default `maxBytes` 65536 (hard cap 262144). `offset` continues a read; a negative `offset` reads the tail of the file. Binary-looking content is rejected. |
+| `sftp_edit_file` | write | Replaces one literal string in a remote UTF-8 file. The needle must match exactly once unless `replaceAll: true`; a miss or an ambiguous match fails with the occurrence count instead of writing. Keeps the file's CRLF/LF style, rejects binary and >2 MiB files, and accepts `expectedSize` / `expectedModifiedAt` from a prior read so a stale version is refused rather than overwritten. |
+| `sftp_apply_patch` | write | Optional, disabled by default (`enableApplyPatch`). Applies one Codex-style patch (Add/Update/Delete/Move) across multiple remote UTF-8 files. Parses and preflights the whole patch first — a syntax error, a missing file, a binary/oversized file or a hunk mismatch rejects the patch with zero writes — then commits operations in order and stops at the first failure, returning `completed` / `failed` / `unknown` / `skipped` per operation. Remote patches do not enter DSH Review; SFTP has no transaction, so partial results are reported honestly. |
 | `sftp_write_file` | write | Writes UTF-8 text to a remote file. Existing files require `overwrite: true`. `localPath` uploads a file from the machine running the Host instead of passing `content`: the Host reads and streams it, so a binary or a large file never enters the model's context. An upload always asks, even at full trust. |
 | `sftp_create_file` | write | Creates a new remote file, optionally with UTF-8 content. |
 | `sftp_create_directory` | write | Creates a new remote directory. |
@@ -109,6 +111,14 @@ Host plugin cannot see it. Setting **`dialogLanguage`** to `zh-CN` or `en` pins 
 the system guess is wrong; `auto` (the default) follows the system. The effective choice is
 readable from `state.get` on the plugin's channel (`dialogLanguage: {setting, system, language,
 strings}`), so a wrong language can be diagnosed without spending a model turn.
+
+Two write-related settings share the same form. **`sftpWriteGuard`** (`off` / `observe` / `strict`,
+default `observe`) decides how hard an Agent SFTP write defends against a stale read: `observe`
+enforces the `expectedSize` / `expectedModifiedAt` the model passes back and otherwise keeps the
+0.3.0 behaviour, `strict` additionally refuses to modify a file the agent has not read on this
+connection, and `off` disables the check. **`enableApplyPatch`** (default `false`) registers the
+optional multi-file `at_terminal_sftp_apply_patch` tool; while it is off the tool is absent from the
+model's tool set entirely.
 
 | Section | What it shows |
 |---|---|
@@ -175,7 +185,7 @@ settled `stdin_read` / `running`; the next `terminal_send` of `pwd` printed `/tm
 - Limited trust does not bypass SFTP write authorization. Full trust skips ordinary remote-command and SFTP write confirmation; sensitive paths are the exception — full trust still asks for those. No trust level bypasses SSH host key trust.
 - A `localPath` upload is authorized on its own: it reads the machine the Host runs on, which no server trust level ever covered. It asks at every trust level — full trust included — stores no grant, and a sensitive path on either end (the local source or the remote destination) still asks twice.
 - A background command is confirmed **before** the job starts, never from inside it: a job runs detached from the call, so a dialog raised there would arrive with no tool call in flight and nowhere to answer. A composition without the job registry degrades the call to a foreground run and says so in `notice`.
-- When more than one SSH server is connected, a call that names no server is resolved by what it can do. **Write and execute** tools (`sftp_write_file`, `sftp_create_file`, `sftp_create_directory`, `sftp_rename`, `sftp_delete`, `run_remote_command`) refuse with an error that lists every connected server, and nothing reaches any host — acting on the wrong machine returns a success that looks like evidence about the right one. **Read** tools (`sftp_list_directory`, `sftp_stat_path`, `sftp_read_file`, `get_hardware_metrics`) may still use the active terminal, and their result says `resolvedBy: "implicit"` with the candidate list; with one server connected they say `"single-connected"`. `open_monitor` is treated as a read: it pivots the panel, it does not modify anything.
+- When more than one SSH server is connected, a call that names no server is resolved by what it can do. **Write and execute** tools (`sftp_write_file`, `sftp_edit_file`, `sftp_apply_patch`, `sftp_create_file`, `sftp_create_directory`, `sftp_rename`, `sftp_delete`, `run_remote_command`) refuse with an error that lists every connected server, and nothing reaches any host — acting on the wrong machine returns a success that looks like evidence about the right one. **Read** tools (`sftp_list_directory`, `sftp_stat_path`, `sftp_read_file`, `get_hardware_metrics`) may still use the active terminal, and their result says `resolvedBy: "implicit"` with the candidate list; with one server connected they say `"single-connected"`. `open_monitor` is treated as a read: it pivots the panel, it does not modify anything.
 - Cancelling a background command sends `SIGTERM` to the remote process group and waits for it to disappear before reporting the job as killed — closing the local SSH channel alone would leave the process running. The pid it signals comes from a file the job wrote on the remote host, named after the job id, removed before the signal is sent.
 - Writes outside the directory the SFTP session was opened in are highlighted in the prompt and cannot be granted for the whole session.
 - Sensitive paths (`~/.ssh`, `/etc`, `/usr`, `/root`, `*.service`, `authorized_keys`, `sudoers*`, `crontab`) always require a second confirmation and are never remembered.

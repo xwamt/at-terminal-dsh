@@ -37,7 +37,7 @@ import z from '@deepseek-ai/schemastery'
 import { broadcastMonitorEvent, getChannelPresence, registerChannel } from './channel.js'
 import { createCommands, registerCommands } from './commands.js'
 import { classify, createGuard, createPreExecute } from './policy.js'
-import { TRUST_VARIABLE, promptSection, recordSectionRegistration, trustFact } from './prompt.js'
+import { SERVER_TOOL_NAMES, TRUST_VARIABLE, promptSection, recordSectionRegistration, trustFact } from './prompt.js'
 import { RUNTIME_SKILLS, recordSkillStatus, registerRuntimeSkills, verifyRegisteredSkills } from './skills.js'
 import { createConfigSchema, readSettings } from './settings.js'
 import { loadDialogMessages, resolveDialogLanguage, systemLanguageTag } from './locale.js'
@@ -260,6 +260,103 @@ export function apply(ctx, config = {}) {
     }
   }, 'at-terminal: audit trail')
 
+  /**
+   * Tool visibility facts for R3/R4.
+   *
+   * `knownServerCount` starts `undefined`, not 0: "not read yet" must keep every tool
+   * visible. It is primed once per activation and refreshed from successful inventory reads;
+   * `{ when }` itself does no I/O — it runs once per model step and only compares a number.
+   */
+  let knownServerCount
+  const serverToolNames = new Set(SERVER_TOOL_NAMES)
+  const jobToolControlNames = new Set(['at_terminal_job_output', 'at_terminal_job_kill'])
+  /** The job pair the current step can see; feeds the background-result wording. */
+  let resolvedJobToolNames = { output: 'job_output', kill: 'job_kill' }
+
+  const resolveJobs = () => {
+    try {
+      return ctx.get?.('jobs')
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Resolve one tool through the host registry, or `undefined` when it cannot answer. */
+  const visibleTool = (name, { scope, toolSet } = {}) => {
+    try {
+      if (typeof ctx.tools?.get !== 'function') return undefined
+      return ctx.tools.get(name, scope, toolSet)
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * R3: hide the plugin's job tools where the host already supplies the pair.
+   *
+   * No job registry means this composition cannot start a background job at all, so the
+   * controls have nothing to control. If `ctx.tools.get` is unavailable we keep the fallback
+   * visible (fail-open): an older host must not lose the only way to collect a job.
+   */
+  const jobToolsWhen = async ({ agent, signal } = {}) => {
+    signal?.throwIfAborted?.()
+    try {
+      if (resolveJobs() === undefined) return false
+      const hostToolsVisible =
+        visibleTool('job_output', { scope: agent }) !== undefined &&
+        visibleTool('job_kill', { scope: agent }) !== undefined
+      resolvedJobToolNames = hostToolsVisible
+        ? { output: 'job_output', kill: 'job_kill' }
+        : { output: 'at_terminal_job_output', kill: 'at_terminal_job_kill' }
+      return !hostToolsVisible
+    } catch {
+      // A throwing condition fails the whole step as TOOL_ACTIVATION_FAILED; visibility is
+      // an optimisation, so an evaluation failure keeps the fallback tools.
+      return true
+    }
+  }
+
+  /**
+   * R4: hide the server-facing tools when the last successful read says there are none.
+   *
+   * `undefined` means "unread" and stays visible (fail-open). Hiding tools on the first turn
+   * of a real session would be worse than paying their schemas for one step.
+   */
+  const needsServerWhen = async ({ signal } = {}) => {
+    signal?.throwIfAborted?.()
+    try {
+      return knownServerCount === undefined ? true : knownServerCount > 0
+    } catch {
+      return true
+    }
+  }
+
+  /**
+   * A1: the multi-file patch tool is opt-in, and also server-facing.
+   *
+   * `readSettings(config)` is a live accessor read, so the setting is honoured on each model
+   * step without re-registering the plugin. A settings read that throws keeps the tool
+   * hidden: this tool can mutate several files through one call, so an unreadable opt-in is
+   * not permission to enable it.
+   */
+  const readEnableApplyPatch = () => {
+    const fallback = readSettings(config).enableApplyPatch
+    if (config !== null && typeof config === 'object' && typeof config.get === 'function') {
+      const value = config.get('enableApplyPatch', fallback)
+      return value === undefined ? fallback : value
+    }
+    return fallback
+  }
+  const applyPatchWhen = async ({ signal } = {}) => {
+    signal?.throwIfAborted?.()
+    try {
+      if (readEnableApplyPatch() !== true) return false
+      return knownServerCount === undefined ? true : knownServerCount > 0
+    } catch {
+      return false
+    }
+  }
+
   ctx.effect(() => {
     const disposers = createTools({
       version: pkg.version,
@@ -279,18 +376,28 @@ export function apply(ctx, config = {}) {
       // Same lazy read as `spillStore`, for the same reason: which preset supplies the job
       // registry is a runtime fact, not a registration-time one. Absence degrades the
       // tool to foreground with a stated reason instead of failing it.
-      resolveJobs: () => {
-        try {
-          return ctx.get?.('jobs')
-        } catch {
-          return undefined
-        }
+      resolveJobs,
+      // The current step's job-tool pair, for `run_remote_command`'s background render.
+      resolveJobToolNames: () => resolvedJobToolNames,
+      // One successful server read is the only moment the count cache changes.
+      onServersListed: (servers) => {
+        knownServerCount = Array.isArray(servers) ? servers.length : 0
       },
       runWithCallContext: (callCtx, fn) => callContextStorage.run(callCtx, fn),
       setCurrentCallContext: (callCtx) => {
         currentCallContextFallback = callCtx
       }
-    }).map((definition) => ctx.tools.register(definition))
+    }).map((definition) => {
+      const when =
+        definition.name === 'at_terminal_sftp_apply_patch'
+          ? applyPatchWhen
+          : serverToolNames.has(definition.name)
+            ? needsServerWhen
+            : jobToolControlNames.has(definition.name)
+              ? jobToolsWhen
+              : undefined
+      return ctx.tools.register(definition, when === undefined ? undefined : { when })
+    })
     return () => {
       for (const dispose of disposers) dispose?.()
     }
@@ -418,19 +525,84 @@ export function apply(ctx, config = {}) {
     /**
      * The language the approval dialogs are written in.
      *
-     * Resolved once per activation: the dictionary has to exist before the first card is drawn,
-     * and the language only changes through a settings edit that reloads the plugin. `auto`
-     * follows the **operating system** — see `locale.js` for why not the app's UI language (that
-     * one lives in the renderer, where a Host plugin cannot see it).
+     * `auto` follows the **operating system** — see `locale.js` for why not the app's UI
+     * language (that one lives in the renderer, where a Host plugin cannot see it).
+     *
+     * These are `let`, not `const`: every setting field is `.volatile()`, so DSH's Loader
+     * commits a settings edit into the running accessors and emits `loader/volatile-update`
+     * instead of restarting the plugin. Reading only at activation would leave the approval
+     * cards — and `state.get` — reporting the old language until DSH restarted.
      */
-    const dialogLanguageSetting = settingsSection.get('dialogLanguage', 'auto')
+    let dialogLanguageSetting = settingsSection.get('dialogLanguage', 'auto')
     const languageTag = systemLanguageTag()
-    const dialogLanguage = resolveDialogLanguage(dialogLanguageSetting, languageTag)
+    let dialogLanguage = resolveDialogLanguage(dialogLanguageSetting, languageTag)
     const dialogMessages = loadDialogMessages(bundlePath, dialogLanguage)
     scoped.logger?.info?.(
       `at-terminal: approval dialogs in ${dialogLanguage} ` +
         `(setting ${dialogLanguageSetting}, system ${languageTag}, ${Object.keys(dialogMessages).length} strings)`
     )
+
+    /**
+     * Apply a volatile-only settings edit to the dialog language.
+     *
+     * `createDshLocalization(messages)` captured the **dictionary object** when the platform
+     * was assembled, so a refresh must mutate that object (`Object.assign`) instead of
+     * replacing it: a new object would leave the running platform translating from the old
+     * dictionary.
+     *
+     * Registered on the **outer** `ctx`, not on the `scoped` context injected below: Loader
+     * dispatches `loader/volatile-update` to the entry's own fiber with a filter
+     * (`owner.fiber === fiber`), and a listener on an `ctx.inject` child fiber — which is a
+     * separate fiber — would never receive it. The `scoped.effect` only owns the disposer so
+     * the listener dies with the injection that created it.
+     *
+     * Feature-detected: `loader/volatile-update` belongs to Loader 1.1. An older host never
+     * emits it, and the plugin must keep working exactly as before — so registration is
+     * guarded by `typeof`, not assumed.
+     */
+    if (typeof ctx.on === 'function') {
+      scoped.effect(
+        () =>
+          ctx.on('loader/volatile-update', (paths) => {
+            const changed = Array.isArray(paths)
+              ? paths.some(
+                  (path) =>
+                    path === 'dialogLanguage' ||
+                    (Array.isArray(path) && path.includes('dialogLanguage'))
+                )
+              : false
+            if (!changed) return
+            try {
+              const nextSetting = settingsSection.get('dialogLanguage', 'auto')
+              const nextLanguage = resolveDialogLanguage(nextSetting, languageTag)
+              dialogLanguageSetting = nextSetting
+              if (nextLanguage === dialogLanguage) return
+              dialogLanguage = nextLanguage
+              // `Object.assign` alone only overlays keys: switching zh-CN -> en (whose
+              // dictionary is empty because English is the source language) would keep every
+              // Chinese string. Delete what the next dictionary does not carry, then overlay
+              // in place — the object identity is what the captured localization reads.
+              const nextMessages = loadDialogMessages(bundlePath, nextLanguage)
+              for (const key of Object.keys(dialogMessages)) {
+                if (!Object.prototype.hasOwnProperty.call(nextMessages, key)) delete dialogMessages[key]
+              }
+              Object.assign(dialogMessages, nextMessages)
+              scoped.logger?.info?.(
+                `at-terminal: approval dialogs in ${dialogLanguage} ` +
+                  `(setting ${dialogLanguageSetting}, system ${languageTag}, ${Object.keys(dialogMessages).length} strings)`
+              )
+            } catch (error) {
+              // The Loader logs a throwing listener and keeps the (already committed) values;
+              // a dictionary that cannot be read must not take the plugin down with it.
+              scoped.logger?.warn?.(
+                'at-terminal: dialog language update failed: %s',
+                error?.message ?? String(error)
+              )
+            }
+          }),
+        'at-terminal: dialog language'
+      )
+    }
     let assets
     let servers
     let terminal
@@ -440,11 +612,41 @@ export function apply(ctx, config = {}) {
      * The Host's plugin manager, when this composition has one.
      *
      * Injected separately from the block above: it owns bundle installation and switching, which
-     * only the optional SSH bundle needs. A preset-only composition without it keeps all 17 tools
-     * and three panes; the settings page then says the switch is unavailable instead of the
+     * only the optional SSH bundle needs. A preset-only composition without it keeps all direct
+     * tools and three panes; the settings page then says the switch is unavailable instead of the
      * plugin failing to activate.
      */
     let pluginManager
+    /**
+     * Lifetime teardown, registered **before** the assembly starts.
+     *
+     * A `scoped.effect` inside `.then` is too late: when the plugin is disposed while
+     * `createDshPlatform` is still opening `at_terminal_state`, the `.then` never runs on a
+     * live scope, so the handle it would have closed leaks and the storage domain stays
+     * reserved for the next instance (`already-open`). Registering the disposer first gives
+     * Cordis a promise to wait on in both orders.
+     */
+    let disposed = false
+    /** Set only once a handle exists and its faces are wired; owns the normal-path teardown. */
+    let teardown
+    /** The close started because disposal preceded assembly; awaited by the disposer above. */
+    let closingEarly
+    let settleTeardown
+    let rejectTeardown
+    const pendingTeardown = new Promise((resolve, reject) => {
+      settleTeardown = resolve
+      rejectTeardown = reject
+    })
+    scoped.effect(
+      () => () => {
+        disposed = true
+        // No handle yet: wait for the in-flight assembly to produce one and close it. That is
+        // what keeps the old instance's teardown pending until `at_terminal_state` is actually
+        // released, instead of letting the next instance race it with `already-open`.
+        return teardown === undefined ? pendingTeardown : teardown()
+      },
+      'at-terminal: platform lifetime'
+    )
     const assembled = createDshPlatform({
       logger: scoped.logger,
       credentials: scoped.credentials,
@@ -455,10 +657,11 @@ export function apply(ctx, config = {}) {
       /**
        * The dictionary the approval dialogs are rendered through.
        *
-       * Read here, once per activation, because the language is a settings field and the
-       * dictionary has to exist before the first card is drawn. `auto` follows the operating
-       * system (see `locale.js` for why the system and not the app's UI language: the UI
-       * language lives in the renderer and a Host plugin cannot see it).
+       * The language has to exist before the first card is drawn; `createDshLocalization`
+       * captures this object, so a volatile settings update mutates it in place instead of
+       * rebuilding the platform. `auto` follows the operating system (see `locale.js` for why
+       * the system and not the app's UI language: the UI language lives in the renderer and a
+       * Host plugin cannot see it).
        */
       messages: dialogMessages,
       facts: {
@@ -473,81 +676,157 @@ export function apply(ctx, config = {}) {
         uriScheme: 'dsh'
       }
     })
-      .then((handle) => {
-        // One platform, four faces. The asset face is the VS Code variant's own services;
-        // the server, terminal and SFTP faces compose the same `ConfigManager`,
-        // `HostKeyStore`, `SshSession` and `SftpManager` the extension uses, so a record
-        // saved here is the record VS Code would have written and a terminal here is the
-        // same connection it would have made.
-        const shared = { platform: handle.platform, hostName: pkg.name, hostVersion: pkg.version }
-        assets = createDshAssetApi(shared)
-        servers = createDshServerApi({
-          platform: handle.platform,
-          privateKeyDirectory: importedPrivateKeyDirectory(handle.platform)
-        })
-        const terminalContext = new TerminalContextRegistry()
-        // SFTP before the terminal: the terminal announces its sessions to this face, which
-        // is how the file tree knows which terminal to follow. Constructing them the other
-        // way round would need a wiring step that could be forgotten.
-        sftp = createDshSftpApi({ platform: handle.platform })
-        const terminalObserver = {
-          opened(presence) {
-            sftp.opened(presence)
-            terminalContext.setActive({
-              terminalId: presence.terminalId,
-              server: presence.server,
-              connected: true,
-              write: (data) => presence.write(data)
-            })
-          },
-          closed(terminalId) {
-            sftp.closed(terminalId)
-            terminalContext.markDisconnected(terminalId)
-          }
+      .then(async (handle) => {
+        if (disposed) {
+          // Disposed while assembling: no faces exist and the lifetime effect above is the
+          // only owner of this handle. Settle its promise from the close itself, so a close
+          // failure reaches Cordis as a rejection instead of being swallowed here.
+          closingEarly = handle.close()
+          closingEarly.then(settleTeardown, rejectTeardown)
+          return
         }
-        terminal = createDshTerminalApi({ platform: handle.platform, observer: terminalObserver })
-        const resolveApproval = () => {
-          try {
-            return scoped?.get?.('approval') ?? ctx?.get?.('approval')
-          } catch {
-            return undefined
+        try {
+          // One platform, four faces. The asset face is the VS Code variant's own services;
+          // the server, terminal and SFTP faces compose the same `ConfigManager`,
+          // `HostKeyStore`, `SshSession` and `SftpManager` the extension uses, so a record
+          // saved here is the record VS Code would have written and a terminal here is the
+          // same connection it would have made.
+          const shared = { platform: handle.platform, hostName: pkg.name, hostVersion: pkg.version }
+          assets = createDshAssetApi(shared)
+          const serverApi = createDshServerApi({
+            platform: handle.platform,
+            privateKeyDirectory: importedPrivateKeyDirectory(handle.platform)
+          })
+          /**
+           * The server face plus a count cache.
+           *
+           * `knownServerCount` decides whether the server-facing tools are registered as
+           * visible in the next model step. Every successful inventory read updates it, and
+           * so do save/remove: a panel that adds a server must make the tools appear without
+           * requiring the model to call `list_ssh_servers` first. The count is only a cache —
+           * `{ when }` never reads storage itself.
+           */
+          servers = {
+            ...serverApi,
+            async list() {
+              const result = await serverApi.list()
+              knownServerCount = Array.isArray(result?.servers) ? result.servers.length : 0
+              return result
+            },
+            async save(input) {
+              const created = input?.id === undefined
+              const result = await serverApi.save(input)
+              if (created && knownServerCount !== undefined) knownServerCount += 1
+              return result
+            },
+            async remove(id) {
+              const result = await serverApi.remove(id)
+              if (result?.removed === true && knownServerCount !== undefined) {
+                knownServerCount = Math.max(0, knownServerCount - 1)
+              }
+              return result
+            }
           }
-        }
-        // `ctx.userQuestions` is what can ask "how long?" instead of "yes or no?". Read per
-        // call, and absent means the write still happens — just with a one-time grant.
-        const resolveUserQuestions = () => {
-          try {
-            return scoped?.get?.('userQuestions') ?? ctx?.get?.('userQuestions')
-          } catch {
-            return undefined
+          // Prime the cache once per activation. A failed read is not fatal: the count stays
+          // undefined and every tool remains visible (fail-open) rather than hiding a real
+          // server behind a storage hiccup.
+          void servers.list().catch((error) => {
+            scoped.logger?.warn?.(
+              'at-terminal: server inventory read failed; keeping all tools visible: %s',
+              error?.message ?? String(error)
+            )
+          })
+          const terminalContext = new TerminalContextRegistry()
+          // SFTP before the terminal: the terminal announces its sessions to this face, which
+          // is how the file tree knows which terminal to follow. Constructing them the other
+          // way round would need a wiring step that could be forgotten.
+          sftp = createDshSftpApi({ platform: handle.platform })
+          const terminalObserver = {
+            opened(presence) {
+              sftp.opened(presence)
+              terminalContext.setActive({
+                terminalId: presence.terminalId,
+                server: presence.server,
+                connected: true,
+                write: (data) => presence.write(data)
+              })
+            },
+            closed(terminalId) {
+              sftp.closed(terminalId)
+              terminalContext.markDisconnected(terminalId)
+            }
           }
-        }
-        agentService = createDshAgentToolService({
-          platform: handle.platform,
-          terminalContext,
-          resolveApproval,
-          resolveUserQuestions,
-          logger: scoped?.logger ?? ctx.logger,
-          broadcastMonitor: (ev, data) => broadcastMonitorEvent(ev, data),
-          getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback,
-          // Whether a browser panel is listening, so `open_monitor` can answer honestly
-          // instead of claiming a window nobody will see. `null` before the channel mounts.
-          resolveClientPresence: () => getChannelPresence() ?? { sseClients: 0, clientHellos: 0 },
-          // Read through a closure: the status tool is constructed here but asked later,
-          // and the audit log belongs to the plugin's lifetime, not the assembly's.
-          readAuditTail: (limit) => auditLog?.readRecent(limit),
-          // The writing half. Without this the services' own `audit?.record()` calls were
-          // no-ops — only the tool-level observer below ever landed a row, which is why
-          // `user_approved` / `user_cancelled` / `job_killed` never appeared in the file.
-          ...(auditLog === undefined ? {} : { audit: auditLog })
-        })
+          terminal = createDshTerminalApi({ platform: handle.platform, observer: terminalObserver })
+          const resolveApproval = () => {
+            try {
+              return scoped?.get?.('approval') ?? ctx?.get?.('approval')
+            } catch {
+              return undefined
+            }
+          }
+          // `ctx.userQuestions` is what can ask "how long?" instead of "yes or no?". Read per
+          // call, and absent means the write still happens — just with a one-time grant.
+          const resolveUserQuestions = () => {
+            try {
+              return scoped?.get?.('userQuestions') ?? ctx?.get?.('userQuestions')
+            } catch {
+              return undefined
+            }
+          }
+          agentService = createDshAgentToolService({
+            platform: handle.platform,
+            terminalContext,
+            resolveApproval,
+            resolveUserQuestions,
+            logger: scoped?.logger ?? ctx.logger,
+            broadcastMonitor: (ev, data) => broadcastMonitorEvent(ev, data),
+            getCurrentCallContext: () => callContextStorage.getStore() ?? currentCallContextFallback,
+            // Whether a browser panel is listening, so `open_monitor` can answer honestly
+            // instead of claiming a window nobody will see. `null` before the channel mounts.
+            resolveClientPresence: () => getChannelPresence() ?? { sseClients: 0, clientHellos: 0 },
+            // Read through a closure: the status tool is constructed here but asked later,
+            // and the audit log belongs to the plugin's lifetime, not the assembly's.
+            readAuditTail: (limit) => auditLog?.readRecent(limit),
+            // The writing half. Without this the services' own `audit?.record()` calls were
+            // no-ops — only the tool-level observer below ever landed a row, which is why
+            // `user_approved` / `user_cancelled` / `job_killed` never appeared in the file.
+            ...(auditLog === undefined ? {} : { audit: auditLog })
+          })
 
-        scoped.effect(() => () => {
-          // Order matters: the SFTP manager holds connections whose disposal emits through
-          // the platform's notifier, so it goes before the platform closes.
-          sftp.dispose()
-          void handle.close()
-        }, 'at-terminal: platform lifetime')
+          /**
+           * Normal-path teardown, read by the lifetime effect registered before assembly.
+           *
+           * Order matters: the SFTP manager holds connections whose disposal emits through
+           * the platform's notifier, so it goes before the platform closes. The promise is
+           * returned rather than voided, because Cordis only waits for a disposer that
+           * returns its cleanup — and `at_terminal_state` must be closed before a new
+           * instance can open it.
+           */
+          teardown = () => {
+            sftp.dispose()
+            return handle.close()
+          }
+        } catch (error) {
+          // A setup failure after the domain opened must not leak the handle: close it here,
+          // before the failure is reported, so a retry can open the domain again.
+          try {
+            sftp?.dispose()
+          } catch (cleanupError) {
+            scoped.logger?.warn?.(
+              'at-terminal: SFTP disposal after a failed assembly failed: %s',
+              cleanupError?.message ?? String(cleanupError)
+            )
+          }
+          try {
+            await handle.close()
+          } catch (closeError) {
+            scoped.logger?.error?.(
+              'at-terminal: platform close after a failed assembly failed: %s',
+              closeError?.message ?? String(closeError)
+            )
+          }
+          throw error
+        }
       })
       .catch((error) => {
         // Not fatal, and deliberately so: the channel is how anyone finds out *why* the
@@ -559,6 +838,11 @@ export function apply(ctx, config = {}) {
           'at-terminal: asset services unavailable: %s',
           error?.message ?? String(error)
         )
+      })
+      .finally(() => {
+        // A failed assembly produces no handle; an early close settles this promise itself.
+        // Either way the lifetime disposer must not be left waiting forever.
+        if (closingEarly === undefined) settleTeardown()
       })
 
     /**

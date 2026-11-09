@@ -23,6 +23,7 @@ import {
 const ROOT = process.cwd();
 const read = (relative: string) => readFileSync(join(ROOT, relative), 'utf8');
 
+const BODY = read('src/platform/dsh/client/body.ts');
 const BODY_SESSION = read('src/platform/dsh/client/body-session.ts');
 const SFTP = read('src/platform/dsh/client/views/sftp.ts');
 const SFTP_FILE = read('src/platform/dsh/client/views/sftpFile.ts');
@@ -95,7 +96,7 @@ describe('the body restores what the store kept (UI2-11)', () => {
 
 describe('closing a dirty buffer asks first (UI2-11)', () => {
   it('routes 关闭 through the shared confirm dialog', () => {
-    expect(BODY_SESSION).toContain('if (sftpFile.kind === \'ready\' && sftpFile.dirty)');
+    expect(BODY_SESSION).toContain("if (pane !== null && pane.kind === 'ready' && pane.dirty)");
     expect(BODY_SESSION).toContain("t('dialog.confirmDiscardTitle')");
     expect(BODY_SESSION).toContain("t('sftp.discardConfirm'");
     // Cancel keeps the buffer: the early return is the whole difference between a confirmation
@@ -120,5 +121,64 @@ describe('a failed read offers the retry it promises (D6)', () => {
     // there with nothing to press, so the user went looking for the control instead of reading.
     expect(SFTP).toContain("'data-at-terminal-action': 'sftp-retry'");
     expect(SFTP).toContain('renderFailure(t, state, [');
+  });
+});
+
+describe('downloads prefer the host file service (U2)', () => {
+  it('tries fileActions before the anchor fallback and keeps the fallback for a missing service', () => {
+    // The order matters: a host with the service must never produce a browser anchor, and a
+    // host without it must still download. Both branches are visible in this one helper.
+    expect(BODY_SESSION).toContain('const fileActions: FileActionsService | undefined = fileActionsFrom(props);');
+    expect(BODY_SESSION).toContain('if (fileActions === undefined) {');
+    expect(BODY_SESSION.indexOf('const fileActions: FileActionsService | undefined')).toBeLessThan(
+      BODY_SESSION.indexOf('saveBytes(name, base64);')
+    );
+    expect(BODY_SESSION).toContain("await fileActions.save(");
+    // A rejected service falls back rather than failing the download outright.
+    expect(BODY_SESSION).toContain('falling back to saveBytes');
+    // The local path is gated on `saved`; `requested` deliberately stays pathless.
+    expect(BODY_SESSION).toContain("outcome.status === 'saved'");
+  });
+
+  it('does the same for the asset export envelope', () => {
+    expect(BODY).toContain('async function saveExportEnvelope');
+    expect(BODY).toContain('const fileActions = fileActionsFrom(props);');
+    expect(BODY).toContain("result.status === 'saved' && result.path !== '' ? result.path : filename");
+    expect(BODY).toContain('saveDownload(filename, envelope);');
+  });
+});
+
+describe('the wide file pane keeps the tree (U3)', () => {
+  it('draws the split only when the panel is at least 560px', () => {
+    // The threshold is the panel's own width, measured by the body; the view takes the
+    // decision as a prop so it stays a pure function of its inputs.
+    expect(BODY_SESSION).toContain('sftpPanelWidth >= 560');
+    expect(BODY_SESSION).toContain('const sftpSplit =');
+    expect(SFTP_FILE).toContain("props.split === true && props.tree !== undefined");
+    expect(SFTP_FILE).toContain("'data-at-terminal-sftp-split': split ? 'true' : 'false'");
+  });
+
+  it('reuses SftpTree instead of a second renderer', () => {
+    // One tree implementation is what keeps expansion, focus memory and scroll shared.
+    expect(SFTP).toContain('export function SftpTree');
+    expect(SFTP).toContain('SftpTree(props)');
+    // The file view must not re-walk the tree itself.
+    expect(SFTP_FILE).not.toContain('flattenSftpTree');
+    expect(SFTP_FILE).toContain('props.tree');
+  });
+
+  it('restores the tab’s current file, not only its expansion and scroll', () => {
+    expect(BODY_SESSION).toContain('const rememberedSftpFiles = new Map');
+    expect(BODY_SESSION).toContain('rememberedSftpFiles.set(key, { path, mode })');
+    expect(BODY_SESSION).toContain('const remembered = rememberedSftpFiles.get(key);');
+    // Closing is the only gesture that forgets it; remounting a tab reads it back.
+    expect(BODY_SESSION).toContain('rememberedSftpFiles.delete(key);');
+  });
+
+  it('closes the preview on Escape through the same dirty guard as 返回', () => {
+    expect(BODY_SESSION).toContain("if (event.key !== 'Escape' || event.defaultPrevented) return;");
+    expect(BODY_SESSION).toContain('closeSftpFile();');
+    // Overlays own Escape while they are open; closing a dialog must not also close the file.
+    expect(BODY_SESSION).toContain('if (confirm !== null || newFileDialog !== null || sftpMenu !== null) return;');
   });
 });

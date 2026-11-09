@@ -29,6 +29,12 @@ describe('the coverage table', () => {
     expect(classify(undefined)).toBeUndefined();
     expect(classify('at_terminal_ping')).toEqual({ risk: 'read' });
   });
+
+  it('classifies remote edit as a write, so the same authorizer owns its prompt', () => {
+    // An edit replaces remote bytes exactly like a write; classifying it as `read` would
+    // bypass SftpWriteAuthorizer entirely and make the tool the one unguarded mutation.
+    expect(classify('at_terminal_sftp_edit_file')).toEqual({ risk: 'write-remote' });
+  });
 });
 
 describe('the guard', () => {
@@ -104,6 +110,7 @@ describe('the pre-execute stage', () => {
     const { preExecute, authorize } = stage();
     for (const name of [
       'at_terminal_sftp_write_file',
+      'at_terminal_sftp_edit_file',
       'at_terminal_sftp_delete',
       'at_terminal_sftp_rename',
       'at_terminal_ping'

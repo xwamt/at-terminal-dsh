@@ -249,7 +249,9 @@ describe('cancel', () => {
     expect((service.runRemoteCommand.mock.calls[0] as any[])[0].signal.aborted).toBe(true);
   });
 
-  it('still settles as killed, and warns, when the kill itself fails', async () => {
+  it('settles as failed, not killed, when the kill itself fails', async () => {
+    // `killed` is a claim about the remote process group. A kill that threw proved nothing,
+    // so the job must fail with the reason instead of telling the operator it is gone.
     const jobs = makeJobs();
     const logger = { warn: vi.fn() };
     const service = hangingService(vi.fn(async () => {
@@ -259,12 +261,11 @@ describe('cancel', () => {
     const hooks = jobs.specs[0].run({ id: 'ssh-command-3', append() {} });
     hooks.cancel('user asked');
     const outcome = await hooks.done;
-    expect(outcome).toEqual({ status: 'killed', detail: 'user asked' });
-    await Promise.resolve();
+    expect(outcome).toEqual({ status: 'failed', detail: 'remote kill failed: connection closed' });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('connection closed'));
   });
 
-  it('warns when the process survived the signal', async () => {
+  it('settles as failed, not killed, when the process survived the signal', async () => {
     const jobs = makeJobs();
     const logger = { warn: vi.fn() };
     const service = hangingService(vi.fn(async () => ({
@@ -274,9 +275,40 @@ describe('cancel', () => {
     startRemoteCommandJob({ ...BASE, jobs, service, logger } as any);
     const hooks = jobs.specs[0].run({ id: 'ssh-command-4', append() {} });
     hooks.cancel('user asked');
-    await hooks.done;
-    await Promise.resolve();
+    expect(await hooks.done).toEqual({
+      status: 'failed',
+      detail: 'the process did not exit after SIGTERM'
+    });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('did not exit'));
+  });
+
+  it('waits for the kill report before settling, so killed is never speculative', async () => {
+    // The old implementation aborted locally and reported `killed` immediately; the remote
+    // report could arrive later saying the process was still alive. `done` must stay pending
+    // until the report exists, and only `killed === true` may produce a killed outcome.
+    const jobs = makeJobs();
+    let releaseKill!: (report: unknown) => void;
+    const service = hangingService(
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseKill = resolve;
+          })
+      )
+    );
+    startRemoteCommandJob({ ...BASE, jobs, service } as any);
+    const hooks = jobs.specs[0].run({ id: 'ssh-command-6', append() {} });
+    hooks.cancel('user asked');
+
+    let settled = false;
+    void hooks.done.then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    releaseKill({ killed: true, pid: '4242', detail: 'gone' });
+    expect(await hooks.done).toEqual({ status: 'killed', detail: 'user asked' });
   });
 
   it('defaults the reason when the registry passes none', async () => {

@@ -4,6 +4,9 @@
   "description": "AT Terminal plugin for DeepSeek Harness (DSH): SSH/SFTP assets and remote SSH terminals.",
   "version": "0.3.0",
   "private": true,
+  "engines": {
+    "node": ">=24.9"
+  },
   "type": "module",
   "main": "./dsh/index.js",
   "exports": {

@@ -3,7 +3,7 @@
 > **DeepSeek Harness (DSH) 原生 SSH 终端、SFTP 远程文件工作区与 Agent 直连运维套件。**  
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
-[![DSH Verified](https://img.shields.io/badge/DSH-0.2.1--rc.5_Verified-brightgreen.svg)](#installation--setup--安装与配置)
+[![DSH Verified](https://img.shields.io/badge/DSH-0.2.2--rc.1_Verified-brightgreen.svg)](#installation--setup--安装与配置)
 [![Test Coverage](https://img.shields.io/badge/tests-101%2F101%20passed%20(1437%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
@@ -30,12 +30,12 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 
 ### Key Features
 1. **Native Direct Agent Tools (No MCP Proxy Overhead)**:
-   - Registers 17 direct tools into DSH's host context (`ctx.tools`): SSH servers, remote commands (including background jobs and job control), terminal context, 8 SFTP operations, hardware metrics, agent execution status and the monitor HUD. Every tool validates its arguments and answers with an actionable message instead of a raw JavaScript error.
+   - Registers up to 19 direct tools into DSH's host context (`ctx.tools`) — 18 by default, plus the opt-in `apply_patch`: SSH servers, remote commands (including background jobs and job control), terminal context, 10 SFTP operations, hardware metrics, agent execution status and the monitor HUD. Every tool validates its arguments and answers with an actionable message instead of a raw JavaScript error.
    - Zero-latency tool invocation without external stdio/HTTP MCP proxy processes.
    - Fully responds to `exec.signal` for real-time cancellation when an agent task is aborted.
    - Integrates seamlessly with DSH's `ctx.approval` workflow and provides formatted `output.render` rich outputs.
    - Hardware metrics report CPU, load, memory, per-mount disk usage, network throughput and top processes; the list is bounded (top 5 rows plus a count) so one Docker host cannot flood the transcript.
-   - **Background jobs & spilled results**: a command started with `run_in_background` returns a job id the model can collect with `at_terminal_job_output` and stop with `at_terminal_job_kill`; a result too large to inline is written to a file and returned as a `spillPath` to read in slices, instead of flooding the transcript.
+   - **Background jobs & spilled results**: a command started with `run_in_background` returns a job id the model can collect with the host's `job_output` and stop with `job_kill` (the plugin's `at_terminal_job_*` pair appears only in compositions without those host tools); a result too large to inline is written to a file and returned as a `spillPath` to read in slices, instead of flooding the transcript.
    - **Large-file streaming upload**: `at_terminal_sftp_write_file` accepts a host-side `localPath`, so the host reads and streams a local file to the remote instead of routing it through the model context (a 7.3 MB binary uploads in ~0.5 s with a byte-identical sha256).
 2. **Robust Asset Management & Encrypted Export**:
    - Supports Password, Private Key (PEM/OpenSSH with Passphrase), and SSH Agent forwarding.
@@ -146,6 +146,8 @@ independently toggled rows.
 | `at_terminal_sftp_list_directory` | SFTP | List a remote directory with pagination (`offset` / `maxEntries`) |
 | `at_terminal_sftp_stat_path` | SFTP | Inspect type, size, permissions, and modification time |
 | `at_terminal_sftp_read_file` | SFTP | Read bounded UTF-8 text with `offset` and `maxBytes` |
+| `at_terminal_sftp_edit_file` | SFTP | Edit remote UTF-8 text by replacing one literal string; it must match exactly once unless `replaceAll: true`. Preserves the file's CRLF/LF style and refuses binary or >2 MiB files. Pass `expectedSize` / `expectedModifiedAt` from a prior read to refuse a stale overwrite |
+| `at_terminal_sftp_apply_patch` | SFTP | Optional, disabled by default (`enableApplyPatch`): apply one Codex-style patch across multiple remote UTF-8 files. Preflights the whole patch before writing anything, then commits in order and stops at the first failure; returns per-operation status. Remote patches do not enter DSH Review |
 | `at_terminal_sftp_write_file` | SFTP | Write UTF-8 text after write authorization; existing files need `overwrite: true`. `localPath` names a file on the machine running the Host instead of passing `content` — the Host reads and streams it, so a binary or a large file never enters the model's context. An upload always asks, even at full trust |
 | `at_terminal_sftp_create_file` | SFTP | Create a remote file, optionally with initial content |
 | `at_terminal_sftp_create_directory` | SFTP | Create a remote directory after write authorization |
@@ -154,8 +156,8 @@ independently toggled rows.
 | `at_terminal_open_monitor` | UI | Open the monitor — `mode: "hud"` (default) floats it, `mode: "tab"` puts it in the right sidebar; answers `opened: false, reason: "no-client"` when no panel is connected |
 | `at_terminal_get_hardware_metrics` | Metrics | Read CPU, memory, disk, network, and top processes for an SSH server |
 | `at_terminal_get_agent_execution_status` | Audit | Report the live action, recent audits (with `source: file \| memory`), and active transfers |
-| `at_terminal_job_output` | Reads what a background command has printed since the last read, with `wait` to block until it settles or the budget expires. Each call consumes what it returns |
-| `at_terminal_job_kill` | Stops a background command: SIGTERM to the remote process group, then up to a second proving it is gone, so a reported kill means the process ended |
+| `at_terminal_job_output` | Fallback job reader, registered only when the host's `job_output` is not visible. Reads what a background command has printed since the last read, with `wait` to block until it settles or the budget expires. Each call consumes what it returns |
+| `at_terminal_job_kill` | Fallback job stopper, registered only when the host's `job_kill` is not visible. Stops a background command: SIGTERM to the remote process group, then up to a second proving it is gone, so a reported kill means the process ended |
 
 ---
 
@@ -177,10 +179,10 @@ independently toggled rows.
 
 #### 1. DSH Agent 原生直连工具链（无需 MCP 跨进程中转）
 传统的 AI IDE 往往依赖独立的 stdio/HTTP MCP Server 进程进行中转，存在进程通信开销大、状态同步复杂、生命周期脱节的问题。
-- **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册 17 个直连工具，覆盖 SSH 服务器、远程命令（含后台作业与作业控制）、终端上下文、8 个 SFTP 操作、硬件指标、Agent 执行状态与监控面板，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
+- **Cordis 原生接入**：直接在 DSH 宿主上下文（`ctx.tools`）中注册最多 19 个直连工具（默认 18 个，另加可选的 `apply_patch`），覆盖 SSH 服务器、远程命令（含后台作业与作业控制）、终端上下文、10 个 SFTP 操作、硬件指标、Agent 执行状态与监控面板，DSH Agent 可零延迟直接调用。每个工具都会校验参数并返回可操作的错误信息，而不是裸的 JavaScript 异常。
 - **运行期技能与提示词**：通过 `ctx.inject(['skills'])` 注册三个运行期技能（巡检 / 远端编辑 / 故障记录），工具规则集中在一个提示词段里，工具定义体积比逐条描述小 45%。
 - **多服务器不猜目标**：同时连着多台服务器时，写类 / 执行类工具没拿到 `serverId` 会直接报错并列出候选（打错机器的写入会返回看起来成功的 `exitCode: 0`）；读类工具仍跟随活动终端，但结果里带 `resolvedBy` 与 `candidates`，事后能查「这次打到哪台、怎么定的」。
-- **后台作业与结果溢出**：`at_terminal_run_remote_command` 支持 `run_in_background`，命令不再占住一轮对话；模型可用 `at_terminal_job_output` 取回、`at_terminal_job_kill` 停止。单个结果过大时写入溢出文件并返回 `spillPath`，按偏移分片读取，避免灌爆上下文。
+- **后台作业与结果溢出**：`at_terminal_run_remote_command` 支持 `run_in_background`，命令不再占住一轮对话；标准 preset 下模型用宿主的 `job_output` / `job_kill` 取回与停止（只有在没有宿主 job 工具的组装里才会出现插件自带的 `at_terminal_job_*` fallback）。单个结果过大时写入溢出文件并返回 `spillPath`，按偏移分片读取，避免灌爆上下文。
 - **大文件直传**：`at_terminal_sftp_write_file` 新增宿主侧 `localPath`——由宿主进程读本机文件并流式上传，7.3 MB 二进制约 470 ms 完成、远端 sha256 与本地逐字节一致，且**零模型上下文开销**。
 - **全生命周期协同**：
   - **动态取消响应**：完全感知 `exec.signal`，当用户在 DSH 界面点击停止生成或取消任务时，远端 SSH 命令与传输流立即被精确中断。
@@ -266,7 +268,7 @@ independently toggled rows.
 # 1. 编译构建宿主与客户端 Bundle
 npm run build
 
-# 2. 执行 DSH 官方规范契约校验 (11 项自动化合规规则全部检查)
+# 2. 执行 DSH 官方规范契约校验 (12 项自动化合规规则全部检查)
 npm run verify:dsh
 
 # 3. 执行仓库内核隔离校验 (4 项：src/core 自封闭 / 零 vscode / 零 @deepseek-ai 导入 / 组合根调 setPlatform)

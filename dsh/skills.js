@@ -42,7 +42,7 @@ export const RUNTIME_SKILLS = Object.freeze([
 - One question per command. \`ps aux | head\` answers "is it running"; \`df -h\` answers "is the disk full". A compound command that answers three things cannot be re-run cheaply and cannot be attributed when it fails.
 - Read the exit code on every result. A command that printed nothing and exited 1 is not "no output" — it is a failure, and the stderr says why.
 - Long output is spilled, not lost: when a result carries a \`spillPath\`, read that file with offset/limit instead of running the command again. Re-running a probe is not free on a production host.
-- A background job (\`run_in_background\`) is for something that outlives the turn. Collect it with \`at_terminal_job_output\`, stop it with \`at_terminal_job_kill\`.
+- A background job (\`run_in_background\`) is for something that outlives the turn. Collect it with the job-output tool visible in the current tool table, and stop it with the matching kill tool — the names differ by composition, so read them from the tool list rather than assuming.
 
 ## Reporting
 
@@ -62,8 +62,9 @@ For a binary, an archive or anything large, skip the steps below: \`at_terminal_
 
 1. \`at_terminal_sftp_stat_path\` — does it exist, how big is it, when did it last change. An edit that assumes the file exists fails at the write, after the user has already approved it.
 2. \`at_terminal_sftp_read_file\` — read the whole file (follow \`spillPath\` if it was spilled). You cannot safely rewrite a file you have only partially seen: \`sftp_write_file\` replaces content, it does not patch it.
-3. \`at_terminal_sftp_write_file\` with \`overwrite: true\` — the confirmation names the path, so a wrong path is caught by a human before it lands.
-4. \`at_terminal_sftp_read_file\` again — read back the region you changed. A write that returned without error is a claim about the connection, not about the file.
+3. \`at_terminal_sftp_edit_file\` — replace one literal \`oldString\` with \`newString\`; add \`replaceAll\` only when every occurrence should change. For a whole-file rewrite, use \`at_terminal_sftp_write_file\` with \`overwrite: true\` instead.
+4. Pass the \`size\` and \`modifiedAt\` from steps 1–2 as \`expectedSize\` / \`expectedModifiedAt\`. If the write is refused because the file changed, re-read it and redo the edit — never retry the old bytes with \`overwrite\`.
+5. \`at_terminal_sftp_read_file\` again — read back the region you changed. A write that returned without error is a claim about the connection, not about the file.
 
 ## Rules that save an incident
 

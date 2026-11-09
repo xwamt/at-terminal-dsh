@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 // @ts-expect-error plain-JS host module
-import { createTools } from '../../dsh/tools.js';
+import { CAPABILITIES, createTools } from '../../dsh/tools.js';
 // @ts-expect-error plain-JS host module
 import { recordDecision } from '../../dsh/policy.js';
 // @ts-expect-error plain-JS host module
 import { trustFact } from '../../dsh/prompt.js';
 
 describe('dsh/tools.js createTools', () => {
-  it('registers ping plus 11 AT Terminal operational tools', () => {
+  it('registers every tool in a stable order', () => {
     const mockService = {
       listServers: vi.fn().mockResolvedValue({ servers: [] }),
       getTerminalContext: vi.fn().mockResolvedValue({ focusedTerminal: null, defaultConnectedTerminal: null, connectedTerminals: [], knownTerminals: [] }),
@@ -20,6 +20,7 @@ describe('dsh/tools.js createTools', () => {
       sftpCreateDirectory: vi.fn().mockResolvedValue({ serverId: 's1', path: '/dir' }),
       sftpRename: vi.fn().mockResolvedValue({ serverId: 's1', path: '/a', newPath: '/b' }),
       sftpDelete: vi.fn().mockResolvedValue({ serverId: 's1', path: '/x', deleted: true }),
+      sftpApplyPatch: vi.fn().mockResolvedValue({ serverId: 's1', phase: 'commit', cancelled: false, operations: [], affectedPaths: [] }),
       openMonitor: vi.fn().mockResolvedValue({ opened: true, target: 'hardware', serverId: 's1', mode: 'hud' }),
       getHardwareMetrics: vi.fn().mockResolvedValue({
         serverId: 's1',
@@ -44,7 +45,7 @@ describe('dsh/tools.js createTools', () => {
       resolveAgentService: () => mockService
     });
 
-    expect(tools.length).toBe(17);
+    expect(tools.length).toBe(19);
     const names = tools.map((t: any) => t.name);
     expect(names).toEqual([
       'at_terminal_ping',
@@ -54,11 +55,13 @@ describe('dsh/tools.js createTools', () => {
       'at_terminal_sftp_list_directory',
       'at_terminal_sftp_stat_path',
       'at_terminal_sftp_read_file',
+      'at_terminal_sftp_edit_file',
       'at_terminal_sftp_write_file',
       'at_terminal_sftp_create_file',
       'at_terminal_sftp_create_directory',
       'at_terminal_sftp_rename',
       'at_terminal_sftp_delete',
+      'at_terminal_sftp_apply_patch',
       'at_terminal_open_monitor',
       'at_terminal_get_hardware_metrics',
       'at_terminal_get_agent_execution_status',
@@ -82,9 +85,13 @@ describe('dsh/tools.js createTools', () => {
       at_terminal_sftp_list_directory: 30_000,
       at_terminal_sftp_stat_path: 10_000,
       at_terminal_get_hardware_metrics: 8_000,
-      at_terminal_job_output: 90_000,
+      at_terminal_sftp_apply_patch: 300_000,
+      at_terminal_job_output: 620_000,
       at_terminal_job_kill: 60_000
     });
+    // The tool-level timeout must cover the `wait` cap the schema accepts (600,000 ms), or
+    // the host cancels a legitimate wait as TOOL_TIMEOUT before the tool can return running.
+    expect((tools as Array<{ name: string; timeoutMs?: number }>).find((t) => t.name === 'at_terminal_job_output')!.timeoutMs).toBeGreaterThanOrEqual(620_000);
   });
 
   it('enforces schema contract and render function on all tools', () => {
@@ -155,6 +162,45 @@ describe('dsh/tools.js createTools', () => {
     // The command belongs to the job now: running it here as well would start it twice.
     expect(mockService.runRemoteCommand).not.toHaveBeenCalled();
     expect(started).toHaveLength(1);
+  });
+
+  it('names the job controls the current composition can actually see', async () => {
+    const setup = (resolveJobToolNames?: () => { output: string; kill: string }) => {
+      const mockService = {
+        authorizeCommand: vi.fn().mockResolvedValue({ server: { id: 's1' } }),
+        runRemoteCommand: vi.fn().mockResolvedValue({ serverId: 's1', stdout: '', stderr: '' })
+      };
+      const tools = createTools({
+        version: '0.1.0',
+        resolveAgentService: () => mockService,
+        resolveJobs: () => ({ start: () => 'ssh-command-abc' }),
+        ...(resolveJobToolNames === undefined ? {} : { resolveJobToolNames })
+      });
+      return tools.find((t: any) => t.name === 'at_terminal_run_remote_command')!;
+    };
+    const makeExec = () => {
+      const exec: Record<string, unknown> = { signal: undefined, agent: { id: 'agent-1' }, callId: 'c1' };
+      recordDecision(exec, 'auto-approved');
+      return exec;
+    };
+
+    // Standard preset: the host's pair.
+    const host = setup();
+    const hostValue = await host.execute(
+      { serverId: 's1', command: 'sleep 60', run_in_background: true },
+      makeExec()
+    );
+    expect(host.output.render({}, hostValue)[0].text).toContain('read it with job_output, stop it with job_kill');
+
+    // Fallback composition: the plugin's pair.
+    const fallback = setup(() => ({ output: 'at_terminal_job_output', kill: 'at_terminal_job_kill' }));
+    const fallbackValue = await fallback.execute(
+      { serverId: 's1', command: 'sleep 60', run_in_background: true },
+      makeExec()
+    );
+    expect(fallback.output.render({}, fallbackValue)[0].text).toContain(
+      'read it with at_terminal_job_output, stop it with at_terminal_job_kill'
+    );
   });
 
   it('degrades to a foreground run with a stated reason when jobs are unavailable', async () => {
@@ -348,7 +394,7 @@ describe('dsh/tools.js createTools', () => {
 
     const deleteTool = tools.find((t: any) => t.name === 'at_terminal_sftp_delete')!;
     const deleteRes = await deleteTool.execute({ path: '/tmp/test.txt' });
-    expect(mockService.sftpDelete).toHaveBeenCalledWith({ path: '/tmp/test.txt' });
+    expect(mockService.sftpDelete).toHaveBeenCalledWith({ path: '/tmp/test.txt', sftpWriteGuard: 'observe' });
     expect(deleteRes.deleted).toBe(true);
   });
 
@@ -523,9 +569,10 @@ describe('dsh/tools.js createTools', () => {
 
       const result = await write.execute(call);
 
-      // Untouched: the service decides how to read the file, and a field rewritten here would be
-      // a second source of truth that disagrees with the one the confirmation names.
-      expect(sftpWriteFile).toHaveBeenCalledWith(call);
+      // Untouched apart from the guard mode the tool adds per call: the service decides how to
+      // read the file, and a field rewritten here would be a second source of truth that
+      // disagrees with the one the confirmation names.
+      expect(sftpWriteFile).toHaveBeenCalledWith({ ...call, sftpWriteGuard: 'observe' });
       expect(result).toMatchObject({ localPath: UPLOAD.localPath, bytesWritten: 7_692_224 });
       // "Wrote N bytes" would hide that a local file was the source; the render is the model's
       // evidence of what happened, so an upload has to say so.
@@ -556,6 +603,220 @@ describe('dsh/tools.js createTools', () => {
       // would fire first on a slow link and turn the service's "transfer aborted, the file may
       // be incomplete" into a generic TOOL_TIMEOUT — the message the operator cannot act on.
       expect(writeTool().timeoutMs).toBe(480_000);
+    });
+  });
+
+  describe('at_terminal_sftp_edit_file', () => {
+    const EDIT_RESULT = {
+      serverId: 's1',
+      path: '/srv/app.conf',
+      replacements: 1,
+      bytesWritten: 12,
+      size: 12,
+      modifiedAt: 1_700_000_100
+    };
+    const editTool = (service: Record<string, unknown> = {}, config: Record<string, unknown> = {}) =>
+      createTools({ version: '0.1.0', config, resolveAgentService: () => service }).find(
+        (t: any) => t.name === 'at_terminal_sftp_edit_file'
+      )!;
+
+    it('declares the literal-replace contract and the version fields', () => {
+      const edit = editTool();
+      expect(edit.parameters.required).toEqual(['path', 'oldString', 'newString']);
+      expect(edit.parameters.properties.replaceAll.type).toBe('boolean');
+      // The pair every SFTP mutation now carries: a caller that read the file can protect
+      // itself, and a caller that did not is not forced to invent values.
+      expect(edit.parameters.properties.expectedSize.type).toBe('integer');
+      expect(edit.parameters.properties.expectedModifiedAt.type).toBe('integer');
+      // Full-file read + write on the service; the tool bound must sit outside both timers.
+      expect(edit.timeoutMs).toBeGreaterThanOrEqual(120_000);
+      expect(Object.keys(edit.output.schema.properties)).toEqual(
+        expect.arrayContaining(['path', 'replacements', 'bytesWritten', 'size', 'modifiedAt'])
+      );
+    });
+
+    it('forwards the call plus the live sftpWriteGuard setting', async () => {
+      const sftpEditFile = vi.fn().mockResolvedValue(EDIT_RESULT);
+      let guard = 'observe';
+      const config = { sftpWriteGuard: { get: () => guard } };
+      const edit = editTool({ sftpEditFile }, config);
+
+      await edit.execute({ path: '/srv/app.conf', oldString: 'a', newString: 'b' });
+      expect(sftpEditFile).toHaveBeenLastCalledWith({
+        path: '/srv/app.conf',
+        oldString: 'a',
+        newString: 'b',
+        sftpWriteGuard: 'observe'
+      });
+
+      // Volatile settings are read per call: flipping observe -> strict must affect the next
+      // invocation without re-registering the tool.
+      guard = 'strict';
+      await edit.execute({
+        path: '/srv/app.conf',
+        oldString: 'a',
+        newString: 'b',
+        expectedSize: 12,
+        expectedModifiedAt: 1
+      });
+      expect(sftpEditFile).toHaveBeenLastCalledWith({
+        path: '/srv/app.conf',
+        oldString: 'a',
+        newString: 'b',
+        expectedSize: 12,
+        expectedModifiedAt: 1,
+        sftpWriteGuard: 'strict'
+      });
+    });
+
+    it('reports replacements and post-write size in the rendered text', async () => {
+      const edit = editTool({ sftpEditFile: vi.fn().mockResolvedValue(EDIT_RESULT) });
+      const result = await edit.execute({ path: '/srv/app.conf', oldString: 'a', newString: 'b' });
+
+      expect(result).toMatchObject({ replacements: 1, bytesWritten: 12, size: 12 });
+      expect(edit.output.render({}, result)[0].text).toContain('Edited /srv/app.conf: 1 replacement(s)');
+    });
+
+    it('rejects a missing oldString or a non-string newString before any service call', async () => {
+      const sftpEditFile = vi.fn();
+      const edit = editTool({ sftpEditFile });
+
+      await expect(edit.execute({ path: '/x', newString: 'b' })).rejects.toThrow(
+        /"oldString" is required and must be a non-empty string/
+      );
+      await expect(edit.execute({ path: '/x', oldString: '', newString: 'b' })).rejects.toThrow(
+        /"oldString" is required and must be a non-empty string/
+      );
+      await expect(edit.execute({ path: '/x', oldString: 'a', newString: 3 })).rejects.toThrow(
+        /"newString" is required and must be a string/
+      );
+      expect(sftpEditFile).not.toHaveBeenCalled();
+    });
+  });
+
+  it('passes the live sftpWriteGuard to write and delete, not a registration snapshot', async () => {
+    const sftpWriteFile = vi.fn().mockResolvedValue({ serverId: 's1', path: '/x', bytesWritten: 4, overwritten: true });
+    const sftpDelete = vi.fn().mockResolvedValue({ serverId: 's1', path: '/x', deleted: true });
+    let guard = 'off';
+    const config = { sftpWriteGuard: { get: () => guard } };
+    const tools = createTools({
+      version: '0.1.0',
+      config,
+      resolveAgentService: () => ({ sftpWriteFile, sftpDelete })
+    });
+    const write = tools.find((t: any) => t.name === 'at_terminal_sftp_write_file')!;
+    const remove = tools.find((t: any) => t.name === 'at_terminal_sftp_delete')!;
+
+    await write.execute({ path: '/x', content: 'next', overwrite: true, expectedSize: 4, expectedModifiedAt: 1 });
+    expect(sftpWriteFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({ expectedSize: 4, expectedModifiedAt: 1, sftpWriteGuard: 'off' })
+    );
+
+    guard = 'strict';
+    await remove.execute({ path: '/x' });
+    expect(sftpDelete).toHaveBeenLastCalledWith({ path: '/x', sftpWriteGuard: 'strict' });
+
+    // The schema advertises the optional version fields on both mutation tools; a field that
+    // only exists in the service would be invisible to the model.
+    expect(write.parameters.properties.expectedSize.type).toBe('integer');
+    expect(write.parameters.properties.expectedModifiedAt.type).toBe('integer');
+    expect(remove.parameters.properties.expectedSize.type).toBe('integer');
+    expect(remove.parameters.properties.expectedModifiedAt.type).toBe('integer');
+  });
+
+  describe('at_terminal_sftp_apply_patch', () => {
+    const PATCH = '*** Begin Patch\n*** Update File: a.txt\n-a\n+b\n*** End Patch'
+    const applyTool = (service: Record<string, unknown> = {}, config: Record<string, unknown> = {}) =>
+      createTools({ version: '0.1.0', config, resolveAgentService: () => service }).find(
+        (t: any) => t.name === 'at_terminal_sftp_apply_patch'
+      )!;
+
+    it('declares path/input, the 300 s bound and the commit result shape', () => {
+      const apply = applyTool();
+      expect(apply.parameters.required).toEqual(['path', 'input']);
+      expect(apply.parameters.properties.input.type).toBe('string');
+      expect(apply.timeoutMs).toBe(300_000);
+      const properties = apply.output.schema.properties;
+      expect(properties.phase.enum).toEqual(['commit']);
+      expect(properties.operations.items.properties.status.enum).toEqual([
+        'completed',
+        'failed',
+        'unknown',
+        'skipped'
+      ]);
+      expect(properties.affectedPaths.items.type).toBe('string');
+    });
+
+    it('forwards the patch and the live sftpWriteGuard setting to the service', async () => {
+      const sftpApplyPatch = vi.fn().mockResolvedValue({
+        serverId: 's1',
+        phase: 'commit',
+        cancelled: false,
+        operations: [],
+        affectedPaths: []
+      });
+      let guard = 'observe';
+      const config = { sftpWriteGuard: { get: () => guard } };
+      const apply = applyTool({ sftpApplyPatch }, config);
+
+      await apply.execute({ path: '/srv/app', input: PATCH });
+      expect(sftpApplyPatch).toHaveBeenLastCalledWith({
+        path: '/srv/app',
+        input: PATCH,
+        sftpWriteGuard: 'observe'
+      });
+
+      guard = 'strict';
+      await apply.execute({ path: '/srv/app', input: PATCH });
+      expect(sftpApplyPatch).toHaveBeenLastCalledWith({
+        path: '/srv/app',
+        input: PATCH,
+        sftpWriteGuard: 'strict'
+      });
+    });
+
+    it('renders a clean success as A/M/D lines and a stopped patch as status sections', () => {
+      const apply = applyTool();
+      const success = {
+        serverId: 's1',
+        phase: 'commit',
+        cancelled: false,
+        affectedPaths: ['/srv/a', '/srv/b'],
+        operations: [
+          { index: 0, kind: 'add', path: '/srv/a', patchLine: 2, status: 'completed' },
+          { index: 1, kind: 'update', path: '/srv/b', patchLine: 4, status: 'completed' }
+        ]
+      };
+      expect(apply.output.render({}, success)[0].text).toContain('Success. Updated the following files:');
+      expect(apply.output.render({}, success)[0].text).toContain('A /srv/a');
+      expect(apply.output.render({}, success)[0].text).toContain('M /srv/b');
+
+      const stopped = {
+        ...success,
+        affectedPaths: [],
+        operations: [
+          { index: 0, kind: 'update', path: '/srv/a', patchLine: 2, status: 'completed' },
+          { index: 1, kind: 'update', path: '/srv/b', patchLine: 4, status: 'failed', code: 'sftp-stale-version', message: 'changed' },
+          { index: 2, kind: 'delete', path: '/srv/c', patchLine: 6, status: 'skipped' }
+        ]
+      };
+      const text = apply.output.render({}, stopped)[0].text;
+      expect(text).toContain('Patch stopped after 1 of 3 operations.');
+      expect(text).toContain('Failed:');
+      expect(text).toContain('Not executed:');
+    });
+
+    it('rejects a missing path or input before any service call', async () => {
+      const sftpApplyPatch = vi.fn();
+      const apply = applyTool({ sftpApplyPatch });
+
+      await expect(apply.execute({ input: PATCH })).rejects.toThrow(
+        /at_terminal_sftp_apply_patch: "path" is required/
+      );
+      await expect(apply.execute({ path: '/srv', input: '   ' })).rejects.toThrow(
+        /"input" is required and must be a non-empty string/
+      );
+      expect(sftpApplyPatch).not.toHaveBeenCalled();
     });
   });
 
@@ -935,6 +1196,14 @@ describe('job control', () => {
  * lives once in `dsh/prompt.js`.
  */
 describe('the tool definitions', () => {
+  it('announces the SFTP edit capability it actually ships', () => {
+    // `ping` is the machine-readable contract a caller reads to decide what it may attempt;
+    // a working tool missing from this list is as misleading as a listed one that does not exist.
+    expect(CAPABILITIES).toContain('sftp-file-edit');
+    expect(CAPABILITIES).toContain('sftp-file-operations');
+    expect(CAPABILITIES).toContain('sftp-apply-patch');
+  });
+
   it('fit the prompt budget, measured the way the host sends them', () => {
     const tools = createTools({ version: '0.1.0' });
     const serialized = JSON.stringify(
@@ -942,7 +1211,35 @@ describe('the tool definitions', () => {
     );
 
     // Long keys on purpose: `{n,d,p}` measures ~4% smaller and would hide a regression.
-    expect(serialized.length).toBeLessThanOrEqual(5400);
+    // 6,178 B on 2026-11-09 with sftp_edit_file included; the ceiling leaves room for the
+    // per-field descriptions without inviting a second page of guidance back into the schema.
+    expect(serialized.length).toBeLessThanOrEqual(7000);
+  });
+
+  it('pays at least 60% less schema in a session with no servers', () => {
+    // R4's metric: the four resident tools are the whole no-server model-visible set. The
+    // baseline is fixed so a future tool addition cannot silently shrink the denominator.
+    // 6,764 B with the optional apply_patch definition included; the no-server resident set
+    // must still stay below 40% of it.
+    const BASELINE_BYTES = 6764;
+    const RESIDENT = [
+      'at_terminal_ping',
+      'at_terminal_list_ssh_servers',
+      'at_terminal_get_terminal_context',
+      'at_terminal_get_agent_execution_status'
+    ];
+    const pick = (names: string[]) => {
+      const tools = createTools({ version: '0.1.0' });
+      return tools
+        .filter((tool: any) => names.includes(tool.name))
+        .map(({ name, description, parameters }: any) => ({ name, description, parameters }));
+    };
+    const serialized = (names: string[]) => JSON.stringify(pick(names)).length;
+    const baseline = serialized(createTools({ version: '0.1.0' }).map((tool: any) => tool.name));
+
+    expect(baseline).toBe(BASELINE_BYTES);
+    const resident = serialized(RESIDENT);
+    expect(1 - resident / baseline).toBeGreaterThanOrEqual(0.6);
   });
 
   it('refresh the prompt fact from the server list they just read', async () => {
@@ -970,6 +1267,25 @@ describe('the tool definitions', () => {
 
     // This is what makes the section's dynamic fact true rather than decorative.
     expect(trustFact()).toBe('production (full)');
+  });
+
+  it('reports the server count it just read, so conditional registration needs no second query', async () => {
+    const mockService = {
+      listServers: vi.fn().mockResolvedValue({
+        servers: [{ id: 's1', label: 'one', host: 'h', port: 22, username: 'u', authType: 'agent', connected: false }]
+      })
+    };
+    let listed: unknown[] | undefined;
+    const tool = createTools({
+      version: '0.1.0',
+      resolveAgentService: () => mockService,
+      onServersListed: (servers: unknown[]) => {
+        listed = servers;
+      }
+    }).find((t: any) => t.name === 'at_terminal_list_ssh_servers');
+
+    await tool.execute({}, { signal: undefined });
+    expect(listed).toHaveLength(1);
   });
 });
 

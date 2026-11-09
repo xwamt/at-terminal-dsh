@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { platform as currentPlatform, setPlatform } from '../../src/platform/current';
+import type { DshDomain, DshDomainSpec } from '../../src/platform/dsh/host';
+import { createStateDomainSpec } from '../../src/platform/dsh/state';
 import { createFakePlatform } from '../core/fakes';
 import {
   FakeDomainError,
@@ -12,6 +15,80 @@ import {
   MemoryStorageDomain,
   RecordingDshLogger
 } from '../platform/dsh/host-fakes';
+
+/**
+ * Hooks for the host-bundle mock.
+ *
+ * The platform lifetime is a promise-ordering seam: a fake `createDshPlatform` that parks
+ * before resolving proves that disposal waits for a handle that does not exist yet, and a
+ * wrapper around the **real** assembly observes the order `sftp.dispose()` → `handle.close()`
+ * without replacing the objects those calls act on. The mutable switches keep every other
+ * test in this file on the real bundle.
+ */
+const hostBundleOverrides = vi.hoisted(() => ({
+  events: [] as string[],
+  wrapPlatformClose: false,
+  wrapSftpDispose: false
+}));
+
+vi.mock('../../dsh/host.bundle.js', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, any>;
+  return {
+    ...actual,
+    async createDshPlatform(deps: unknown) {
+      const handle = await actual.createDshPlatform(deps);
+      if (!hostBundleOverrides.wrapPlatformClose) return handle;
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        hostBundleOverrides.events.push('platform.close');
+        await close();
+      };
+      return handle;
+    },
+    createDshSftpApi(options: unknown) {
+      const face = actual.createDshSftpApi(options);
+      if (!hostBundleOverrides.wrapSftpDispose) return face;
+      const dispose = face.dispose.bind(face);
+      face.dispose = () => {
+        hostBundleOverrides.events.push('sftp.dispose');
+        dispose();
+      };
+      return face;
+    }
+  };
+});
+
+/**
+ * A storage domain whose `open()` parks until released.
+ *
+ * The deferred open is what makes "the plugin was disposed before the assembly settled" a
+ * deterministic test rather than a timing accident: `apply()` is synchronous up to the first
+ * await inside `createDshPlatform`, and this gate holds it there.
+ */
+class DeferredOpenStorageDomain extends MemoryStorageDomain {
+  private releaseOpen!: () => void;
+  private readonly gate = new Promise<void>((resolve) => {
+    this.releaseOpen = resolve;
+  });
+  openCount = 0;
+  closeCount = 0;
+
+  override async open<T = unknown>(spec: DshDomainSpec): Promise<DshDomain<T>> {
+    this.openCount += 1;
+    await this.gate;
+    const domain = await super.open<T>(spec);
+    const close = domain.close.bind(domain);
+    domain.close = async () => {
+      this.closeCount += 1;
+      await close();
+    };
+    return domain;
+  }
+
+  release(): void {
+    this.releaseOpen();
+  }
+}
 
 /**
  * The Host half's wiring, driven for real.
@@ -61,6 +138,9 @@ beforeEach(async () => {
   previousHome = process.env.DSH_HOME;
   home = await mkdtemp(joinPath(tmpdir(), 'at-dsh-home-'));
   process.env.DSH_HOME = home;
+  hostBundleOverrides.events = [];
+  hostBundleOverrides.wrapPlatformClose = false;
+  hostBundleOverrides.wrapSftpDispose = false;
 });
 afterEach(async () => {
   if (previousHome === undefined) delete process.env.DSH_HOME;
@@ -97,21 +177,42 @@ async function waitForServices(
 }
 
 /** @param options.storageDomain lets a test hand in a domain that refuses to open. */
-function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
+function createHarness(
+  options: {
+    storageDomain?: MemoryStorageDomain;
+    withoutScopedOn?: boolean;
+    withJobs?: boolean;
+    hostJobTools?: boolean;
+  } = {}
+) {
   const routes = new Map<string, Route>();
   const upgrades = new Map<string, Route>();
   const tools: Array<{ name?: string; execute?: (...args: any[]) => Promise<any> }> = [];
+  /** The `{ when }` each tool was registered with, keyed by tool name. */
+  const toolOptions = new Map<string, { when?: (context: any) => Promise<boolean> }>();
   const guards: Array<(exec: any) => string | undefined> = [];
   const logger = new RecordingDshLogger();
-  const disposers: Array<() => void> = [];
+  const disposers: Array<() => unknown> = [];
+  // Labels keep `disposers` addressable: the lifetime test has to assert on that one
+  // disposer's promise, not on the aggregate.
+  const effectLabels: Array<string | undefined> = [];
   const injections: string[][] = [];
   // Event listeners, so `tools/result` can be delivered the way the registry delivers it:
   // every observer is called, and whatever one throws is the registry's to swallow.
   const listeners = new Map<string, Set<(...args: any[]) => unknown>>();
+  // Which context registered each listener. Cordis dispatches the Loader's event with a
+  // fiber filter (`owner.fiber === fiber`), so a listener wrongly placed on an `ctx.inject`
+  // child context would never fire in the real host even though an unfiltered fake would
+  // still call it. Recording the owner lets `fireForOwner` reproduce that filter.
+  const listenerOwners = new WeakMap<(...args: any[]) => unknown, string>();
   // The prompt service. Modelled here because the host half registers into it, and a
   // regression there is invisible until a model request fails: interpolation is strict, and
   // an unknown `{{name}}` throws during assembly.
-  const promptSections: Array<{ name?: string; order?: number; text?: string }> = [];
+  const promptSections: Array<{
+    name?: string;
+    order?: number;
+    text?: string | ((context: { scope?: unknown; toolSet?: unknown }) => string);
+  }> = [];
   const promptVariables: Array<{ name: string; provider: () => unknown }> = [];
 
   const webServer = {
@@ -131,7 +232,11 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     getSectionOrder(name: string) {
       return name === 'TOOL_BASH' ? 1000 : undefined;
     },
-    section(spec: { name?: string; order?: number; text?: string }) {
+    section(spec: {
+      name?: string;
+      order?: number;
+      text?: string | ((context: { scope?: unknown; toolSet?: unknown }) => string);
+    }) {
       promptSections.push(spec);
       return () => {
         const index = promptSections.indexOf(spec);
@@ -177,12 +282,19 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
 
   const storageDomain = options.storageDomain ?? new MemoryStorageDomain();
   const credentials = new MemoryCredentialProvider();
+  const jobsService = options.withJobs === true ? { start: () => 'ssh-command-1' } : undefined;
 
-  const makeCtx = (extra: Record<string, unknown>): Record<string, unknown> => {
+  const makeCtx = (
+    extra: Record<string, unknown>,
+    fiberId: 'root' | 'child' = 'root'
+  ): Record<string, unknown> => {
     const raw: Record<string, unknown> = {
-      effect(run: () => unknown) {
+      effect(run: () => unknown, label?: string) {
         const dispose = run();
-        if (typeof dispose === 'function') disposers.push(dispose as () => void);
+        if (typeof dispose === 'function') {
+          disposers.push(dispose as () => unknown);
+          effectLabels.push(label);
+        }
         return () => {};
       },
       inject(names: string[], callback: (scoped: unknown) => unknown) {
@@ -192,7 +304,11 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
         // `ctx.inject(['systemPrompt'])` from a misspelled service name, which is exactly the
         // bug that shipped a prompt section nobody registered.
         if (!names.every((name) => Object.hasOwn(present, name))) return () => {};
-        callback(makeCtx({ ...extra, ...present }));
+        const scoped = makeCtx({ ...extra, ...present }, 'child');
+        // A scoped context without the event API models an older composition: the host half
+        // must feature-detect `loader/volatile-update` rather than assume it is there.
+        if (options.withoutScopedOn === true) (scoped as any).on = undefined;
+        callback(scoped);
         return () => {};
       },
       get(name: string) {
@@ -202,6 +318,7 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
         const set = listeners.get(event) ?? new Set<(...args: any[]) => unknown>();
         set.add(listener);
         listeners.set(event, set);
+        listenerOwners.set(listener, fiberId);
         return () => set.delete(listener);
       },
       logger,
@@ -228,17 +345,46 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
 
   // `storageDomain` and `credentials` stand in for the Harness's own services, which the
   // default composition mounts. `webServer` is what makes the channel reachable.
-  const present: Record<string, unknown> = { webServer, storageDomain, credentials, systemPrompt, skills, commands };
+  const present: Record<string, unknown> = {
+    webServer,
+    storageDomain,
+    credentials,
+    systemPrompt,
+    skills,
+    commands,
+    ...(jobsService === undefined ? {} : { jobs: jobsService })
+  };
 
   const ctx = makeCtx({
     systemPrompt,
+    ...(jobsService === undefined ? {} : { jobs: jobsService }),
     tools: {
-      register(definition: { name?: string; execute?: (...args: any[]) => Promise<any> }) {
+      register(
+        definition: { name?: string; execute?: (...args: any[]) => Promise<any> },
+        registrationOptions?: { when?: (context: any) => Promise<boolean> }
+      ) {
         tools.push(definition);
+        if (definition.name !== undefined && registrationOptions !== undefined) {
+          toolOptions.set(definition.name, registrationOptions);
+        }
         return () => {
           const index = tools.indexOf(definition);
           if (index !== -1) tools.splice(index, 1);
+          if (definition.name !== undefined) toolOptions.delete(definition.name);
         };
+      },
+      /**
+       * The host registry lookup used by the job-tool and prompt `when` logic. Registered
+       * plugin tools are always visible here; `hostJobTools` lets a test model the standard
+       * preset's own pair.
+       */
+      get(name: string) {
+        const registered = tools.find((tool) => tool.name === name);
+        if (registered !== undefined) return registered;
+        if (options.hostJobTools === true && (name === 'job_output' || name === 'job_kill')) {
+          return { name };
+        }
+        return undefined;
       },
       // `ctx.tools.guard()` returns the exact disposer that unregisters it, and the host
       // half relies on that: a leaked guard would outlive the plugin and deny its tools
@@ -258,13 +404,16 @@ function createHarness(options: { storageDomain?: MemoryStorageDomain } = {}) {
     routes,
     upgrades,
     tools,
+    toolOptions,
     guards,
     logger,
     disposers,
+    effectLabels,
     injections,
     listeners,
     promptSections,
     promptVariables,
+    listenerOwners,
     skillCatalog,
     commandRegistry
   };
@@ -310,6 +459,23 @@ function fire(harness: ReturnType<typeof createHarness>, event: string, ...args:
 }
 
 /**
+ * Deliver an event with Cordis's per-fiber filter: only listeners registered on `ownerId`
+ * receive it. The Loader emits `loader/volatile-update` to one entry's fiber, so a listener
+ * on a nested `ctx.inject` fiber is invisible to it; this helper is what makes the test
+ * sensitive to that.
+ */
+function fireForOwner(
+  harness: ReturnType<typeof createHarness>,
+  event: string,
+  ownerId: string,
+  ...args: unknown[]
+) {
+  for (const listener of harness.listeners.get(event) ?? []) {
+    if (harness.listenerOwners.get(listener) === ownerId) listener(...args);
+  }
+}
+
+/**
  * Poll for a file, because the audit append is deliberately not awaited by the observer.
  *
  * `lines` is how many lines the caller is waiting for, and it defaults to "any content". It
@@ -347,11 +513,13 @@ describe('dsh Host half — wiring', () => {
       'at_terminal_sftp_list_directory',
       'at_terminal_sftp_stat_path',
       'at_terminal_sftp_read_file',
+      'at_terminal_sftp_edit_file',
       'at_terminal_sftp_write_file',
       'at_terminal_sftp_create_file',
       'at_terminal_sftp_create_directory',
       'at_terminal_sftp_rename',
       'at_terminal_sftp_delete',
+      'at_terminal_sftp_apply_patch',
       'at_terminal_open_monitor',
       'at_terminal_get_hardware_metrics',
       'at_terminal_get_agent_execution_status',
@@ -550,7 +718,7 @@ describe('dsh Host half — wiring', () => {
     const harness = createHarness();
     hostHalf.apply(harness.ctx, {});
 
-    expect(harness.tools).toHaveLength(17);
+    expect(harness.tools).toHaveLength(19);
     const pingTool = harness.tools.find((t) => t.name === 'at_terminal_ping');
     expect(pingTool).toBeDefined();
 
@@ -915,7 +1083,26 @@ describe('dsh Host half — wiring', () => {
     expect(section.name).toBe("tool:at-terminal");
     // The order is read from the host table, never written as a literal here.
     expect(section.order).toBe(1000);
-    expect(section.text).toContain("{{at_terminal_trust}}");
+    // R4: the text is a function of the step's admitted tool set, not a static string.
+    expect(typeof section.text).toBe("function");
+    const visibleText = (section.text as (context: unknown) => string)({
+      scope: {},
+      toolSet: { view: () => new Map([["at_terminal_run_remote_command", {}]]) }
+    });
+    expect(visibleText).toContain("{{at_terminal_trust}}");
+    const emptyText = (section.text as (context: unknown) => string)({
+      scope: {},
+      toolSet: {
+        view: () =>
+          new Map([
+            ["at_terminal_ping", {}],
+            ["at_terminal_list_ssh_servers", {}],
+            ["at_terminal_get_terminal_context", {}],
+            ["at_terminal_get_agent_execution_status", {}]
+          ])
+      }
+    });
+    expect(emptyText).toBe("");
 
     // `assemble()` calls providers synchronously — a promise here would interpolate as
     // "[object Promise]" rather than fail, which is the worse outcome.
@@ -970,5 +1157,230 @@ describe('dsh Host half — wiring', () => {
     expect([...harness.commandRegistry.keys()].sort()).toEqual(["ssh-audit", "ssh-metrics"]);
   });
 
+  it("hides the plugin job tools where the standard preset already supplies job_output/job_kill", async () => {
+    // R3: the duplicated pair is only a fallback. With a job registry and the host's own
+    // tools in view, registering ours too would give the model two competing controls.
+    const harness = createHarness({ withJobs: true, hostJobTools: true });
+    hostHalf.apply(harness.ctx, {});
+    const when = harness.toolOptions.get("at_terminal_job_output")?.when;
+    expect(when).toBeDefined();
+    await expect(when?.({ agent: { id: "agent-1" }, signal: undefined })).resolves.toBe(false);
+    expect(harness.toolOptions.get("at_terminal_job_kill")?.when).toBe(when);
+  });
+
+  it("keeps the plugin job tools visible in a fallback composition with no host job tools", async () => {
+    const harness = createHarness({ withJobs: true });
+    hostHalf.apply(harness.ctx, {});
+    const when = harness.toolOptions.get("at_terminal_job_output")?.when;
+    await expect(when?.({ agent: { id: "agent-1" }, signal: undefined })).resolves.toBe(true);
+  });
+
+  it("hides both job tools when the composition has no job registry to serve them", async () => {
+    const harness = createHarness({ hostJobTools: true });
+    hostHalf.apply(harness.ctx, {});
+    const when = harness.toolOptions.get("at_terminal_job_output")?.when;
+    await expect(when?.({ agent: { id: "agent-1" }, signal: undefined })).resolves.toBe(false);
+  });
+
+  it("keeps every server tool visible until the inventory has been read (fail-open)", async () => {
+    // `knownServerCount === undefined` is "not read yet", not "no servers": hiding on the
+    // first turn of a session that does have servers would be the worse failure.
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    const when = harness.toolOptions.get("at_terminal_run_remote_command")?.when;
+    expect(when).toBeDefined();
+    await expect(when?.({ signal: undefined })).resolves.toBe(true);
+  });
+
+  it("hides apply_patch unless enableApplyPatch is true, and follows the server count", async () => {
+    const off = createHarness();
+    hostHalf.apply(off.ctx, {});
+    const offWhen = off.toolOptions.get("at_terminal_sftp_apply_patch")?.when;
+    expect(offWhen).toBeDefined();
+    await expect(offWhen?.({ signal: undefined })).resolves.toBe(false);
+
+    const on = createHarness();
+    hostHalf.apply(on.ctx, { enableApplyPatch: { get: () => true } });
+    const onWhen = on.toolOptions.get("at_terminal_sftp_apply_patch")?.when;
+    // Unread inventory is fail-open; once the empty server list is known it must hide.
+    await expect(onWhen?.({ signal: undefined })).resolves.toBe(true);
+    await waitForServices(on);
+    await expect(onWhen?.({ signal: undefined })).resolves.toBe(false);
+  });
+
+  it("shows only the four resident tools once the empty inventory is known, and saves ≥60% schema", async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const runWhen = harness.toolOptions.get("at_terminal_run_remote_command")?.when;
+    await expect(runWhen?.({ signal: undefined })).resolves.toBe(false);
+    for (const name of [
+      "at_terminal_ping",
+      "at_terminal_list_ssh_servers",
+      "at_terminal_get_terminal_context",
+      "at_terminal_get_agent_execution_status"
+    ]) {
+      // Resident tools carry no condition at all; that is what keeps them visible.
+      expect(harness.toolOptions.has(name)).toBe(false);
+    }
+
+    const visible: typeof harness.tools = [];
+    for (const tool of harness.tools) {
+      const when = tool.name === undefined ? undefined : harness.toolOptions.get(tool.name)?.when;
+      if (when === undefined || (await when({ signal: undefined }))) visible.push(tool);
+    }
+    expect(visible.map((tool) => tool.name)).toEqual([
+      "at_terminal_ping",
+      "at_terminal_list_ssh_servers",
+      "at_terminal_get_terminal_context",
+      "at_terminal_get_agent_execution_status"
+    ]);
+
+    const size = (list: typeof harness.tools) =>
+      JSON.stringify(
+        list.map(({ name, description, parameters }: any) => ({ name, description, parameters }))
+      ).length;
+    const baseline = size(harness.tools);
+    // Fixed baseline from the 19-tool build (A1 adds the opt-in apply_patch definition);
+    // the ratio is the R4 budget, not a snapshot.
+    expect(baseline).toBe(6764);
+    expect(1 - size(visible) / baseline).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it("switches the server tools on when a server is saved, without waiting for a list call", async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const when = harness.toolOptions.get("at_terminal_run_remote_command")?.when;
+    await expect(when?.({ signal: undefined })).resolves.toBe(false);
+
+    await callRpc(harness, "servers.save", {
+      server: {
+        label: "first",
+        host: "10.0.0.9",
+        port: 22,
+        username: "ops",
+        authType: "agent",
+        keepAliveInterval: 30,
+        encoding: "utf-8"
+      }
+    });
+
+    await expect(when?.({ signal: undefined })).resolves.toBe(true);
+  });
+
+  it("closes a platform whose assembly resolves after the plugin was disposed — exactly once", async () => {
+    // The race DSH 0.2.2's update/rollback path hits: the plugin is torn down while
+    // `createDshPlatform` is still opening `at_terminal_state`. The lifetime disposer must
+    // wait for the handle to appear and close it, or the next instance gets `already-open`.
+    const domain = new DeferredOpenStorageDomain();
+    const harness = createHarness({ storageDomain: domain });
+    hostHalf.apply(harness.ctx, {});
+
+    // `apply()` ran synchronously into `storageDomain.open`, which is parked on the gate.
+    expect(domain.openCount).toBe(1);
+
+    const disposals = harness.disposers.map((dispose) => dispose());
+    const lifetimeIndex = harness.effectLabels.indexOf("at-terminal: platform lifetime");
+    expect(lifetimeIndex).toBeGreaterThanOrEqual(0);
+
+    // The disposer must still be waiting while the assembly is parked: returning nothing
+    // (the pre-C4 `void handle.close()`) would settle immediately and let the next instance
+    // race the still-reserved storage domain.
+    const lifetimeDisposal = disposals[lifetimeIndex];
+    const outcome = await Promise.race([
+      Promise.resolve(lifetimeDisposal).then(
+        () => "settled",
+        () => "settled"
+      ),
+      flush().then(() => "pending")
+    ]);
+    expect(outcome).toBe("pending");
+
+    domain.release();
+    await Promise.allSettled(disposals);
+    await flush();
+
+    // One close, not zero (leaked domain) and not two (double teardown).
+    expect(domain.closeCount).toBe(1);
+
+    // The reserved name is free again: a new plugin instance can open the same domain.
+    await expect(domain.open(createStateDomainSpec())).resolves.toBeDefined();
+  });
+
+  it("disposes SFTP before closing the platform on the normal path", async () => {
+    hostBundleOverrides.wrapSftpDispose = true;
+    hostBundleOverrides.wrapPlatformClose = true;
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    const disposals = harness.disposers.map((dispose) => dispose());
+    await Promise.allSettled(disposals);
+
+    // Order is load-bearing: the SFTP manager's connections emit through the platform's
+    // notifier, so they must be gone before the platform is closed.
+    expect(hostBundleOverrides.events).toEqual(["sftp.dispose", "platform.close"]);
+  });
+});
+
+describe("dialog language volatile updates", () => {
+  afterEach(() => {
+    // `createDshPlatform` publishes itself into the process-wide slot; hand the test fake
+    // back for whatever runs next.
+    setPlatform(createFakePlatform());
+  });
+
+  it("re-reads dialogLanguage on loader/volatile-update and refills the captured dictionary", async () => {
+    let setting = "zh-CN";
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, { dialogLanguage: { get: () => setting } });
+    await waitForServices(harness);
+
+    const before = await callRpc(harness, "state.get");
+    expect(before.json?.result.dialogLanguage).toMatchObject({ setting: "zh-CN", language: "zh-CN" });
+    expect((before.json?.result.dialogLanguage as { strings: number }).strings).toBeGreaterThan(0);
+    // The platform captured the dictionary object: a Chinese system really renders Chinese.
+    expect(currentPlatform().localization.t("Allow Once")).toBe("仅允许本次");
+
+    setting = "en";
+    fireForOwner(harness, "loader/volatile-update", "root", [["dialogLanguage"]]);
+
+    const after = await callRpc(harness, "state.get");
+    expect(after.json?.result.dialogLanguage).toMatchObject({ setting: "en", language: "en", strings: 0 });
+    // `Object.assign` on the same object is what makes the already-assembled platform follow;
+    // replacing the object instead would leave `localization` speaking Chinese.
+    expect(currentPlatform().localization.t("Allow Once")).toBe("Allow Once");
+  });
+
+  it("does not react to an unrelated volatile path", async () => {
+    let setting = "zh-CN";
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, { dialogLanguage: { get: () => setting } });
+    await waitForServices(harness);
+
+    setting = "en";
+    fireForOwner(harness, "loader/volatile-update", "root", [["terminalFontSize"]]);
+
+    const state = await callRpc(harness, "state.get");
+    expect(state.json?.result.dialogLanguage).toMatchObject({
+      setting: "zh-CN",
+      language: "zh-CN"
+    });
+    expect((state.json?.result.dialogLanguage as { strings: number }).strings).toBeGreaterThan(0);
+  });
+
+  it("keeps activating when the scoped context has no loader event API", async () => {
+    // Older host: `loader/volatile-update` does not exist. Registration is feature-detected,
+    // so the plugin keeps its activation-time behaviour instead of failing to start.
+    const harness = createHarness({ withoutScopedOn: true });
+    hostHalf.apply(harness.ctx, { dialogLanguage: { get: () => "en" } });
+    await waitForServices(harness);
+
+    const state = await callRpc(harness, "state.get");
+    expect(state.json?.result.dialogLanguage).toMatchObject({ setting: "en", language: "en", strings: 0 });
+  });
 });
 

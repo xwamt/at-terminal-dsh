@@ -60,10 +60,15 @@ interface ServerRow {
 /**
  * What the Host reports about the optional composition bundle.
  *
- * Four facts, not one: `available` (is there a plugin manager at all), `installed` (is the package
- * in the profile), `enabled` (does its patch layer contribute) and `rows` (how many components
- * actually mounted). Collapsing them would let the page show "Install" to someone who has it, or
- * "Active" to someone whose three rows failed to mount.
+ * Five facts, not one: `available` (is there a plugin manager at all), `installed` (is the package
+ * in the profile), `enabled` (does its saved selection include the bundle), `rows` (how many
+ * components the bundle declares) and `activation` (are those rows actually running). Collapsing
+ * them would let the page show "Install" to someone who has it, or "Active" to someone whose
+ * three rows failed to mount — `enabled` is only the saved choice, never proof of activation.
+ *
+ * `pendingBuilds`, `diagnostic` and `restoring` are the plugin manager's own install/activation
+ * diagnostics. They survive only as long as the Host process keeps the last change result, which
+ * is longer than a page re-render needs.
  */
 interface OptionalBundleState {
   available: boolean;
@@ -72,7 +77,11 @@ interface OptionalBundleState {
   installed: boolean;
   enabled: boolean;
   rows: number;
+  activation?: 'active' | 'failed' | 'unknown';
   reason?: string;
+  diagnostic?: string;
+  pendingBuilds?: string[];
+  restoring?: boolean;
 }
 
 /**
@@ -230,16 +239,25 @@ export function AtTerminalSettingsTab(): unknown {
         ? t('monitor.decision.confirmed')
         : t('monitor.decision.denied');
   /**
-   * One sentence per state, and the three states are genuinely different facts.
+   * One sentence per state, and the states are genuinely different facts.
+   *
+   * `activation` is checked before the success copy on purpose: `enabled` only means the bundle
+   * is selected in the profile, so a bundle that was selected but failed to load must read as a
+   * failure rather than "Active". `unknown` is the third answer for a Harness that cannot prove
+   * either outcome — it must not be painted as success.
    *
    * Same reason as `decisionLabel`: literal `t('…')` calls, so the copy test can find them.
    */
   const optionalState = (state: OptionalBundleState): string =>
     !state.installed
       ? t('settings.optional.state.missing')
-      : state.enabled
-        ? t('settings.optional.state.enabled', { count: state.rows })
-        : t('settings.optional.state.disabled');
+      : !state.enabled
+        ? t('settings.optional.state.disabled')
+        : state.activation === 'failed'
+          ? t('settings.optional.state.failed')
+          : state.activation === 'active'
+            ? t('settings.optional.state.enabled', { count: state.rows })
+            : t('settings.optional.state.unknown');
   const [audits, setAudits] = useState<AgentAuditSummary[] | null>(null);
   const [hostKeys, setHostKeys] = useState<HostKeyRow[] | null>(null);
   const [servers, setServers] = useState<ServerRow[]>([]);
@@ -247,8 +265,9 @@ export function AtTerminalSettingsTab(): unknown {
    * The optional composition bundle, as the Host's plugin manager describes it.
    *
    * `null` means "not read yet", which is different from every state the Host can report: the
-   * three real states are not installed / installed but switched off / active, and rendering an
-   * unread page as "not installed" would show an Install button to someone who already has it.
+   * real states are not installed / installed but switched off / enabled and active / enabled but
+   * failed / enabled but unconfirmed, and rendering an unread page as "not installed" would show
+   * an Install button to someone who already has it.
    */
   const [optional, setOptional] = useState<OptionalBundleState | null>(null);
   const [optionalBusy, setOptionalBusy] = useState(false);
@@ -301,19 +320,37 @@ export function AtTerminalSettingsTab(): unknown {
    * Install, enable or disable the optional bundle.
    *
    * All three go through the Host: installing is a `pnpm add` in the profile and switching is a
-   * composition reload, so neither can happen in the page. `reloadCount` re-reads afterwards —
-   * when the switch succeeds the page usually unmounts first, and when it fails the row has to
-   * show the state that actually survived.
+   * composition reload, so neither can happen in the page. The answer is the authoritative state
+   * (including a failed activation or the build scripts pnpm blocked), so it is shown at once;
+   * `reloadCount` then re-reads — when a switch succeeds the page usually unmounts first, and
+   * when it fails the row has to show the state that actually survived.
    */
   const runOptional = (method: string, params: Record<string, unknown> = {}): void => {
     setOptionalBusy(true);
     setOptionalError(null);
     void callRpc(method, params)
-      .then(() => setReloadCount((count) => count + 1))
+      .then((answer) => {
+        const reported = (answer as { state?: OptionalBundleState } | null)?.state;
+        if (reported !== undefined && reported !== null) setOptional(reported);
+        setReloadCount((count) => count + 1);
+      })
       .catch((failure: unknown) =>
         setOptionalError(failure instanceof Error ? failure.message : String(failure))
       )
       .finally(() => setOptionalBusy(false));
+  };
+
+  /**
+   * Allow the dependency build scripts pnpm blocked and retry the same install.
+   *
+   * The names come from the Host's failed change result — the page never invents them — and
+   * approving them is a profile-wide permission, which is why the button says what it grants
+   * instead of a bare "Retry".
+   */
+  const approveBuilds = (): void => {
+    const pending = optional?.pendingBuilds ?? [];
+    if (pending.length === 0) return;
+    runOptional('terminal.optionalBundle.install', { approvedBuilds: pending });
   };
 
   const totals = { allowed: 0, confirmed: 0, denied: 0 };
@@ -519,6 +556,55 @@ export function AtTerminalSettingsTab(): unknown {
                   : t('settings.optional.install')
               )
             ),
+      optional !== null && optional.pendingBuilds !== undefined && optional.pendingBuilds.length > 0
+        ? h(
+            'div',
+            { style: { ...keyCardStyle, borderColor: 'var(--dsw-alias-state-warn-primary)' } },
+            h(
+              'div',
+              { style: { ...captionStyle, color: 'var(--dsw-alias-state-warn-primary)' } },
+              t('settings.optional.pendingBuilds.title')
+            ),
+            h('div', { style: captionStyle }, t('settings.optional.pendingBuilds.description')),
+            h(
+              'ul',
+              { style: { ...listStyle, margin: 0, paddingLeft: '18px' } },
+              ...optional.pendingBuilds.map((name) => h('li', { key: name, style: monoStyle }, name))
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                disabled: optionalBusy,
+                style: { ...buttonStyle, alignSelf: 'flex-start' },
+                onClick: approveBuilds
+              },
+              t('settings.optional.approveBuilds')
+            )
+          )
+        : null,
+      optional?.diagnostic !== undefined && optional.diagnostic !== ''
+        ? h(
+            'details',
+            { style: { ...captionStyle, minWidth: 0 } },
+            h('summary', { style: { cursor: 'pointer' } }, t('settings.optional.details')),
+            h(
+              'pre',
+              {
+                style: {
+                  ...monoStyle,
+                  margin: '6px 0 0',
+                  whiteSpace: 'pre-wrap' as const,
+                  overflowWrap: 'anywhere' as const
+                }
+              },
+              optional.diagnostic
+            )
+          )
+        : null,
+      optional?.restoring === true
+        ? h('div', { style: mutedStyle }, t('settings.optional.restoring'))
+        : null,
       optionalError !== null
         ? h('div', { style: mutedStyle }, t('settings.optional.failed', { message: optionalError }))
         : null,

@@ -9,7 +9,7 @@
  * `configEditor.edit()`, which re-validates the merged config against this
  * same schema — so the constraints below are the write guard, not decoration.
  *
- * Read against the installed Harness (0.1.7-rc.2); `scripts/verify.mjs`
+ * Read against the installed Harness (0.2.2-rc.1); `scripts/verify.mjs`
  * re-checks the schema against the installed schemastery on every run:
  *
  *   - `Registry.plugin()` stores `Config: plugin.Config`, so a module that
@@ -118,6 +118,36 @@ export const SETTINGS_FIELDS = Object.freeze([
     default: 'auto',
     description:
       'Language for approval dialogs. "auto" follows the operating system; "zh-CN" and "en" pin it.'
+  }),
+  Object.freeze({
+    key: 'sftpWriteGuard',
+    /**
+     * No VS Code counterpart: this guards the *agent* write path, which the extension does
+     * not have. `off` is the 0.3.0 behaviour, so the default `observe` only adds enforcement
+     * where a caller already passes expected values and never turns a working write into a
+     * refusal.
+     */
+    vscodeKey: null,
+    type: 'string',
+    pattern: '^(off|observe|strict)$',
+    default: 'observe',
+    description:
+      'How agent SFTP writes are guarded against stale reads: "off" keeps legacy behaviour, "observe" checks expectedSize/expectedModifiedAt when provided, "strict" requires a read first.'
+  }),
+  Object.freeze({
+    key: 'enableApplyPatch',
+    /**
+     * Opt-in on purpose. `apply_patch` can mutate several files through one model call and
+     * each file still gets its own authorization prompt; a user who has not asked for that
+     * workflow should not pay its schema cost or expose the tool at all. The tool definition
+     * stays in `createTools()` for classification/tests, while `dsh/index.js` registers it
+     * with a `when` condition that reads this field.
+     */
+    vscodeKey: null,
+    type: 'boolean',
+    default: false,
+    description:
+      'Register the optional at_terminal_sftp_apply_patch tool for multi-file Codex-style remote patches.'
   })
 ])
 

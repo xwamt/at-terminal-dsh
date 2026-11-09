@@ -553,6 +553,9 @@ export class AgentToolService {
     content?: string;
     localPath?: string;
     overwrite?: boolean;
+    expectedSize?: number;
+    expectedModifiedAt?: number;
+    sftpWriteGuard?: 'off' | 'observe' | 'strict';
   }) {
     const transferId = `write-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const filename = input.path.split('/').pop() || input.path;
@@ -611,6 +614,65 @@ export class AgentToolService {
         // Not `denied`: a dead link, a missing local file or an expired deadline was never a
         // policy decision, and labelling them all "denied" made every failure look like the
         // agent tried something the user refused.
+        reasonCode: sftpWriteFailureReason(error),
+        serverId: input.serverId
+      });
+      throw error;
+    }
+  }
+
+  async sftpEditFile(input: {
+    terminalId?: string;
+    serverId?: string;
+    path: string;
+    oldString: string;
+    newString: string;
+    replaceAll?: boolean;
+    expectedSize?: number;
+    expectedModifiedAt?: number;
+    sftpWriteGuard?: 'off' | 'observe' | 'strict';
+  }) {
+    try {
+      const res = await this.requireSftp().editFile(input);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_edit_file',
+        command: `edit ${input.path}`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_edit_file',
+        command: `edit ${input.path}`,
+        reasonCode: sftpWriteFailureReason(error),
+        serverId: input.serverId
+      });
+      throw error;
+    }
+  }
+
+  async sftpApplyPatch(input: {
+    terminalId?: string;
+    serverId?: string;
+    path: string;
+    input: string;
+    signal?: AbortSignal;
+    sftpWriteGuard?: 'off' | 'observe' | 'strict';
+  }) {
+    try {
+      const res = await this.requireSftp().applyPatch(input);
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_apply_patch',
+        command: `patch ${input.path} (${input.input.length} chars)`,
+        reasonCode: 'policy_allowed',
+        serverId: input.serverId
+      });
+      return res;
+    } catch (error) {
+      this.dependencies.executionBridge?.recordAudit({
+        tool: 'at_terminal_sftp_apply_patch',
+        command: `patch ${input.path} (${input.input.length} chars)`,
         reasonCode: sftpWriteFailureReason(error),
         serverId: input.serverId
       });
@@ -681,7 +743,14 @@ export class AgentToolService {
     }
   }
 
-  async sftpDelete(input: { terminalId?: string; serverId?: string; path: string }) {
+  async sftpDelete(input: {
+    terminalId?: string;
+    serverId?: string;
+    path: string;
+    expectedSize?: number;
+    expectedModifiedAt?: number;
+    sftpWriteGuard?: 'off' | 'observe' | 'strict';
+  }) {
     try {
       const res = await this.requireSftp().deleteFile(input);
       this.dependencies.executionBridge?.recordAudit({
@@ -815,6 +884,14 @@ function sftpWriteFailureReason(error: unknown): string {
   }
   if (message.startsWith('Timed out uploading')) {
     return 'upload_timeout';
+  }
+  // Version-guard refusals have a concrete recovery (`re-read`), so they must not be rendered
+  // as a generic failure — the bridge maps `error` to an allowed low-risk row.
+  if (message.includes('file has not been read')) {
+    return 'not_observed';
+  }
+  if (message.includes('changed since it was read')) {
+    return 'stale_version';
   }
   return 'error';
 }

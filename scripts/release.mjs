@@ -80,6 +80,43 @@ function onRegistry(name, version) {
   }
 }
 
+/**
+ * Assert what `npm pack` would actually publish.
+ *
+ * The plugin package is installed from a tarball, not from this working tree: a runtime
+ * module missing from `files` loads fine in a `link:` checkout and dies with
+ * `ERR_MODULE_NOT_FOUND` for every registry user. The vendored schemastery/cosmokit
+ * copies have the same property — they must be real bundled dependencies, not just
+ * files that happen to exist under `dsh/node_modules` here.
+ */
+function assertPackManifest(dir) {
+  const out = run('npm', ['pack', '--dry-run', '--json'], { cwd: dir, capture: true })
+  let parsed
+  try {
+    parsed = JSON.parse(out.trim())
+  } catch {
+    fail(`npm pack --dry-run did not return JSON for ${dir}`)
+  }
+  const entry = Array.isArray(parsed) ? parsed[0] : parsed
+  const paths = new Set((entry?.files ?? []).map((file) => file.path))
+  const required = [
+    'index.js', 'tools.js', 'settings.js', 'channel.js', 'commands.js',
+    'jobs.js', 'locale.js', 'optionalBundle.js', 'policy.js', 'prompt.js', 'skills.js', 'spill.js',
+    'host.bundle.js', 'terminal.bundle.js', 'client.js', 'client.xterm.js', 'client.styles.js'
+  ]
+  const missing = required.filter((file) => !paths.has(file))
+  if (missing.length > 0) fail(`npm pack would omit runtime modules: ${missing.join(', ')}`)
+  const bundled = new Set(entry?.bundled ?? [])
+  const missingBundled = ['@deepseek-ai/schemastery', '@deepseek-ai/cosmokit'].filter((name) => !bundled.has(name))
+  if (missingBundled.length > 0) {
+    fail(`npm pack would omit bundled dependencies: ${missingBundled.join(', ')} (run npm run vendor:dsh first)`)
+  }
+  say(
+    `release: pack manifest OK — ${entry.entryCount} entries, bundled ` +
+      `${[...bundled].join(', ')}; ${required.length} runtime modules present`
+  )
+}
+
 /* --------------------------------- checks ---------------------------------- */
 
 say('release: reading both manifests')
@@ -138,6 +175,7 @@ if (!publish) {
    * the plan saw two packages and no mention of the tag they asked for. Saying it up front is
    * what makes `--tag --dry-run` answerable — "would tag v0.2.0" or "tag exists".
    */
+  assertPackManifest(PACKAGES[0].dir)
   if (tag) {
     const name = `v${plugin.version}`
     say(tagExists(name) ? `  tag exists    ${name}` : `  would tag     ${name}`)
@@ -151,6 +189,7 @@ if (!publish) {
 if (skipChecks) {
   say('release: --skip-checks: gates were NOT run. A release without gates is a guess.')
 } else {
+  assertPackManifest(PACKAGES[0].dir)
   for (const [label, command, commandArgs] of [
     ['typecheck', 'npm', ['run', 'typecheck']],
     ['verify:kernel', 'npm', ['run', 'verify:kernel']],

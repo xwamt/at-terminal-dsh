@@ -43,8 +43,16 @@ import {
   getAgentExecutionStatusRpc
 } from './channel';
 import { NS, en, zh } from './i18n';
-import { AtTerminalBody, AtTerminalTitle, wrapWithLocale } from './body';
-import { AtTerminalSessionBody } from './body-session';
+import { AtTerminalBody, AtTerminalTitle, wrapWithLocale, type FileActionsService } from './body';
+import {
+  resolveServerMenuActions,
+  resolveSftpMenuActions,
+  SERVER_MENU_TARGET,
+  SFTP_CONTAINER_MENU_TARGET,
+  SFTP_ENTRY_MENU_TARGET,
+  type ContextMenuService
+} from './menuFocus';
+import { AtTerminalSessionBody, forgetRememberedSftpFile } from './body-session';
 import { AtTerminalMonitorBody, AtTerminalMonitorTitle } from './views/monitorPane';
 import { AtTerminalCommandRow, TOOL_RUN_REMOTE_COMMAND } from './views/toolCall';
 import { MonitorHudWidget } from './views/monitorHud';
@@ -98,6 +106,37 @@ export interface ClientContext {
     inject(key: string, callback: () => unknown): () => unknown;
     register(options: Record<string, unknown>, component: unknown): () => unknown;
   };
+  /**
+   * Optional services. They are read through `ctx.get` (Cordis's non-requiring service
+   * lookup) rather than added to the module-level `inject` list: that list is a requirement,
+   * and a 0.2.1 host has neither service. Missing means the old local behaviour, never a
+   * failed activation.
+   */
+  get?(name: string): unknown;
+  /** Optional-dependency form: the callback runs only if/when every named service exists. */
+  inject?(deps: string[], callback: (scoped: ClientContext) => unknown): unknown;
+  contextMenus?: ContextMenuService;
+  fileActions?: FileActionsService;
+}
+
+/**
+ * Read an optional service without making it a requirement.
+ *
+ * `ctx.get` is the documented non-requiring lookup; the direct property is kept as a fallback
+ * for a Context implementation that only exposes services as properties. `undefined` is the
+ * answer in both failure cases, which is what every caller treats as "use the old path".
+ */
+function optionalService<T>(ctx: ClientContext, name: 'contextMenus' | 'fileActions'): T | undefined {
+  if (typeof ctx.get === 'function') {
+    // `ctx.get` is authoritative when present: reading `ctx.contextMenus` directly on a
+    // Cordis context throws for an undeclared/unprovided service ("cannot get property
+    // without inject"), which is exactly the 0.2.1 case this probe exists to survive.
+    return ctx.get(name) as T | undefined;
+  }
+  // Context doubles without a `get` (older fakes, non-Cordis harnesses) expose the service
+  // as a plain object property.
+  const direct = name === 'contextMenus' ? ctx.contextMenus : ctx.fileActions;
+  return direct as T | undefined;
 }
 
 /**
@@ -835,6 +874,72 @@ export function apply(ctx: ClientContext): void {
   // The stylesheet is a chunk now: injected by the first surface that renders, not here.
   // This effect only owns the teardown, so an unload still removes what the gate added.
   ctx.effect(() => () => disposeStyles(), 'at-terminal: styles teardown');
+
+  /* ------------------------- host context menu (optional) -------------------- */
+
+  /**
+   * Register one provider per custom target family.
+   *
+   * The providers are page-lifetime and intentionally dumb: all they do is ask the registry,
+   * which is populated by the mounted body that owns the target. That split is what lets two
+   * terminal tabs contribute the same family without one overwriting the other — the captured
+   * value names its tab (`tabKey`) and dispatch is by that key.
+   *
+   * `order` puts server menus before any future file metadata contributions; within a family
+   * the host sorts by order then id, so the numbers only need to be distinct.
+   */
+  const registerContextMenus = (scope: ClientContext, service: ContextMenuService): void => {
+    scope.effect(
+      () =>
+        service.register({
+          id: 'at-terminal.server-actions',
+          target: SERVER_MENU_TARGET,
+          order: 10,
+          resolve: (value) => resolveServerMenuActions(value)
+        }),
+      'at-terminal: server context menu'
+    );
+    scope.effect(
+      () =>
+        service.register({
+          id: 'at-terminal.sftp-entry-actions',
+          target: SFTP_ENTRY_MENU_TARGET,
+          order: 10,
+          resolve: (value) => resolveSftpMenuActions(value)
+        }),
+      'at-terminal: sftp entry context menu'
+    );
+    scope.effect(
+      () =>
+        service.register({
+          id: 'at-terminal.sftp-container-actions',
+          target: SFTP_CONTAINER_MENU_TARGET,
+          order: 10,
+          resolve: (value) => resolveSftpMenuActions(value)
+        }),
+      'at-terminal: sftp container context menu'
+    );
+  };
+
+  const contextMenus = optionalService<ContextMenuService>(ctx, 'contextMenus');
+  if (contextMenus !== undefined) {
+    registerContextMenus(ctx, contextMenus);
+  } else if (typeof ctx.inject === 'function') {
+    // The service may be provided by a client plugin activated after this one. `ctx.inject`
+    // waits instead of failing the plugin, so a host that never mounts the menu package keeps
+    // the local menus and a host that mounts it slightly later still gets the shared one.
+    ctx.inject(['contextMenus'], (scoped) => {
+      const service = optionalService<ContextMenuService>(scoped as ClientContext, 'contextMenus');
+      if (service !== undefined) registerContextMenus(scoped as ClientContext, service);
+    });
+  }
+
+  /**
+   * A getter, not a snapshot: bodies resolve it at the moment of a save, so a service that
+   * appears after this activation is picked up without re-registering a seat. `fileActionsFrom`
+   * treats a missing result as "use `saveBytes`", which is the 0.2.1 behaviour exactly.
+   */
+  const fileActions = (): FileActionsService | undefined => optionalService(ctx, 'fileActions');
   ctx.effect(() => ctx.sidebarRightTabs.register(definition(t)), 'at-terminal: assets tab type');
   ctx.effect(
     () => ctx.sidebarRightTabs.register(sessionDefinition(t)),
@@ -1006,9 +1111,11 @@ export function apply(ctx: ClientContext): void {
         const key = typeof contentId === 'string' && contentId !== '' ? contentId : String(tab?.id ?? '');
         if (key === '') return;
         disposeSession(key, true, 'close-handler');
-        // The tab is gone for good, so its UI bucket is too: an expansion list and a scroll
-        // offset for a tab nobody can reopen are the only unbounded part of `tabState`.
+        // The tab is gone for good, so its UI bucket and remembered file are too: an
+        // expansion list, a scroll offset and a file path for a tab nobody can reopen are
+        // the only unbounded parts of this state.
         clearTabState(key);
+        forgetRememberedSftpFile(key);
       }),
     'at-terminal: session close'
   );
@@ -1090,7 +1197,12 @@ export function apply(ctx: ClientContext): void {
         // whichever registered last.
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID, locale: NS },
-          wrapWithLocale(withStyles(AtTerminalBody), t, { openSessionTab, openMonitorTab })
+          wrapWithLocale(withStyles(AtTerminalBody), t, {
+            openSessionTab,
+            openMonitorTab,
+            contextMenus: () => optionalService<ContextMenuService>(ctx, 'contextMenus'),
+            fileActions
+          })
         )
       ),
     'at-terminal: assets pane body'
@@ -1101,7 +1213,11 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.inject('sidebar.right.pane.tab', () =>
         ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: ID_SESSION, locale: NS },
-          wrapWithLocale(withStyles(AtTerminalSessionBody), t, { openMonitorTab })
+          wrapWithLocale(withStyles(AtTerminalSessionBody), t, {
+            openMonitorTab,
+            contextMenus: () => optionalService<ContextMenuService>(ctx, 'contextMenus'),
+            fileActions
+          })
         )
       ),
     'at-terminal: terminal pane body'

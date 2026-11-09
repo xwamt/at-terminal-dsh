@@ -404,6 +404,15 @@ export function registerChannel(ctx, options) {
   // The plugin manager is optional: a preset-only composition has none, and every tool this
   // package ships still works there. The optional-bundle routes say so instead of throwing.
   const resolvePluginManager = options.resolvePluginManager ?? (() => undefined)
+  /**
+   * The last plugin-manager change result, kept for the next `terminal.optionalBundle.get`.
+   *
+   * `listBundles().enabled` only records the saved selection; the reason an install or an
+   * enable failed (`pendingBuilds`, `error.diagnostic`, `restoring`) exists only in the change
+   * result. Holding it here lets the settings page render that reason after a reload instead of
+   * collapsing it into a generic "not installed".
+   */
+  let lastOptionalChange = null
   const startedAt = Date.now()
   const disposers = []
   const sseClients = new Set()
@@ -770,14 +779,20 @@ export function registerChannel(ctx, options) {
     /**
      * State of the optional composition bundle, read from the plugin manager's own view.
      *
-     * The settings page shows one of three things from this: an install button, a switch, or the
-     * row count — so the answer has to distinguish "not installed" from "installed and switched
-     * off" (`installed` / `enabled`), and "this Harness has no plugin manager" (`available: false`,
-     * with a reason) from "no such bundle" (`available: true`, `installed: false`).
+     * The settings page shows one of four things from this: an install button, a switch, a
+     * failed-activation notice, or the row count — so the answer has to distinguish "not
+     * installed" from "installed and switched off" (`installed` / `enabled`), "this Harness has
+     * no plugin manager" (`available: false`, with a reason) from "no such bundle"
+     * (`available: true`, `installed: false`), and a saved selection from a running bundle
+     * (`activation`, never `enabled` alone).
      */
     async 'terminal.optionalBundle.get'() {
       // `listBundles()` is async in the manager, so the description is too.
-      return await describeOptionalBundle({ manager: resolvePluginManager(), version })
+      return await describeOptionalBundle({
+        manager: resolvePluginManager(),
+        version,
+        install: lastOptionalChange
+      })
     },
 
     /**
@@ -786,8 +801,14 @@ export function registerChannel(ctx, options) {
      * The **spec is built here**, never taken from the request: this route exists so the settings
      * page can offer one specific capability, and a route that installed a caller-supplied package
      * name would be a remote package installer behind a local HTTP fence.
+     *
+     * The 0.2.2 options accepted here are the ones this route can safely carry: `approvedBuilds`
+     * (the exact pending script names the page showed the user, after they allowed them) and
+     * `requestId` (for the manager's own progress stream). `enabled: true` is explicit because
+     * activation is the point of the button — and because the old option name was a dead
+     * parameter the manager never read.
      */
-    async 'terminal.optionalBundle.install'() {
+    async 'terminal.optionalBundle.install'(params = {}) {
       const manager = resolvePluginManager()
       if (manager === undefined || typeof manager.installBundle !== 'function') {
         throw Object.assign(
@@ -796,10 +817,33 @@ export function registerChannel(ctx, options) {
         )
       }
       const spec = optionalBundleSpec(version)
-      const outcome = await manager.installBundle(spec, { activateNewBundles: true })
-      // `installBundle` reports through its return value (diagnostics, activation outcome); the
-      // caller needs to know whether the bundle actually came up, not just that pnpm exited 0.
-      const state = await describeOptionalBundle({ manager, version })
+      const options = { enabled: true, saveExact: true }
+      if (params !== undefined && params !== null) {
+        if (params.requestId !== undefined) {
+          if (typeof params.requestId !== 'string' || params.requestId === '') {
+            throw Object.assign(new Error('requestId must be a non-empty string'), { code: 'bad-params' })
+          }
+          options.requestId = params.requestId
+        }
+        if (params.approvedBuilds !== undefined) {
+          if (
+            !Array.isArray(params.approvedBuilds) ||
+            params.approvedBuilds.some((name) => typeof name !== 'string' || name.trim() === '')
+          ) {
+            throw Object.assign(
+              new Error('approvedBuilds must be an array of non-empty package names'),
+              { code: 'bad-params' }
+            )
+          }
+          options.approvedBuilds = [...params.approvedBuilds]
+        }
+      }
+      const outcome = await manager.installBundle(spec, options)
+      // `installBundle` reports through its return value (pending build scripts, the activation
+      // diagnostic, a restoring update): the caller needs to know whether the bundle actually
+      // came up, not just that pnpm exited 0.
+      lastOptionalChange = outcome ?? null
+      const state = await describeOptionalBundle({ manager, version, install: lastOptionalChange })
       return { spec, outcome: outcome ?? null, state }
     },
 
@@ -819,8 +863,14 @@ export function registerChannel(ctx, options) {
         )
       }
       const enabled = params.enabled === true
-      await manager.setBundleEnabled(OPTIONAL_BUNDLE_NAME, enabled)
-      return { enabled, state: await describeOptionalBundle({ manager, version }) }
+      const outcome = await manager.setBundleEnabled(OPTIONAL_BUNDLE_NAME, enabled)
+      // An enable can fail during activation after the selection was saved; keep that result so
+      // the next read shows the failure instead of the saved `enabled: true`.
+      lastOptionalChange = outcome ?? null
+      return {
+        enabled,
+        state: await describeOptionalBundle({ manager, version, install: lastOptionalChange })
+      }
     },
 
     /* -------------------------------- sftp (M3) ------------------------------- */

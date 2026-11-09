@@ -116,6 +116,46 @@ function runCommand({ handle, service, serverId, command, cwd, limit, preAuthori
   // `stopping` until the session is archived.
   const controller = new AbortController()
   let cancelReason
+  /** The remote kill started by `cancel()`; `done` waits for its report before settling. */
+  let killPromise
+
+  /**
+   * Wait for the remote kill and report what it proved.
+   *
+   * `killed` is a claim about the remote process group, so it may only be settled from
+   * `report.killed === true`. A failed or unconfirmed kill is a **failed** job with the
+   * reason in `detail` — calling it killed would tell the operator a process is gone when
+   * nothing verified that.
+   */
+  const settleKill = async () => {
+    if (killPromise === undefined) {
+      return { killed: false, detail: 'cancel was requested but no remote kill was sent' }
+    }
+    try {
+      const report = await killPromise
+      if (report?.killed === true) {
+        return { killed: true, detail: cancelReason }
+      }
+      const detail =
+        typeof report?.detail === 'string' && report.detail !== ''
+          ? report.detail
+          : 'the remote process was not confirmed gone'
+      logger?.warn?.(`at-terminal: job ${handle.id} cancel: ${detail}`)
+      return { killed: false, detail }
+    } catch (error) {
+      const detail = `remote kill failed: ${messageOf(error)}`
+      logger?.warn?.(`at-terminal: job ${handle.id} cancel failed: ${messageOf(error)}`)
+      return { killed: false, detail }
+    }
+  }
+
+  /** Turn the reconciled kill outcome into the job's final status. */
+  const settleCancelled = async () => {
+    const outcome = await settleKill()
+    return outcome.killed
+      ? { status: 'killed', detail: outcome.detail }
+      : { status: 'failed', detail: outcome.detail }
+  }
 
   const done = (async () => {
     try {
@@ -142,32 +182,33 @@ function runCommand({ handle, service, serverId, command, cwd, limit, preAuthori
       })
       return cancelReason === undefined
         ? { status: 'completed', detail: exitText(result) }
-        : { status: 'killed', detail: cancelReason }
+        : await settleCancelled()
     } catch (error) {
       // A cancelled job's executor rejects with its own abort message; reporting that as a
-      // failure would blame the command for the kill.
+      // raw failure would blame the command for the kill. But the kill itself still has to
+      // prove the remote process is gone before this may call the job killed.
       return cancelReason === undefined
         ? { status: 'failed', detail: messageOf(error) }
-        : { status: 'killed', detail: cancelReason }
+        : await settleCancelled()
     }
   })()
 
   return {
     cancel: (reason) => {
       cancelReason = typeof reason === 'string' && reason !== '' ? reason : 'cancelled'
-      // Fire the remote kill first and do not await it: `cancel` must return synchronously
-      // (the registry calls it from `killJob`), but the channel it depends on must still be
-      // open, so the abort below waits until the SSH round trip is already in flight.
-      void service
-        .terminateRemoteCommand(serverId, pidfile)
-        .then((report) => {
-          if (!report.killed) {
-            logger?.warn?.(`at-terminal: job ${handle.id} cancel: ${report.detail}`)
-          }
-        })
-        .catch((error) => {
-          logger?.warn?.(`at-terminal: job ${handle.id} cancel failed: ${messageOf(error)}`)
-        })
+      // Start the remote kill first, exactly once: `cancel` must return synchronously (the
+      // registry calls it from `killJob`), but the channel it depends on must still be open,
+      // so the abort below happens after the SSH round trip is already in flight. The
+      // promise is retained because `done` must wait for the report rather than assume it.
+      if (killPromise === undefined) {
+        try {
+          killPromise = Promise.resolve(service.terminateRemoteCommand(serverId, pidfile))
+        } catch (error) {
+          // Keep `cancel` synchronous even if the service throws before returning a promise;
+          // `settleKill` will report it as a failed kill, not as a successful one.
+          killPromise = Promise.reject(error)
+        }
+      }
       controller.abort()
     },
     done

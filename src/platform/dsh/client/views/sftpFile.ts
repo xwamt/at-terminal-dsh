@@ -72,6 +72,18 @@ export interface SftpFileViewProps {
   onClose(): void;
   /** Save this file to the local machine as it is on the server. */
   onDownload(): void;
+  /**
+   * The tree column for the wide two-pane layout (U3). The body builds it from `SftpTree`,
+   * so the pane reuses the exact tree the 文件 page renders — expansion, focus memory and
+   * scroll all stay in the body's state rather than being copied here.
+   */
+  tree?: El | null;
+  /**
+   * True when the panel is at least 560px wide. Narrow keeps the original single-column
+   * page: a tree squeezed into a 300px sidebar would leave neither side usable, so the file
+   * pane takes the page over exactly as it did before.
+   */
+  split?: boolean;
 }
 
 /** 120 columns' worth of `\n`s. Counted rather than inferred from a wrapped layout. */
@@ -434,6 +446,29 @@ function renderBody(t: Translate, props: SftpFileViewProps): El[] {
 
 export function renderSftpFileView(props: SftpFileViewProps): El {
   const { t } = props;
+  const split = props.split === true && props.tree !== undefined && props.tree !== null;
+  const main = h(
+    'div',
+    {
+      className: 'sftp-file-main',
+      // The pane is a flex column so its toolbar keeps its height and only the content
+      // scrolls; without this the editor's own scroll area grows the whole page.
+      style: { display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0, minHeight: 0 }
+    },
+    renderToolbar(t, props),
+    // The inline flex is load-bearing in the split layout: the stylesheet's
+    // `.att-sftp-file-page > .att-file-content` rule no longer matches through the new
+    // `.sftp-file-main` wrapper, and a content area that cannot shrink would push the
+    // toolbar out instead of scrolling.
+    h(
+      'div',
+      {
+        className: 'att-content att-file-content',
+        style: { flex: '1 1 auto', minHeight: 0 }
+      },
+      renderBody(t, props)
+    )
+  );
   return h(
     'div',
     {
@@ -447,9 +482,43 @@ export function renderSftpFileView(props: SftpFileViewProps): El {
       // mounted — see the `hidden`-not-unmounted note at the top of this file.)
       role: 'region',
       'aria-labelledby': navTabId('sftp', 'sftp'),
-      'data-at-terminal-sftp-file-pane': navPanelId('sftp')
+      'data-at-terminal-sftp-file-pane': navPanelId('sftp'),
+      'data-at-terminal-sftp-split': split ? 'true' : 'false',
+      ...(split
+        ? {
+            style: {
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'stretch',
+              minHeight: 0,
+              overflow: 'hidden'
+            }
+          }
+        : {})
     },
-    renderToolbar(t, props),
-    h('div', { className: 'att-content att-file-content' }, renderBody(t, props))
+    split
+      ? h(
+          'div',
+          {
+            key: 'sftp-split-tree',
+            className: 'sftp-split-tree',
+            // 240px is the official preview's starting width; 42% lets a narrow-but-wide
+            // panel grow it without starving the editor, and 180px is the readable floor.
+            style: {
+              flex: '0 1 240px',
+              width: '42%',
+              minWidth: '180px',
+              maxWidth: '320px',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              borderRight: '.5px solid var(--dsw-alias-border-l3)',
+              overflow: 'hidden'
+            }
+          },
+          props.tree
+        )
+      : null,
+    main
   );
 }

@@ -44,6 +44,15 @@ import {
   type SftpRow
 } from '../../src/platform/dsh/client/models';
 import { buildStyleSheet, scopeCss } from '../../src/platform/dsh/client/styles';
+import {
+  SERVER_MENU_TARGET,
+  SFTP_CONTAINER_MENU_TARGET,
+  SFTP_ENTRY_MENU_TARGET,
+  resolveServerMenuActions,
+  resolveSftpMenuActions,
+  setServerMenuBuilder,
+  setSftpMenuBuilder
+} from '../../src/platform/dsh/client/menuFocus';
 import { moveTreeFocus } from '../../src/platform/dsh/client/views/sftp';
 import { lineCount } from '../../src/platform/dsh/client/views/sftpFile';
 
@@ -1445,6 +1454,37 @@ describe('client models — one remote file', () => {
     expect(rowSpecial.getAttribute('tabindex')).toBe('-1');
     expect(row1.getAttribute('tabindex')).toBe('0');
     expect(row1.focused).toBe(true);
+  });
+});
+
+describe('context-menu target registry (U1)', () => {
+  it('declares the three custom target families with stable names', () => {
+    expect(SERVER_MENU_TARGET).toBe('at-terminal.server');
+    expect(SFTP_ENTRY_MENU_TARGET).toBe('at-terminal.sftp-entry');
+    expect(SFTP_CONTAINER_MENU_TARGET).toBe('at-terminal.sftp-container');
+  });
+
+  it('dispatches by the target tab key, so two terminal tabs cannot swap actions', () => {
+    const disposeA = setServerMenuBuilder('tab-a', () => [{ id: 'a', label: 'A', run: () => 'a' }]);
+    const disposeB = setServerMenuBuilder('tab-b', () => [{ id: 'b', label: 'B', run: () => 'b' }]);
+    expect(resolveServerMenuActions({ tabKey: 'tab-a' }).map((action) => action.id)).toEqual(['a']);
+    expect(resolveServerMenuActions({ tabKey: 'tab-b' }).map((action) => action.id)).toEqual(['b']);
+    // With two bodies mounted an unknown target belongs to neither: no action, rather than
+    // guessing one of the two.
+    expect(resolveServerMenuActions({ tabKey: 'tab-gone' })).toEqual([]);
+    disposeA();
+    // One body left is unambiguous — that is the deliberate legacy-target fallback.
+    expect(resolveServerMenuActions({ tabKey: 'tab-a' }).map((action) => action.id)).toEqual(['b']);
+    disposeB();
+  });
+
+  it('treats a single mounted body as unambiguous for a legacy target without tabKey', () => {
+    const dispose = setSftpMenuBuilder('solo', (value) => [
+      { id: String(value.path ?? ''), label: 'one', run: () => undefined }
+    ]);
+    expect(resolveSftpMenuActions({ path: '/tmp/a' }).map((action) => action.id)).toEqual(['/tmp/a']);
+    dispose();
+    expect(resolveSftpMenuActions({ path: '/tmp/a' })).toEqual([]);
   });
 });
 

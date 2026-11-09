@@ -23,11 +23,13 @@ import React, { type ReactElement } from 'react';
 import { callRpc, postDiagnostic } from './channel';
 import {
   BodyLocale,
+  fileActionsFrom,
   readTabKey,
   readTabSignal,
   useHostRead,
   useTabParams,
-  useUiSettings
+  useUiSettings,
+  type FileActionsService
 } from './body';
 import {
   asFailure,
@@ -74,7 +76,16 @@ import {
   type SessionPage,
   type TerminalSession
 } from './sessions';
-import { useMenuFocus } from './menuFocus';
+import {
+  SFTP_CONTAINER_MENU_TARGET,
+  SFTP_ENTRY_MENU_TARGET,
+  setSftpMenuBuilder,
+  useMenuFocus,
+  type ContextMenuService,
+  type GetTriggerProps,
+  type MenuAction,
+  type MenuTarget
+} from './menuFocus';
 import { readSftpState, saveSftpState } from './tabState';
 import { renderSftpView } from './views/sftp';
 import { renderSftpFileView } from './views/sftpFile';
@@ -121,6 +132,21 @@ interface NewFileDialogState {
 
 const ANONYMOUS_KEY = 'anonymous';
 
+/**
+ * The file each tab had open, remembered across the frame's unmount.
+ *
+ * The pane itself is deliberately not persisted (a stale buffer would be worse than an empty
+ * one), but the *identity* is cheap and is what makes a tab switch look like leaving the room
+ * rather than losing it: come back to 文件 and the same file is read again from the server.
+ * Keyed by the tab's bucket key, and dropped when the user closes the pane or the tab.
+ */
+const rememberedSftpFiles = new Map<string, { path: string; mode: SftpFileMode }>();
+
+/** Drop a closed tab's remembered file; nothing can reopen that tab. */
+export function forgetRememberedSftpFile(tabKey: string): void {
+  rememberedSftpFiles.delete(tabKey);
+}
+
 /** A question waiting for an answer — the same shape the 资产 body uses, see its comment. */
 interface PendingConfirm {
   request: Omit<ConfirmDialogProps, 't' | 'onConfirm' | 'onClose'>;
@@ -134,6 +160,29 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     typeof props.openMonitorTab === 'function'
       ? (props.openMonitorTab as (options?: { serverId?: string; target?: 'hardware' | 'agent_execution' }) => boolean)
       : undefined;
+
+  /**
+   * The host's shared menu, when present. Same two-probe rule as the assets body: the service
+   * comes from `apply`/`ctx.get`, and the trigger factory is a root prop injected into every
+   * Slot scope. Missing either keeps the local `att-menu` path below, which is what a 0.2.1
+   * host runs.
+   */
+  const contextMenuValue = props.contextMenus;
+  const contextMenus =
+    typeof contextMenuValue === 'function'
+      ? (contextMenuValue as () => ContextMenuService | undefined)()
+      : contextMenuValue !== null && typeof contextMenuValue === 'object'
+        ? (contextMenuValue as ContextMenuService)
+        : undefined;
+  const useContextMenu = props.useContextMenu as
+    | (() => { getTriggerProps?: GetTriggerProps })
+    | undefined;
+  const getTriggerProps =
+    contextMenus !== undefined && typeof useContextMenu === 'function'
+      ? useContextMenu().getTriggerProps
+      : undefined;
+  const hostMenu = contextMenus !== undefined && typeof getTriggerProps === 'function';
+
   // Live, not a one-shot read. The frame records the opener's `params` in its own `onCommitted`
   // callback, so a body whose first render beats that write would otherwise never see what it was
   // opened for — and a terminal tab with no target is the "double-click did not connect" report.
@@ -274,6 +323,30 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   const sftpUploadTargetRef = React.useRef<string>('');
   const sftpFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
+  /**
+   * The panel's own width, measured rather than guessed from `window.innerWidth`.
+   *
+   * U3's split is a property of the sidebar column, not of the browser window: a 1400px
+   * window can still hold a 380px sidebar, and the same window can hold a 700px one after
+   * a drag. `ResizeObserver` reports the former and follows the latter without a resize
+   * listener. Initial 0 means "not measured yet" and deliberately selects the single-column
+   * branch — the pre-U3 layout — so the first paint can never be a broken split.
+   */
+  const sftpRootRef = React.useRef<HTMLElement | null>(null);
+  const [sftpPanelWidth, setSftpPanelWidth] = React.useState(0);
+  React.useEffect(() => {
+    const node = sftpRootRef.current;
+    if (node === null || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect?.width;
+      if (typeof width === 'number' && width > 0) setSftpPanelWidth(width);
+    });
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
   /* ------------------------------ the confirm box ---------------------------- */
 
   /**
@@ -387,6 +460,25 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   }, [sftpState.kind]);
 
   /**
+   * Reopen the tab's last file after the frame remounted this body.
+   *
+   * One shot per mount, and only when the session itself remembered 文件 as its page. The
+   * effect must not depend on `sftpFile`: its own read updates that state, and depending on it
+   * would make the effect retry forever. `openSftpFile` is a function declaration, so it is
+   * hoisted and safe to name here.
+   */
+  const sftpFileRestoredRef = React.useRef(false);
+  React.useEffect(() => {
+    if (sftpFileRestoredRef.current) return;
+    sftpFileRestoredRef.current = true;
+    if (session.page !== 'sftp' || sftpFile !== null) return;
+    const remembered = rememberedSftpFiles.get(key);
+    if (remembered !== undefined) openSftpFile(remembered.path, remembered.mode);
+    // Mount-once by design: `key` is the tab identity, `session.page` is its restored page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
    * Re-read the tree. `dropCache` is the difference between 刷新 and re-entering the page: the host
    * caches listings for 20 seconds, so a refresh that did not invalidate would show the user the
    * state they were trying to get away from.
@@ -420,6 +512,10 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   function openSftpFile(path: string, mode: SftpFileMode): void {
     setSftpSelected(path);
     setSftpFailure(null);
+    // The identity is remembered here, not on read success: a read that fails is still the
+    // file the user tried to open, and coming back should retry that file rather than a blank
+    // tree.
+    rememberedSftpFiles.set(key, { path, mode });
     setSftpFile({ kind: 'pending', path, mode });
     callRpc('sftp.readFile', { path, terminalId: session.hostTerminalId }).then(
       (result) => {
@@ -456,6 +552,56 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
         : { ...pane, mode: 'view', draft: pane.file.text, dirty: false, save: { kind: 'idle' } }
     );
   }
+
+  /**
+   * Close the file pane, asking first when the buffer is dirty.
+   *
+   * One function for the 返回 button, Escape and (future) any other close gesture, so the
+   * dirty guard cannot be present on one route and missing on another. Cancelling leaves the
+   * buffer exactly as it was — that is the difference between a question and a notification.
+   */
+  function closeSftpFile(): void {
+    const pane = sftpFile;
+    void (async () => {
+      if (pane !== null && pane.kind === 'ready' && pane.dirty) {
+        const discard = await requestConfirm({
+          title: t('dialog.confirmDiscardTitle'),
+          message: t('sftp.discardConfirm', { name: pane.path }),
+          confirmLabel: t('sftp.discard'),
+          danger: true
+        });
+        if (!discard) return;
+      }
+      rememberedSftpFiles.delete(key);
+      setSftpFile(null);
+    })();
+  }
+
+  /**
+   * Escape returns to the tree. In the wide split the tree is already beside the pane, so
+   * this closes the preview and the tree simply fills the row; in the narrow single column
+   * it closes the file page back to the tree, which is the pre-U3 behaviour.
+   *
+   * Overlays win: a dialog, confirm box or local menu that is open consumes Escape itself,
+   * and `defaultPrevented` is checked for the same reason.
+   */
+  React.useEffect(() => {
+    if (sftpFile === null || session.page !== 'sftp') return undefined;
+    if (typeof document === 'undefined') return undefined;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (confirm !== null || newFileDialog !== null || sftpMenu !== null) return;
+      event.preventDefault();
+      closeSftpFile();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+    };
+    // `closeSftpFile` deliberately not a dep: it closes over the current pane, and the effect
+    // re-registers whenever that pane changes below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sftpFile, session.page, confirm, newFileDialog, sftpMenu]);
 
   function draftSftpFile(value: string): void {
     setSftpFile((pane) =>
@@ -520,6 +666,68 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     );
   }
 
+  /**
+   * Turn the Host's base64 into the Blob `fileActions.save` expects.
+   *
+   * `Uint8Array.fromBase64` is the fast path on Node 24/modern Chromium; the `atob` loop is
+   * the browser fallback. Nothing here decodes to a string: the bytes must survive intact,
+   * which is the whole reason the Host sends base64 rather than text.
+   */
+  function base64Blob(base64: string): Blob {
+    let bytes: Uint8Array;
+    if (typeof (Uint8Array as unknown as { fromBase64?: (value: string) => Uint8Array }).fromBase64 === 'function') {
+      bytes = (Uint8Array as unknown as { fromBase64: (value: string) => Uint8Array }).fromBase64(base64);
+    } else {
+      const binary = atob(base64);
+      bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    }
+    return new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' });
+  }
+
+  /**
+   * Save one downloaded remote file, preferring the host's file service.
+   *
+   * Returns `saved` only when a native save reports a destination — the sole case that may
+   * show a local path. `requested` is a browser download (destination unknown), `cancelled`
+   * is the user closing the dialog, and `fallback` is the old anchor path used when the
+   * service is absent or throws. The fallback is not an error: the bytes are in hand and
+   * refusing to write them because a newer host service misbehaved would be a regression.
+   */
+  async function saveRemoteBytes(
+    name: string,
+    base64: string
+  ): Promise<{ status: 'saved' | 'requested' | 'cancelled' | 'fallback'; path?: string }> {
+    const fileActions: FileActionsService | undefined = fileActionsFrom(props);
+    if (fileActions === undefined) {
+      saveBytes(name, base64);
+      return { status: 'fallback' };
+    }
+    try {
+      const result = await fileActions.save(
+        {
+          read: async () => base64Blob(base64),
+          name,
+          mediaType: 'application/octet-stream'
+        },
+        'download'
+      );
+      if (result.status === 'cancelled') return { status: 'cancelled' };
+      if (result.status === 'saved') return { status: 'saved', path: result.path };
+      return { status: 'requested' };
+    } catch (error) {
+      postDiagnostic(
+        'warn',
+        `fileActions.save failed; falling back to saveBytes: ${String((error as Error)?.message ?? error)}`,
+        'sftp-download',
+        null,
+        null
+      );
+      saveBytes(name, base64);
+      return { status: 'fallback' };
+    }
+  }
+
   /** Ask the Host for a file's bytes and hand them to the browser. */
   function downloadSftpFile(path: string): void {
     const fileName = path.split('/').filter(Boolean).pop() || 'remote-file';
@@ -553,14 +761,22 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
         }
       }
     ).then(
-      (result) => {
+      async (result) => {
         const payload = (result ?? {}) as { name?: unknown; base64?: unknown; size?: unknown };
         const name = typeof payload.name === 'string' && payload.name !== '' ? payload.name : fileName;
         const size = typeof payload.size === 'number' ? payload.size : 0;
         try {
-          // `saveBytes` is the browser's download route; it throws where the page has none,
-          // and that belongs on the page's failure line rather than in the console.
-          saveBytes(name, typeof payload.base64 === 'string' ? payload.base64 : '');
+          const outcome = await saveRemoteBytes(
+            name,
+            typeof payload.base64 === 'string' ? payload.base64 : ''
+          );
+          // A native cancel is the user saying no: no success line, no failure line, and no
+          // fallback download behind their back.
+          if (outcome.status === 'cancelled') {
+            setSftpTransferProgress(null);
+            setSftpDownloading(false);
+            return;
+          }
           setSftpTransferProgress({
             kind: 'download',
             name,
@@ -573,7 +789,14 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
             setSftpTransferProgress(null);
             setSftpDownloading(false);
           }, 800);
-          setSftpNotice(t('sftp.downloadDone', { name, size: formatFileSize(size) }));
+          const done = t('sftp.downloadDone', { name, size: formatFileSize(size) });
+          // Only a native save knows where the file went; a browser `requested` download
+          // must not claim a path it cannot know.
+          setSftpNotice(
+            outcome.status === 'saved' && typeof outcome.path === 'string' && outcome.path !== ''
+              ? `${done} ${outcome.path}`
+              : done
+          );
         } catch (error) {
           setSftpTransferProgress(null);
           setSftpDownloading(false);
@@ -714,6 +937,104 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     setSftpNotice(t('sftp.copiedPath', { path }));
   }
 
+  /**
+   * The captured target for one tree row. Plain JSON only: the row object, its handlers and
+   * the session are not serializable and would outlive the listing they belong to.
+   */
+  function sftpTargetFor(row: SftpRow): MenuTarget {
+    const root = sftpList?.rootPath ?? '';
+    if (row.kind === 'parent') {
+      return {
+        kind: SFTP_ENTRY_MENU_TARGET,
+        value: { tabKey: key, terminalId: session.hostTerminalId, rowKind: 'parent', targetDir: root }
+      };
+    }
+    if (row.kind === 'entry' && row.entry !== undefined) {
+      const entry = row.entry;
+      return {
+        kind: SFTP_ENTRY_MENU_TARGET,
+        value: {
+          tabKey: key,
+          terminalId: session.hostTerminalId,
+          rowKind: 'entry',
+          entryType: entry.type,
+          path: entry.path,
+          name: entry.name,
+          targetDir: entry.type === 'directory' ? entry.path : dirname(entry.path)
+        }
+      };
+    }
+    return sftpContainerTarget();
+  }
+
+  function sftpContainerTarget(): MenuTarget {
+    return {
+      kind: SFTP_CONTAINER_MENU_TARGET,
+      value: {
+        tabKey: key,
+        terminalId: session.hostTerminalId,
+        rowKind: 'container',
+        targetDir: sftpList?.rootPath ?? ''
+      }
+    };
+  }
+
+  /**
+   * Host-menu actions for one captured SFTP target.
+   *
+   * The value names a row but never carries the row's mutable data; `sftpList` is read again
+   * at open time, so an action that fires after a refresh names the path that is actually in
+   * the tree (or nothing, if the listing is no longer live). This mirrors the local menu's
+   * branch structure exactly — the same five/six items in the same order.
+   */
+  function sftpMenuActions(value: Record<string, unknown>): MenuAction[] {
+    const listing = sftpList;
+    if (listing === null || listing.kind !== 'active') return [];
+    const rowKind = text(value.rowKind);
+    const targetDir = text(value.targetDir);
+    const path = text(value.path);
+    const name = text(value.name);
+    if (rowKind === 'parent') {
+      return [
+        { id: 'up', label: t('sftp.goUp'), run: () => void goUpSftp() },
+        { id: 'refresh', label: t('toolbar.refresh'), run: () => reloadSftp(true) }
+      ];
+    }
+    if (rowKind === 'entry') {
+      if (text(value.entryType) === 'directory') {
+        return [
+          { id: 'new-file', label: t('sftp.newFile'), run: () => openNewFileDialog(path) },
+          { id: 'upload', label: t('sftp.uploadHere'), run: () => triggerUpload(path) },
+          { id: 'refresh', label: t('toolbar.refresh'), run: () => reloadSftp(true) },
+          { id: 'copy-path', label: t('sftp.copyPath'), run: () => copyRemotePath(path) },
+          { id: 'delete', label: t('sftp.delete'), run: () => deleteRemoteItem(path, name), danger: true }
+        ];
+      }
+      return [
+        { id: 'view', label: t('sftp.view'), run: () => openSftpFile(path, 'view') },
+        { id: 'edit', label: t('sftp.edit'), run: () => openSftpFile(path, 'edit') },
+        { id: 'download', label: t('sftp.download'), run: () => downloadSftpFile(path) },
+        { id: 'new-file', label: t('sftp.newFile'), run: () => openNewFileDialog(dirname(path)) },
+        { id: 'copy-path', label: t('sftp.copyPath'), run: () => copyRemotePath(path) },
+        { id: 'delete', label: t('sftp.delete'), run: () => deleteRemoteItem(path, name), danger: true }
+      ];
+    }
+    const actions: MenuAction[] = [
+      { id: 'new-file', label: t('sftp.newFile'), run: () => openNewFileDialog(targetDir) },
+      { id: 'upload', label: t('sftp.upload'), run: () => triggerUpload(targetDir) }
+    ];
+    if (listing.rootPath !== '' && listing.rootPath !== '/') {
+      actions.push({ id: 'up', label: t('sftp.goUp'), run: () => void goUpSftp() });
+    }
+    actions.push({ id: 'refresh', label: t('toolbar.refresh'), run: () => reloadSftp(true) });
+    return actions;
+  }
+
+  React.useEffect(() => {
+    if (!hostMenu) return undefined;
+    return setSftpMenuBuilder(key, sftpMenuActions);
+  });
+
   function triggerUpload(targetDir: string): void {
     setSftpMenu(null);
     sftpUploadTargetRef.current = targetDir;
@@ -816,6 +1137,12 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     }
     setSftpVisited(true);
     reloadSftp(false);
+    // Coming back to 文件 restores the file the tab had open. The buffer was dropped on the
+    // way out (deliberately), so this is a fresh read — the identity is what survives.
+    const remembered = rememberedSftpFiles.get(key);
+    if (remembered !== undefined && sftpFile === null) {
+      openSftpFile(remembered.path, remembered.mode);
+    }
   }
 
   /* --------------------------------- engine ---------------------------------- */
@@ -958,78 +1285,95 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   const children: unknown[] = [];
 
   const uploadTarget = sftpList === null ? '' : sftpList.rootPath;
+  /**
+   * U3: from 560px on, the tree stays beside the file instead of being replaced by it.
+   * The threshold is on the **panel**, not the window; `sftpPanelWidth` is measured by
+   * `ResizeObserver` above and 0 until the first report, which selects the old single column.
+   */
+  const sftpSplit = sftpFile !== null && session.page === 'sftp' && sftpPanelWidth >= 560;
 
-  children.push(
-    renderSftpView({
-      t,
-      // The file pane takes the page over rather than sitting inside it: two surfaces that
-      // mount and hide each other, the same shape the 资产 page uses for its server form.
-      visible: session.page === 'sftp' && sftpFile === null,
-      mode: session.page,
-      onMode: changePage,
-      state: sftpState,
-      failure: sftpFailure,
-      // The rows are computed here rather than in the view because the recursion lives in
-      // `flattenSftpTree`, which is unit-tested without a DOM; the view only maps rows.
-      rows: flattenSftpTree({
-        rootPath: sftpList === null ? '' : sftpList.rootPath,
-        entries: sftpList === null ? [] : sftpList.entries,
-        expanded: sftpExpanded,
-        children: sftpChildren,
-        disconnected: sftpList !== null && sftpList.kind === 'disconnected'
-      }),
+  const sftpTreeElement = renderSftpView({
+    t,
+    // With no file open this is the normal page; with one open in the wide layout it is the
+    // compact left column. The narrow layout keeps the old "hidden page + full file pane".
+    visible: session.page === 'sftp' && (sftpFile === null || sftpSplit),
+    compact: sftpSplit,
+    mode: session.page,
+    onMode: changePage,
+    state: sftpState,
+    failure: sftpFailure,
+    // The rows are computed here rather than in the view because the recursion lives in
+    // `flattenSftpTree`, which is unit-tested without a DOM; the view only maps rows.
+    rows: flattenSftpTree({
+      rootPath: sftpList === null ? '' : sftpList.rootPath,
+      entries: sftpList === null ? [] : sftpList.entries,
       expanded: sftpExpanded,
-      busy: sftpBusy,
-      scrollRef: sftpScrollRef,
-      onScrollTop: (top) => {
-        sftpScrollTopRef.current = top;
-        const stored = readSftpState(key);
-        if (stored !== undefined) saveSftpState(key, { ...stored, scrollTop: top });
-      },
-      onToggle: toggleSftpDirectory,
-      onGoUp: () => void goUpSftp(),
-      onRefresh: () => reloadSftp(true),
-      selectedPath: sftpSelected,
-      onSelect: setSftpSelected,
-      onOpen: openSftpFile,
-      onDownload: downloadSftpFile,
-      downloading: sftpDownloading,
-      uploadTarget,
-      onUpload: (files: File[]) => uploadSftpFiles(files, uploadTarget),
-      uploading: sftpUploading,
-      progress: sftpTransferProgress,
-      notice: sftpNotice,
-      onRowContextMenu: (event, row) => {
-        const listing = sftpList;
-        if (listing === null || listing.kind !== 'active') return;
-        let targetDir = listing.rootPath;
-        if (row.kind === 'entry') {
-          const entry = row.entry as SftpEntryView;
-          if (entry.type === 'directory') {
-            targetDir = entry.path;
-          } else {
-            targetDir = dirname(entry.path);
-            setSftpSelected(entry.path);
-          }
+      children: sftpChildren,
+      disconnected: sftpList !== null && sftpList.kind === 'disconnected'
+    }),
+    expanded: sftpExpanded,
+    busy: sftpBusy,
+    scrollRef: sftpScrollRef,
+    onScrollTop: (top) => {
+      sftpScrollTopRef.current = top;
+      const stored = readSftpState(key);
+      if (stored !== undefined) saveSftpState(key, { ...stored, scrollTop: top });
+    },
+    onToggle: toggleSftpDirectory,
+    onGoUp: () => void goUpSftp(),
+    onRefresh: () => reloadSftp(true),
+    selectedPath: sftpSelected,
+    onSelect: setSftpSelected,
+    onOpen: openSftpFile,
+    onDownload: downloadSftpFile,
+    downloading: sftpDownloading,
+    uploadTarget,
+    onUpload: (files: File[]) => uploadSftpFiles(files, uploadTarget),
+    uploading: sftpUploading,
+    progress: sftpTransferProgress,
+    notice: sftpNotice,
+    menuTarget: hostMenu ? sftpTargetFor : undefined,
+    getTriggerProps: hostMenu ? getTriggerProps : undefined,
+    containerMenuTarget: hostMenu ? sftpContainerTarget : undefined,
+    onOpenMenu: hostMenu
+      ? (target, point) => {
+          contextMenus?.open?.(target, point);
         }
-        setSftpMenu({
-          x: event.clientX,
-          y: event.clientY,
-          row,
-          targetDir
-        });
-      },
-      onContainerContextMenu: (event) => {
-        const listing = sftpList;
-        if (listing === null || listing.kind !== 'active') return;
-        setSftpMenu({
-          x: event.clientX,
-          y: event.clientY,
-          targetDir: listing.rootPath
-        });
+      : undefined,
+    onRowContextMenu: (event, row) => {
+      const listing = sftpList;
+      if (listing === null || listing.kind !== 'active') return;
+      let targetDir = listing.rootPath;
+      if (row.kind === 'entry') {
+        const entry = row.entry as SftpEntryView;
+        if (entry.type === 'directory') {
+          targetDir = entry.path;
+        } else {
+          targetDir = dirname(entry.path);
+          setSftpSelected(entry.path);
+        }
       }
-    })
-  );
+      setSftpMenu({
+        x: event.clientX,
+        y: event.clientY,
+        row,
+        targetDir
+      });
+    },
+    onContainerContextMenu: (event) => {
+      const listing = sftpList;
+      if (listing === null || listing.kind !== 'active') return;
+      setSftpMenu({
+        x: event.clientX,
+        y: event.clientY,
+        targetDir: listing.rootPath
+      });
+    }
+  });
+
+  if (sftpFile === null) {
+    children.push(sftpTreeElement);
+  }
 
   if (session.page === 'sftp') {
     children.push(
@@ -1055,7 +1399,7 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
       })
     );
 
-    if (sftpMenu !== null) {
+    if (sftpMenu !== null && !hostMenu) {
       const menuRow = sftpMenu.row;
       const menuItems: El[] = [];
       const menuItem = (itemKey: string, label: string, onClick: () => void, danger = false): El =>
@@ -1259,23 +1603,15 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
         onRevert: revertSftpFile,
         onSave: saveSftpFile,
         onReload: () => openSftpFile(sftpFile.path, sftpFile.mode),
-        // Closing a dirty buffer asks first (UI2-11): the 关闭 button sat next to the save
-        // button and discarded a whole file's worth of typing with one click.
-        onClose: () => {
-          void (async () => {
-            if (sftpFile.kind === 'ready' && sftpFile.dirty) {
-              const discard = await requestConfirm({
-                title: t('dialog.confirmDiscardTitle'),
-                message: t('sftp.discardConfirm', { name: sftpFile.path }),
-                confirmLabel: t('sftp.discard'),
-                danger: true
-              });
-              if (!discard) return;
-            }
-            setSftpFile(null);
-          })();
-        },
-        onDownload: () => downloadSftpFile(sftpFile.path)
+        // Closing a dirty buffer asks first (UI2-11): the 返回 button sat next to the save
+        // button and discarded a whole file's worth of typing with one click. Escape shares
+        // this exact function (see the document listener above).
+        onClose: closeSftpFile,
+        onDownload: () => downloadSftpFile(sftpFile.path),
+        // Wide layout: the tree node built above is rendered as the left column. Narrow:
+        // `null`, so the file pane keeps the page to itself exactly as before U3.
+        tree: sftpSplit ? sftpTreeElement : null,
+        split: sftpSplit
       })
     );
   }
@@ -1337,7 +1673,11 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     postBodyRendered(key, session.page);
   }, [key, session.page]);
 
-  return h('div', { className: 'att-root', 'data-at-terminal-body': session.page }, children);
+  return h(
+    'div',
+    { className: 'att-root', 'data-at-terminal-body': session.page, ref: sftpRootRef },
+    children
+  );
 }
 
 /** The breadcrumb, through `channel`'s poster. Split out so the effect body stays one statement. */
