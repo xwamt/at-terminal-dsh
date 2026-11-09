@@ -106,8 +106,11 @@ function visibleToolNames(toolSet, scope) {
   try {
     const view = typeof toolSet.view === 'function' ? toolSet.view(scope) : toolSet
     if (view === undefined || view === null) return undefined
-    if (typeof view.keys === 'function') return [...view.keys()]
+    // Arrays have `.keys()` too, so the array branch must come first: reading an array of
+    // tool names through `.keys()` yields indices, and the section would treat every name as
+    // invisible. A real ToolSet has `.view(scope)` returning a Map, which is the host path.
     if (Array.isArray(view)) return view
+    if (typeof view.keys === 'function') return [...view.keys()]
     return undefined
   } catch {
     return undefined

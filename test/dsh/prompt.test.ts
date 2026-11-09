@@ -85,6 +85,10 @@ describe('the prompt section', () => {
     expect(section.text({})).toContain('AT Terminal acts');
     expect(hasVisibleAtTerminalTool(undefined)).toBe(true);
     expect(hasVisibleAtTerminalTool(resident)).toBe(false);
+    // Plain iterables are accepted too; an array must not be read through `.keys()`, which
+    // yields indices and makes every tool look invisible.
+    expect(hasVisibleAtTerminalTool(['at_terminal_ping'])).toBe(false);
+    expect(hasVisibleAtTerminalTool(['at_terminal_ping', 'at_terminal_run_remote_command'])).toBe(true);
   });
 
   it('sends a local file through localPath, and says an upload asks even at full trust', () => {
