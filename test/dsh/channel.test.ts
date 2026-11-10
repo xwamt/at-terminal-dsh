@@ -41,6 +41,7 @@ interface ChannelModule {
   buildChunk: (seq: number, payloadBytes: number, chunkSize?: number) => Buffer;
   STREAM_PATTERN_A: number;
   STREAM_PATTERN_B: number;
+  resetClientHelloRing: () => void;
 }
 
 const moduleUrl = pathToFileURL(join(process.cwd(), 'dsh', 'channel.js')).href;
@@ -83,6 +84,9 @@ function createHarness(  assets?: () => unknown,
   const routes = new Map<string, Route>();
   const upgrades = new Map<string, Route>();
   const logs: string[] = [];
+  // Callers that need an isolated process reset the ring themselves
+  // (`resetClientHelloRing`); the hot-reload test below deliberately does NOT, so a hello
+  // from a previous registration in the same process is visible.
   const disposers: Array<() => void> = [];
 
   const server = {
@@ -400,6 +404,7 @@ describe('dsh Host channel', () => {
   });
 
   it('records a client-half arrival and exposes it through client.status and state.get', async () => {
+    channel.resetClientHelloRing();
     const harness = createHarness();
     const before = await callRpc(harness, { method: 'client.status' });
     expect(before.json?.result).toMatchObject({ count: 0, last: null });
@@ -424,7 +429,34 @@ describe('dsh Host channel', () => {
     harness.dispose();
   });
 
+  it('keeps the hello across a channel re-registration (a plugin hot reload)', async () => {
+    // The browser half announces itself ONCE per page load, but `registerChannel` runs again
+    // in a fresh closure on every plugin hot reload. When the ring lived in that closure, a
+    // reload reset the count to 0 even though the page that sent the hello was still open — a
+    // live, healthy session read as "the client half never loaded". The ring must survive.
+    channel.resetClientHelloRing();
+
+    // First registration: the page loads and says hello.
+    const first = createHarness();
+    await callRpc(first, { method: 'client.hello', params: { kind: 'at-terminal' } });
+    const seen = await callRpc(first, { method: 'client.status' });
+    expect(seen.json?.result).toMatchObject({ count: 1 });
+    // Tear the channel down the way a hot reload does — the fiber is disposed, the closure
+    // and its state go with it — but the page does NOT reload.
+    first.dispose();
+
+    // Second registration in the same process: a fresh closure, no new hello.
+    const second = createHarness();
+    const status = await callRpc(second, { method: 'client.status' });
+    expect(status.json?.result).toMatchObject({ count: 1 });
+    const state = await callRpc(second, { method: 'state.get' });
+    expect(state.json?.result).toMatchObject({ clientHellos: 1 });
+    second.dispose();
+    channel.resetClientHelloRing();
+  });
+
   it('truncates what a client reports instead of trusting its length', async () => {
+    channel.resetClientHelloRing();
     const harness = createHarness();
     await callRpc(harness, { method: 'client.hello', params: { origin: 'x'.repeat(5000) } });
     const status = await callRpc(harness, { method: 'client.status' });

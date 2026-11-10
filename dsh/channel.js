@@ -347,6 +347,29 @@ let activeBroadcaster = null
  */
 let activePresence = null
 
+/**
+ * Every `client.hello` this Host process has seen, across channel re-registrations.
+ *
+ * Module-level on purpose: the browser half announces itself **once per page load**, but
+ * this channel is torn down and rebuilt on every plugin hot reload (`registerChannel` runs
+ * again in a fresh closure). A per-registration ring therefore reads `0` after any edit even
+ * though the page that sent the hello is still open — which is exactly what made a healthy
+ * live session look like "the client half never loaded". Keeping the ring here, like
+ * `activePresence`, makes the answer a fact about the process, not about the last reload.
+ */
+const clientHelloRing = []
+
+/**
+ * Clear the process-wide hello ring.
+ *
+ * Exposed for tests: the ring is module-level so that a hot reload cannot erase it, but a
+ * test that mounts several independent channels would otherwise see one case's hello count
+ * leak into the next. Production never calls this.
+ */
+export function resetClientHelloRing() {
+  clientHelloRing.length = 0
+}
+
 /** Current browser-half presence; `null` when no channel is mounted. */
 export function getChannelPresence() {
   return activePresence
@@ -509,7 +532,9 @@ export function registerChannel(ctx, options) {
    * from here — which is exactly the ambiguity that made the first attempt to see the
    * sidebar tab inconclusive.
    */
-  const clientHellos = []
+  // Recorded in the module-level ring so a hot reload does not erase the fact that the page
+  // loaded; see `clientHelloRing` above.
+  const clientHellos = clientHelloRing
 
   /**
    * Register one route, absorbing the failure the real server raises on a duplicate
