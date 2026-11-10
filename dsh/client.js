@@ -5194,13 +5194,17 @@ function AtTerminalSessionBody(props = {}) {
   }, [key, servers, session, session.serverId, session.state.kind, session.failure]);
   let [sftpRevision, setSftpRevision] = import_react6.default.useState(0), [sftpVisited, setSftpVisited] = import_react6.default.useState(session.page === "sftp"), [sftpBusy, setSftpBusy] = import_react6.default.useState(!1), [sftpFailure, setSftpFailure] = import_react6.default.useState(null), [sftpExpanded, setSftpExpanded] = import_react6.default.useState(() => [
     ...readSftpState(key)?.expanded ?? []
-  ]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), sftpRootRef = import_react6.default.useRef(null), [sftpPanelWidth, setSftpPanelWidth] = import_react6.default.useState(0);
+  ]), [sftpChildren, setSftpChildren] = import_react6.default.useState({}), [sftpFile, setSftpFile] = import_react6.default.useState(null), [sftpSelected, setSftpSelected] = import_react6.default.useState(null), [sftpUploading, setSftpUploading] = import_react6.default.useState(!1), [sftpDownloading, setSftpDownloading] = import_react6.default.useState(!1), [sftpTransferProgress, setSftpTransferProgress] = import_react6.default.useState(null), [sftpNotice, setSftpNotice] = import_react6.default.useState(null), [sftpMenu, setSftpMenu] = import_react6.default.useState(null), [newFileDialog, setNewFileDialog] = import_react6.default.useState(null), sftpUploadTargetRef = import_react6.default.useRef(""), sftpFileInputRef = import_react6.default.useRef(null), sftpRootRef = import_react6.default.useRef(null), [sftpPanelWidth, setSftpPanelWidth] = import_react6.default.useState(0), sftpTierRef = import_react6.default.useRef(null);
   import_react6.default.useEffect(() => {
     let node = sftpRootRef.current;
     if (node === null || typeof ResizeObserver > "u") return;
     let observer = new ResizeObserver((entries) => {
       let width = entries[0]?.contentRect?.width;
-      typeof width == "number" && width > 0 && setSftpPanelWidth(width);
+      if (typeof width == "number" && width > 0) {
+        setSftpPanelWidth(width);
+        let tier = width >= 560 ? "split" : "single";
+        sftpTierRef.current !== tier && (sftpTierRef.current = tier, postDiagnostic("info", `sftp panel width ${Math.round(width)}px -> ${tier} layout (>=560 = tree+preview)`, "sftp-layout", null, null));
+      }
     });
     return observer.observe(node), () => {
       observer.disconnect();
@@ -5263,15 +5267,13 @@ function AtTerminalSessionBody(props = {}) {
     setSftpSelected(path), setSftpFailure(null), rememberedSftpFiles.set(key, { path, mode }), setSftpFile({ kind: "pending", path, mode }), callRpc("sftp.readFile", { path, terminalId: session.hostTerminalId }).then(
       (result) => {
         let file = sftpFileText(result);
-        setSftpFile(
-          (current) => current === null || current.kind !== "pending" || current.path !== path ? current : { kind: "ready", path, mode, file, draft: file.text, dirty: !1, save: { kind: "idle" } }
-        );
+        setSftpFile((current) => current === null || current.kind !== "pending" || current.path !== path ? current : (postDiagnostic("info", `sftp preview opened: ${path} (${mode}, ${file.text.length} chars) at panel ${Math.round(sftpPanelWidth)}px -> ${sftpPanelWidth >= 560 ? "split tree+preview" : "single column"}`, "sftp-preview", null, null), { kind: "ready", path, mode, file, draft: file.text, dirty: !1, save: { kind: "idle" } }));
       },
       (error) => {
         let failure2 = asFailure(error);
         setSftpFile(
           (current) => current === null || current.kind !== "pending" || current.path !== path ? current : { kind: "failed", path, mode, code: failure2.code, message: failure2.message }
-        );
+        ), postDiagnostic("warn", `sftp preview failed: ${path} (${failure2.code ?? "error"})`, "sftp-preview", null, null);
       }
     );
   }

@@ -334,12 +334,25 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
    */
   const sftpRootRef = React.useRef<HTMLElement | null>(null);
   const [sftpPanelWidth, setSftpPanelWidth] = React.useState(0);
+  /**
+   * The last layout tier reported to the diagnostics log, so a continuous drag writes one
+   * line per crossing instead of one per animation frame. `tier` mirrors the `>= 560` rule
+   * below; keep the two in step if the threshold ever moves.
+   */
+  const sftpTierRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const node = sftpRootRef.current;
     if (node === null || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect?.width;
-      if (typeof width === 'number' && width > 0) setSftpPanelWidth(width);
+      if (typeof width === 'number' && width > 0) {
+        setSftpPanelWidth(width);
+        const tier = width >= 560 ? 'split' : 'single';
+        if (sftpTierRef.current !== tier) {
+          sftpTierRef.current = tier;
+          postDiagnostic('info', `sftp panel width ${Math.round(width)}px -> ${tier} layout (>=560 = tree+preview)`, 'sftp-layout', null, null);
+        }
+      }
     });
     observer.observe(node);
     return () => {
@@ -520,11 +533,11 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
     callRpc('sftp.readFile', { path, terminalId: session.hostTerminalId }).then(
       (result) => {
         const file = sftpFileText(result);
-        setSftpFile((current) =>
-          current === null || current.kind !== 'pending' || current.path !== path
-            ? current
-            : { kind: 'ready', path, mode, file, draft: file.text, dirty: false, save: { kind: 'idle' } }
-        );
+        setSftpFile((current) => {
+          if (current === null || current.kind !== 'pending' || current.path !== path) return current;
+          postDiagnostic('info', `sftp preview opened: ${path} (${mode}, ${file.text.length} chars) at panel ${Math.round(sftpPanelWidth)}px -> ${sftpPanelWidth >= 560 ? 'split tree+preview' : 'single column'}`, 'sftp-preview', null, null);
+          return { kind: 'ready', path, mode, file, draft: file.text, dirty: false, save: { kind: 'idle' } };
+        });
       },
       (error: unknown) => {
         const failure = asFailure(error);
@@ -533,6 +546,7 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
             ? current
             : { kind: 'failed', path, mode, code: failure.code, message: failure.message }
         );
+        postDiagnostic('warn', `sftp preview failed: ${path} (${failure.code ?? 'error'})`, 'sftp-preview', null, null);
       }
     );
   }
