@@ -895,7 +895,12 @@ export function apply(ctx: ClientContext): void {
           id: 'at-terminal.server-actions',
           target: SERVER_MENU_TARGET,
           order: 10,
-          resolve: (value) => resolveServerMenuActions(value)
+          resolve: (value) => {
+            // Proof the host actually opened our server menu: the provider is only resolved
+            // when the user right-clicks / presses the menu key on a server row.
+            postDiagnostic('info', 'context menu opened: at-terminal.server', 'context-menu', null, null);
+            return resolveServerMenuActions(value);
+          }
         }),
       'at-terminal: server context menu'
     );
@@ -905,7 +910,10 @@ export function apply(ctx: ClientContext): void {
           id: 'at-terminal.sftp-entry-actions',
           target: SFTP_ENTRY_MENU_TARGET,
           order: 10,
-          resolve: (value) => resolveSftpMenuActions(value)
+          resolve: (value) => {
+            postDiagnostic('info', 'context menu opened: at-terminal.sftp-entry', 'context-menu', null, null);
+            return resolveSftpMenuActions(value);
+          }
         }),
       'at-terminal: sftp entry context menu'
     );
@@ -915,7 +923,10 @@ export function apply(ctx: ClientContext): void {
           id: 'at-terminal.sftp-container-actions',
           target: SFTP_CONTAINER_MENU_TARGET,
           order: 10,
-          resolve: (value) => resolveSftpMenuActions(value)
+          resolve: (value) => {
+            postDiagnostic('info', 'context menu opened: at-terminal.sftp-container', 'context-menu', null, null);
+            return resolveSftpMenuActions(value);
+          }
         }),
       'at-terminal: sftp container context menu'
     );

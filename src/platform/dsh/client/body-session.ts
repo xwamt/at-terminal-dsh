@@ -700,6 +700,9 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
   ): Promise<{ status: 'saved' | 'requested' | 'cancelled' | 'fallback'; path?: string }> {
     const fileActions: FileActionsService | undefined = fileActionsFrom(props);
     if (fileActions === undefined) {
+      // No `fileActions` service (an older host, or the context-menu/file-actions client
+      // plugin was not loaded): the anchor fallback is the old behaviour, not a failure.
+      postDiagnostic('info', `download ${name}: fileActions absent, using saveBytes fallback`, 'sftp-download', null, null);
       saveBytes(name, base64);
       return { status: 'fallback' };
     }
@@ -712,8 +715,17 @@ export function AtTerminalSessionBody(props: Record<string, unknown> = {}): Reac
         },
         'download'
       );
-      if (result.status === 'cancelled') return { status: 'cancelled' };
-      if (result.status === 'saved') return { status: 'saved', path: result.path };
+      if (result.status === 'cancelled') {
+        postDiagnostic('info', `download ${name}: fileActions cancelled by the user`, 'sftp-download', null, null);
+        return { status: 'cancelled' };
+      }
+      if (result.status === 'saved') {
+        postDiagnostic('info', `download ${name}: saved to ${String(result.path ?? '(no path)')}`, 'sftp-download', null, null);
+        return { status: 'saved', path: result.path };
+      }
+      // A browser download: the destination is the browser's, not a path we can name. Recorded
+      // so a "the download did nothing" report can be told apart from "the click never reached us".
+      postDiagnostic('info', `download ${name}: requested (browser download, fileActions present)`, 'sftp-download', null, null);
       return { status: 'requested' };
     } catch (error) {
       postDiagnostic(

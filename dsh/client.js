@@ -5358,7 +5358,7 @@ function AtTerminalSessionBody(props = {}) {
   async function saveRemoteBytes(name, base64) {
     let fileActions = fileActionsFrom(props);
     if (fileActions === void 0)
-      return saveBytes(name, base64), { status: "fallback" };
+      return postDiagnostic("info", `download ${name}: fileActions absent, using saveBytes fallback`, "sftp-download", null, null), saveBytes(name, base64), { status: "fallback" };
     try {
       let result = await fileActions.save(
         {
@@ -5368,7 +5368,7 @@ function AtTerminalSessionBody(props = {}) {
         },
         "download"
       );
-      return result.status === "cancelled" ? { status: "cancelled" } : result.status === "saved" ? { status: "saved", path: result.path } : { status: "requested" };
+      return result.status === "cancelled" ? (postDiagnostic("info", `download ${name}: fileActions cancelled by the user`, "sftp-download", null, null), { status: "cancelled" }) : result.status === "saved" ? (postDiagnostic("info", `download ${name}: saved to ${String(result.path ?? "(no path)")}`, "sftp-download", null, null), { status: "saved", path: result.path }) : (postDiagnostic("info", `download ${name}: requested (browser download, fileActions present)`, "sftp-download", null, null), { status: "requested" });
     } catch (error) {
       return postDiagnostic(
         "warn",
@@ -8120,7 +8120,7 @@ function apply(ctx) {
         id: "at-terminal.server-actions",
         target: SERVER_MENU_TARGET,
         order: 10,
-        resolve: (value) => resolveServerMenuActions(value)
+        resolve: (value) => (postDiagnostic("info", "context menu opened: at-terminal.server", "context-menu", null, null), resolveServerMenuActions(value))
       }),
       "at-terminal: server context menu"
     ), scope.effect(
@@ -8128,7 +8128,7 @@ function apply(ctx) {
         id: "at-terminal.sftp-entry-actions",
         target: SFTP_ENTRY_MENU_TARGET,
         order: 10,
-        resolve: (value) => resolveSftpMenuActions(value)
+        resolve: (value) => (postDiagnostic("info", "context menu opened: at-terminal.sftp-entry", "context-menu", null, null), resolveSftpMenuActions(value))
       }),
       "at-terminal: sftp entry context menu"
     ), scope.effect(
@@ -8136,7 +8136,7 @@ function apply(ctx) {
         id: "at-terminal.sftp-container-actions",
         target: SFTP_CONTAINER_MENU_TARGET,
         order: 10,
-        resolve: (value) => resolveSftpMenuActions(value)
+        resolve: (value) => (postDiagnostic("info", "context menu opened: at-terminal.sftp-container", "context-menu", null, null), resolveSftpMenuActions(value))
       }),
       "at-terminal: sftp container context menu"
     );
