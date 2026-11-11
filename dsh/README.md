@@ -281,6 +281,12 @@ configurable, and changed nothing. They are gone rather than deprecated, because
 declared-but-inert field is worse than an absent one. A profile written before the removal
 still starts; schemastery keeps the unknown key and `readSettings` ignores it.
 
+**Idle disconnect releases the terminal's dependants.** When `idleDisconnectMinutes` expires,
+the Host now emits the session's `closed` lifecycle event as well as the disconnected status,
+so the DSH terminal registry, the SFTP tree and the agent's pooled SFTP session for that
+terminal are disposed together. The timer still counts terminal input/output, not
+operating-system idle time.
+
 ## Install (Desktop)
 
 The Desktop shell owns package management for its own profile

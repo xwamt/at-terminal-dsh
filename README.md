@@ -4,13 +4,13 @@
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
 [![DSH Verified](https://img.shields.io/badge/DSH-0.2.2--rc.1_Verified-brightgreen.svg)](#installation--setup--安装与配置)
-[![Test Coverage](https://img.shields.io/badge/tests-101%2F101%20passed%20(1437%20tests)-blue.svg)](#build--verification--构建与验证)
+[![Test Coverage](https://img.shields.io/badge/tests-101%2F101%20passed%20(1551%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
 
 [English](#english) | [中文说明](#中文说明)
 
-> **Release 0.3.0 (2026-10-30)** — semantic-seam hardening: background jobs & job control, spill of oversized results, an opt-in persistent SSH bundle, a settings page with a trust library, multi-server target safety, large-file `localPath` streaming upload, and read-side timeouts. Full notes: [docs/releases/0.3.0.md](docs/releases/0.3.0.md).
+> **Release 0.3.1 (2026-11-11)** — DSH 0.2.2-rc.1 compatibility and reliability release: hardened npm packaging and engines, SFTP `edit_file` with stale-version protection, optional multi-file `apply_patch`, native context menus/file actions, SFTP tree + preview split layout, and idle-disconnect cleanup that releases the terminal's SFTP and agent SFTP connections. Full notes: [docs/releases/0.3.1.md](docs/releases/0.3.1.md).
 
 ---
 
@@ -56,6 +56,7 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
 6. **WebGL Accelerated Terminal Frontend**:
    - High-performance xterm 5.5 rendering with WebGL acceleration.
    - Semantic highlighting, zebra stripes, and automated color contrast adjustments.
+   - **Idle disconnect releases the whole session**: after `sshManager.idleDisconnectMinutes` (default 60, `0` disables) with no terminal input or output, the SSH terminal closes and every SFTP connection attached to it — including the agent's pooled SFTP session — is released. The timer measures terminal traffic, not operating-system idle time.
 7. **Floating Monitor HUD**:
    - Connects as a capsule (CPU / memory chips) instead of a window that covers the terminal, then expands into Overview, Hardware and Agent execution tabs.
    - Per-connection audit history: the Agent tab shows the four most recent rows, while **History** reveals everything this connection recorded and resets on disconnect.
@@ -222,6 +223,7 @@ independently toggled rows.
 - **高性能前端渲染**：基于 `@xterm/xterm` 5.5 及 WebGL 插件，在 DSH 客户端界面流畅渲染海量日志与高频输出。
 - **增强视觉体验**：集成终端语义高亮（Semantic Highlight）、斑马纹交替行底色（Zebra Stripes）、多配色方案对比度自动校正。
 - **多标签会话管理**：原生多会话 Tab 自由切换与断线重连保障。
+- **空闲断开释放整条会话链**：超过 `sshManager.idleDisconnectMinutes`（默认 60 分钟，`0` 关闭）无终端输入/输出后，SSH 终端关闭，跟随该终端的 SFTP 树与 Agent SFTP 连接（包括池化会话）一并释放；计时口径是终端流量，不是操作系统空闲时间。
 
 #### 7. 监控悬浮窗（胶囊 / 总览 / 历史）
 - **连接即胶囊**：连接服务器后悬浮窗以胶囊形态出现（CPU / 内存小条），不再默认展开挡住终端；点胶囊右端的 **展开箭头** 才展开为「总览 / 硬件指标 / Agent 执行」三页。

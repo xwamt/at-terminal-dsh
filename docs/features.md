@@ -23,6 +23,7 @@ The MCP build still includes the base AT Terminal workflow:
 - Block changed host keys for previously trusted hosts.
 - Open each SSH connection in an independent terminal tab.
 - Disconnect and reconnect sessions.
+- Disconnect idle sessions after `sshManager.idleDisconnectMinutes` (default 60; `0` disables). Expiry closes the terminal and releases the SFTP tree and agent SFTP session attached to it.
 - Configure terminal font, scrollback, semantic highlighting, and keep-alive behavior.
 
 ## SFTP File Management
