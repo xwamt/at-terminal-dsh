@@ -15961,6 +15961,10 @@ var SshSession = class {
   lastActivityAt = 0;
   idleTimer;
   idleDisconnectMinutes;
+  /** One `closed` notification per connection, however the connection ends. */
+  closedNotified = !1;
+  /** Set when a status line already explains this close (the idle-timeout message). */
+  closeStatusReported = !1;
   /**
    * Keep a **permanent** `error` listener on an ssh2 client for its whole life.
    *
@@ -15991,7 +15995,7 @@ var SshSession = class {
     });
   }
   async connect() {
-    this.events.status({
+    this.closedNotified = !1, this.closeStatusReported = !1, this.events.status({
       state: "connecting",
       text: t("Connecting to {host}:{port}...", { host: this.server.host, port: this.server.port })
     });
@@ -16014,10 +16018,11 @@ var SshSession = class {
     } catch (error) {
       throw client.end(), handle2.dispose(), this.connectionHandle = void 0, error;
     }
-    this.shell.on("data", (data) => {
+    let shell = this.shell;
+    shell.on("data", (data) => {
       this.lastActivityAt = Date.now(), this.events.output(data);
-    }), this.shell.on("close", () => {
-      this.connected = !1, this.stopIdleWatch(), this.events.status({ state: "disconnected", text: t("Disconnected") });
+    }), shell.on("close", () => {
+      this.shell === shell && (this.connected = !1, this.stopIdleWatch(), this.notifyClosed(), this.closeStatusReported || this.events.status({ state: "disconnected", text: t("Disconnected") }));
     }), this.connected = !0, this.lastActivityAt = Date.now(), this.startIdleWatch(), this.events.status({ state: "connected", text: t("Connected") });
   }
   async reconnect() {
@@ -16059,7 +16064,12 @@ var SshSession = class {
     return this.connected;
   }
   dispose() {
-    this.stopIdleWatch(), this.shell?.end(), this.client?.end(), this.connectionHandle?.dispose(), this.shell = void 0, this.client = void 0, this.connectionHandle = void 0, this.connected = !1;
+    let wasOpen = this.connected || this.shell !== void 0;
+    this.stopIdleWatch(), this.shell?.end(), this.client?.end(), this.connectionHandle?.dispose(), this.shell = void 0, this.client = void 0, this.connectionHandle = void 0, this.connected = !1, wasOpen && this.notifyClosed();
+  }
+  /** Report the one lifecycle event each consumer needs to release what it attached. */
+  notifyClosed() {
+    return this.closedNotified ? !1 : (this.closedNotified = !0, this.events.closed?.(), !0);
   }
   /**
    * Tick no faster than the deadline itself, and never faster than every 30 s.
@@ -16075,7 +16085,7 @@ var SshSession = class {
     if (!(limitMinutes > 0)) return;
     let limitMs = limitMinutes * 6e4;
     this.idleTimer = setInterval(() => {
-      this.connected && (Date.now() - this.lastActivityAt < limitMs || (this.events.status({
+      this.connected && (Date.now() - this.lastActivityAt < limitMs || (this.closeStatusReported = !0, this.events.status({
         state: "disconnected",
         text: t("Disconnected after {minutes} min of inactivity", { minutes: String(limitMinutes) })
       }), this.dispose()));
@@ -16215,7 +16225,8 @@ function createDshTerminalApi({ platform: platform2, observer }) {
       let server = await configManager.getServer(options.serverId);
       if (server === void 0)
         throw Object.assign(new Error(`no server with id "${options.serverId}"`), { code: "no-such-server" });
-      let emit = options.emit, session = new SshSession(
+      let emit = options.emit, terminalId = randomUUID2(), announced = !1, session;
+      session = new SshSession(
         server,
         configManager,
         {
@@ -16228,6 +16239,9 @@ function createDshTerminalApi({ platform: platform2, observer }) {
           error(error) {
             let failure = classifySshFailure(error, { host: server.host, port: server.port });
             emit({ type: "error", code: failure.code, message: failure.message });
+          },
+          closed() {
+            live.delete(session), announced && observer?.closed(terminalId);
           }
         },
         createVerifier(hostKeyStore, emit),
@@ -16240,8 +16254,7 @@ function createDshTerminalApi({ platform: platform2, observer }) {
         // do anything. Read through the same `resolveTerminalSettings` the other terminal
         // settings use, so there is one answer to "what did the user configure".
         { idleDisconnectMinutes: resolveTerminalSettings(platform2.config.getSection("sshManager")).idleDisconnectMinutes }
-      );
-      live.add(session);
+      ), live.add(session);
       try {
         session.resize(options.rows, options.cols), await session.connect();
       } catch (error) {
@@ -16249,8 +16262,8 @@ function createDshTerminalApi({ platform: platform2, observer }) {
         let failure = classifySshFailure(error, { host: server.host, port: server.port });
         throw Object.assign(new Error(failure.message), { code: failure.code });
       }
-      let closed = !1, terminalId = randomUUID2();
-      return observer?.opened({ terminalId, server, write: (data) => session.write(data) }), {
+      let closed = !1;
+      return observer?.opened({ terminalId, server, write: (data) => session.write(data) }), announced = !0, {
         terminalId,
         write(data) {
           session.write(data);
@@ -16262,7 +16275,7 @@ function createDshTerminalApi({ platform: platform2, observer }) {
           paused ? session.pauseOutput() : session.resumeOutput();
         },
         close() {
-          closed || (closed = !0, live.delete(session), session.dispose(), observer?.closed(terminalId), emit({ type: "closed", reason: "requested" }));
+          closed || (closed = !0, live.delete(session), session.dispose(), emit({ type: "closed", reason: "requested" }));
         }
       };
     },
@@ -17822,9 +17835,12 @@ function normalizeLocalPath(path) {
 var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENTRIES = 500, MAX_ENTRIES = 5e3, WRITE_TIMEOUT_MS = 6e4, SFTP_EDIT_MAX_BYTES = 2 * 1024 * 1024, UPLOAD_TIMEOUT_MS = 3e5, MAX_LOCAL_UPLOAD_BYTES = 1024 * 1024 * 1024, READ_TIMEOUT_MS = 3e4, BACKGROUND_IDLE_TTL_MS = 5 * 6e4, SftpAgentService = class {
   constructor(options) {
     this.options = options;
-    this.terminalRemovalSubscription = this.options.terminalContext.onDidRemoveContext?.(
+    let onConnectionChange = this.options.terminalContext.onDidChangeContext?.((context) => {
+      context.connected || this.disposeTerminal(context.terminalId);
+    }), onRemoval = this.options.terminalContext.onDidRemoveContext?.(
       (terminalId) => this.disposeTerminal(terminalId)
     );
+    onConnectionChange && this.terminalContextSubscriptions.push(onConnectionChange), onRemoval && this.terminalContextSubscriptions.push(onRemoval);
   }
   /** One session per connected UI terminal; lives until the terminal closes. */
   terminalSessions = /* @__PURE__ */ new Map();
@@ -17838,8 +17854,8 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
    * different one, and the file itself can be replaced while the link is down.
    */
   observations = /* @__PURE__ */ new Map();
-  /** Removes the terminal-close subscription added in the constructor. */
-  terminalRemovalSubscription;
+  /** Removes the terminal-context subscriptions added in the constructor. */
+  terminalContextSubscriptions = [];
   async listDirectory(input) {
     return await this.withAudit("sftp_list_directory", input, async () => {
       let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
@@ -18662,7 +18678,7 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
       }
     });
   }
-  /** Drops the pooled session bound to a closed terminal. Wire to `onDidRemoveContext`. */
+  /** Drops the pooled session bound to a terminal that closed or disconnected. */
   disposeTerminal(terminalId) {
     let entry = this.terminalSessions.get(terminalId);
     entry && (this.terminalSessions.delete(terminalId), entry.promise.then(
@@ -18680,7 +18696,9 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     this.roots.delete(`server:${serverId}`), this.clearObservations(`server:${serverId}`);
   }
   dispose() {
-    this.terminalRemovalSubscription?.dispose();
+    for (let subscription of this.terminalContextSubscriptions)
+      subscription.dispose();
+    this.terminalContextSubscriptions.length = 0;
     for (let [serverId, entry] of [...this.backgroundSessions])
       this.evictBackgroundSession(serverId, entry);
     this.backgroundSessions.clear();

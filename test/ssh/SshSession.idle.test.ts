@@ -82,16 +82,17 @@ function latestShell(): MockShell {
 
 async function connectWith(idleDisconnectMinutes: number) {
   const statuses: SshSessionStatus[] = [];
+  const closed = vi.fn();
   const session = new SshSession(
     server(),
     { getPassword: async () => 'secret' } as never,
-    { output: vi.fn(), status: (status) => statuses.push(status), error: vi.fn() },
+    { output: vi.fn(), status: (status) => statuses.push(status), error: vi.fn(), closed },
     { verify: async () => true } as never,
     undefined,
     { idleDisconnectMinutes }
   );
   await session.connect();
-  return { session, statuses };
+  return { session, statuses, closed };
 }
 
 beforeEach(() => {
@@ -111,7 +112,7 @@ afterEach(() => {
 
 describe('SshSession idle disconnect', () => {
   it('disconnects a silent session and says why, instead of going blank', async () => {
-    const { session, statuses } = await connectWith(1);
+    const { session, statuses, closed } = await connectWith(1);
     expect(statuses.at(-1)?.state).toBe('connected');
 
     // One minute of nothing, then the next tick past the deadline.
@@ -122,6 +123,10 @@ describe('SshSession idle disconnect', () => {
       text: 'Disconnected after 1 min of inactivity'
     });
     expect(session.isConnected()).toBe(false);
+    // The lifecycle signal services use to release the registry, SFTP tree and agent
+    // SFTP session that were attached to this terminal. Without it the timeout only
+    // killed the shell and left the associated SSH connections alive.
+    expect(closed).toHaveBeenCalledTimes(1);
     // The session is really torn down, not just relabelled: a live ssh2 client holding the
     // connection would make the disconnect cosmetic.
     expect(latestShell().end).toHaveBeenCalled();
@@ -165,10 +170,24 @@ describe('SshSession idle disconnect', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('reports a remote close once and leaves dispose idempotent', async () => {
+    const { session, statuses, closed } = await connectWith(1);
+
+    latestShell().emit('close');
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)).toEqual({ state: 'disconnected', text: 'Disconnected' });
+
+    // The socket teardown that follows the close must not announce the same terminal a
+    // second time — consumers would drop a replacement that had already taken its place.
+    session.dispose();
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
   it('stops the timer when the session is disposed, so nothing outlives it', async () => {
-    const { session } = await connectWith(1);
+    const { session, closed } = await connectWith(1);
     session.dispose();
 
     expect(vi.getTimerCount()).toBe(0);
+    expect(closed).toHaveBeenCalledTimes(1);
   });
 });

@@ -316,17 +316,27 @@ export class SftpAgentService {
    */
   private readonly observations = new Map<string, Map<string, SftpFileVersion>>();
 
-  /** Removes the terminal-close subscription added in the constructor. */
-  private readonly terminalRemovalSubscription: { dispose(): void } | undefined;
+  /** Removes the terminal-context subscriptions added in the constructor. */
+  private readonly terminalContextSubscriptions: Array<{ dispose(): void }> = [];
 
   constructor(private readonly options: SftpAgentServiceOptions) {
-    // A terminal that closes must not leave its pooled SFTP connection (or the versions read
-    // over it) alive: the panel's own lifecycle calls `disposeTerminal` too, but wiring the
-    // registry event here means an agent session cannot outlive the terminal that owns it
-    // even when the host composition forgets the direct call.
-    this.terminalRemovalSubscription = this.options.terminalContext.onDidRemoveContext?.((terminalId) =>
+    /**
+     * A terminal that disconnects must not leave its pooled SFTP connection (or the
+     * versions read over it) alive. The registry keeps a closed terminal in its map as
+     * `connected: false` — it is `onDidChangeContext`, not `onDidRemoveContext`, that
+     * announces that transition — so subscribing to removal alone left an idle or
+     * closed tab's SSH session open indefinitely.
+     */
+    const onConnectionChange = this.options.terminalContext.onDidChangeContext?.((context) => {
+      if (!context.connected) this.disposeTerminal(context.terminalId);
+    });
+    // Kept as well: a terminal can be removed outright without passing through a
+    // disconnected state (for example when the panel tears the registry entry down).
+    const onRemoval = this.options.terminalContext.onDidRemoveContext?.((terminalId) =>
       this.disposeTerminal(terminalId)
     );
+    if (onConnectionChange) this.terminalContextSubscriptions.push(onConnectionChange);
+    if (onRemoval) this.terminalContextSubscriptions.push(onRemoval);
   }
 
   async listDirectory(input: SftpTargetInput & { path?: string; maxEntries?: number; offset?: number }) {
@@ -1476,7 +1486,7 @@ export class SftpAgentService {
     });
   }
 
-  /** Drops the pooled session bound to a closed terminal. Wire to `onDidRemoveContext`. */
+  /** Drops the pooled session bound to a terminal that closed or disconnected. */
   disposeTerminal(terminalId: string): void {
     const entry = this.terminalSessions.get(terminalId);
     if (entry) {
@@ -1509,7 +1519,10 @@ export class SftpAgentService {
   }
 
   dispose(): void {
-    this.terminalRemovalSubscription?.dispose();
+    for (const subscription of this.terminalContextSubscriptions) {
+      subscription.dispose();
+    }
+    this.terminalContextSubscriptions.length = 0;
     for (const [serverId, entry] of [...this.backgroundSessions]) {
       this.evictBackgroundSession(serverId, entry);
     }

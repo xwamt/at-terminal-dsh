@@ -433,7 +433,12 @@ export function createDshTerminalApi({ platform, observer }: DshTerminalApiOptio
       }
 
       const emit = options.emit;
-      const session = new SshSession(
+      // Drawn before the session exists: the session's own close signal has to be able to
+      // name the same terminal the observer was told about when it opened.
+      const terminalId = randomUUID();
+      let announced = false;
+      let session: SshSession;
+      session = new SshSession(
         server,
         configManager,
         {
@@ -449,6 +454,13 @@ export function createDshTerminalApi({ platform, observer }: DshTerminalApiOptio
             // preserves an existing code and only names what the error itself says.
             const failure = classifySshFailure(error, { host: server.host, port: server.port });
             emit({ type: 'error', code: failure.code, message: failure.message });
+          },
+          closed(): void {
+            // This is the one signal that covers every ending — idle timeout, remote close
+            // and explicit `close()` — so the registry and the SFTP tree are released even
+            // when nobody called `close()`.
+            live.delete(session);
+            if (announced) observer?.closed(terminalId);
           }
         },
         createVerifier(hostKeyStore, emit),
@@ -479,8 +491,8 @@ export function createDshTerminalApi({ platform, observer }: DshTerminalApiOptio
       let closed = false;
       // Announced only after the connect succeeded: a session that never opened must not
       // become a terminal the SFTP tree can choose to follow.
-      const terminalId = randomUUID();
       observer?.opened({ terminalId, server, write: (data: string) => session.write(data) });
+      announced = true;
       return {
         terminalId,
         write(data: string): void {
@@ -497,8 +509,9 @@ export function createDshTerminalApi({ platform, observer }: DshTerminalApiOptio
           if (closed) return;
           closed = true;
           live.delete(session);
+          // `SshSession.dispose()` reports `closed` once; that callback notifies the
+          // observer. Keeping the call here as well would close the same terminal twice.
           session.dispose();
-          observer?.closed(terminalId);
           emit({ type: 'closed', reason: 'requested' });
         }
       };

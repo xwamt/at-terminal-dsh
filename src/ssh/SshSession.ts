@@ -21,6 +21,15 @@ export interface SshSessionEvents {
   output(data: Buffer): void;
   status(status: SshSessionStatus): void;
   error(error: unknown): void;
+  /**
+   * Called exactly once when a session that had opened ends — idle timeout, remote close,
+   * or `dispose()`.
+   *
+   * `status` carries display copy; this is the lifecycle signal. Consumers attach things
+   * to a live session (the DSH terminal registry, an SFTP connection) and have to release
+   * them when the session ends, including when `SshSession` ends it on its own.
+   */
+  closed?(): void;
 }
 
 export interface SshSessionOptions {
@@ -46,6 +55,10 @@ export class SshSession {
   private lastActivityAt = 0;
   private idleTimer: ReturnType<typeof setInterval> | undefined;
   private readonly idleDisconnectMinutes: number;
+  /** One `closed` notification per connection, however the connection ends. */
+  private closedNotified = false;
+  /** Set when a status line already explains this close (the idle-timeout message). */
+  private closeStatusReported = false;
 
   constructor(
     private readonly server: ServerConfig,
@@ -90,6 +103,8 @@ export class SshSession {
   }
 
   async connect(): Promise<void> {
+    this.closedNotified = false;
+    this.closeStatusReported = false;
     this.events.status({
       state: 'connecting',
       text: t('Connecting to {host}:{port}...', { host: this.server.host, port: this.server.port })
@@ -125,14 +140,22 @@ export class SshSession {
       throw error;
     }
 
-    this.shell.on('data', (data: Buffer) => {
+    const shell = this.shell;
+    shell.on('data', (data: Buffer) => {
       this.lastActivityAt = Date.now();
       this.events.output(data);
     });
-    this.shell.on('close', () => {
+    shell.on('close', () => {
+      // A late close from a replaced shell must not tear down the replacement.
+      if (this.shell !== shell) return;
       this.connected = false;
       this.stopIdleWatch();
-      this.events.status({ state: 'disconnected', text: t('Disconnected') });
+      this.notifyClosed();
+      // An idle timeout already said why it went away; overwriting that with a generic
+      // "Disconnected" would hide the only explanation the user gets.
+      if (!this.closeStatusReported) {
+        this.events.status({ state: 'disconnected', text: t('Disconnected') });
+      }
     });
     this.connected = true;
     this.lastActivityAt = Date.now();
@@ -195,6 +218,7 @@ export class SshSession {
   }
 
   dispose(): void {
+    const wasOpen = this.connected || this.shell !== undefined;
     this.stopIdleWatch();
     this.shell?.end();
     this.client?.end();
@@ -203,6 +227,17 @@ export class SshSession {
     this.client = undefined;
     this.connectionHandle = undefined;
     this.connected = false;
+    if (wasOpen) {
+      this.notifyClosed();
+    }
+  }
+
+  /** Report the one lifecycle event each consumer needs to release what it attached. */
+  private notifyClosed(): boolean {
+    if (this.closedNotified) return false;
+    this.closedNotified = true;
+    this.events.closed?.();
+    return true;
   }
 
   /**
@@ -221,6 +256,9 @@ export class SshSession {
     this.idleTimer = setInterval(() => {
       if (!this.connected) return;
       if (Date.now() - this.lastActivityAt < limitMs) return;
+      // Marked before disposal so the shell's eventual `close` does not overwrite the
+      // reason with a generic "Disconnected".
+      this.closeStatusReported = true;
       this.events.status({
         state: 'disconnected',
         text: t('Disconnected after {minutes} min of inactivity', { minutes: String(limitMinutes) })

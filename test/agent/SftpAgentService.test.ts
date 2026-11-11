@@ -903,6 +903,27 @@ describe('SftpAgentService disposal', () => {
     expect(session.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('drops a pooled terminal session when the registry reports the terminal disconnected', async () => {
+    const session = makeSession();
+    const registry = connectedRegistry();
+    const service = new SftpAgentService({
+      terminalContext: registry,
+      createSession: () => session as never,
+      authorizer: authorizer()
+    });
+
+    await service.listDirectory({ path: '.' });
+    expect(session.dispose).not.toHaveBeenCalled();
+
+    // This is what the host does when the terminal closes or its idle timer fires. The
+    // context stays in the registry as `connected: false`, so `onDidRemoveContext` never
+    // fires — the event the service used to listen to alone.
+    registry.markDisconnected('terminal-1');
+    await Promise.resolve();
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('disposeServer drops background and terminal sessions for that server', async () => {
     const terminalSession = makeSession();
     const backgroundSession = makeSession();

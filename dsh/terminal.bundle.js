@@ -3306,6 +3306,10 @@ var SshSession = class {
   lastActivityAt = 0;
   idleTimer;
   idleDisconnectMinutes;
+  /** One `closed` notification per connection, however the connection ends. */
+  closedNotified = !1;
+  /** Set when a status line already explains this close (the idle-timeout message). */
+  closeStatusReported = !1;
   /**
    * Keep a **permanent** `error` listener on an ssh2 client for its whole life.
    *
@@ -3336,7 +3340,7 @@ var SshSession = class {
     });
   }
   async connect() {
-    this.events.status({
+    this.closedNotified = !1, this.closeStatusReported = !1, this.events.status({
       state: "connecting",
       text: t("Connecting to {host}:{port}...", { host: this.server.host, port: this.server.port })
     });
@@ -3359,10 +3363,11 @@ var SshSession = class {
     } catch (error) {
       throw client.end(), handle.dispose(), this.connectionHandle = void 0, error;
     }
-    this.shell.on("data", (data) => {
+    let shell = this.shell;
+    shell.on("data", (data) => {
       this.lastActivityAt = Date.now(), this.events.output(data);
-    }), this.shell.on("close", () => {
-      this.connected = !1, this.stopIdleWatch(), this.events.status({ state: "disconnected", text: t("Disconnected") });
+    }), shell.on("close", () => {
+      this.shell === shell && (this.connected = !1, this.stopIdleWatch(), this.notifyClosed(), this.closeStatusReported || this.events.status({ state: "disconnected", text: t("Disconnected") }));
     }), this.connected = !0, this.lastActivityAt = Date.now(), this.startIdleWatch(), this.events.status({ state: "connected", text: t("Connected") });
   }
   async reconnect() {
@@ -3404,7 +3409,12 @@ var SshSession = class {
     return this.connected;
   }
   dispose() {
-    this.stopIdleWatch(), this.shell?.end(), this.client?.end(), this.connectionHandle?.dispose(), this.shell = void 0, this.client = void 0, this.connectionHandle = void 0, this.connected = !1;
+    let wasOpen = this.connected || this.shell !== void 0;
+    this.stopIdleWatch(), this.shell?.end(), this.client?.end(), this.connectionHandle?.dispose(), this.shell = void 0, this.client = void 0, this.connectionHandle = void 0, this.connected = !1, wasOpen && this.notifyClosed();
+  }
+  /** Report the one lifecycle event each consumer needs to release what it attached. */
+  notifyClosed() {
+    return this.closedNotified ? !1 : (this.closedNotified = !0, this.events.closed?.(), !0);
   }
   /**
    * Tick no faster than the deadline itself, and never faster than every 30 s.
@@ -3420,7 +3430,7 @@ var SshSession = class {
     if (!(limitMinutes > 0)) return;
     let limitMs = limitMinutes * 6e4;
     this.idleTimer = setInterval(() => {
-      this.connected && (Date.now() - this.lastActivityAt < limitMs || (this.events.status({
+      this.connected && (Date.now() - this.lastActivityAt < limitMs || (this.closeStatusReported = !0, this.events.status({
         state: "disconnected",
         text: t("Disconnected after {minutes} min of inactivity", { minutes: String(limitMinutes) })
       }), this.dispose()));
@@ -3576,7 +3586,8 @@ function createDshTerminalApi({ platform: platform2, observer }) {
       let server = await configManager.getServer(options.serverId);
       if (server === void 0)
         throw Object.assign(new Error(`no server with id "${options.serverId}"`), { code: "no-such-server" });
-      let emit = options.emit, session = new SshSession(
+      let emit = options.emit, terminalId = randomUUID(), announced = !1, session;
+      session = new SshSession(
         server,
         configManager,
         {
@@ -3589,6 +3600,9 @@ function createDshTerminalApi({ platform: platform2, observer }) {
           error(error) {
             let failure = classifySshFailure(error, { host: server.host, port: server.port });
             emit({ type: "error", code: failure.code, message: failure.message });
+          },
+          closed() {
+            live.delete(session), announced && observer?.closed(terminalId);
           }
         },
         createVerifier(hostKeyStore, emit),
@@ -3601,8 +3615,7 @@ function createDshTerminalApi({ platform: platform2, observer }) {
         // do anything. Read through the same `resolveTerminalSettings` the other terminal
         // settings use, so there is one answer to "what did the user configure".
         { idleDisconnectMinutes: resolveTerminalSettings(platform2.config.getSection("sshManager")).idleDisconnectMinutes }
-      );
-      live.add(session);
+      ), live.add(session);
       try {
         session.resize(options.rows, options.cols), await session.connect();
       } catch (error) {
@@ -3610,8 +3623,8 @@ function createDshTerminalApi({ platform: platform2, observer }) {
         let failure = classifySshFailure(error, { host: server.host, port: server.port });
         throw Object.assign(new Error(failure.message), { code: failure.code });
       }
-      let closed = !1, terminalId = randomUUID();
-      return observer?.opened({ terminalId, server, write: (data) => session.write(data) }), {
+      let closed = !1;
+      return observer?.opened({ terminalId, server, write: (data) => session.write(data) }), announced = !0, {
         terminalId,
         write(data) {
           session.write(data);
@@ -3623,7 +3636,7 @@ function createDshTerminalApi({ platform: platform2, observer }) {
           paused ? session.pauseOutput() : session.resumeOutput();
         },
         close() {
-          closed || (closed = !0, live.delete(session), session.dispose(), observer?.closed(terminalId), emit({ type: "closed", reason: "requested" }));
+          closed || (closed = !0, live.delete(session), session.dispose(), emit({ type: "closed", reason: "requested" }));
         }
       };
     },
