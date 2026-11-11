@@ -248,7 +248,7 @@ function renderNotices(t: Translate, props: SftpFileViewProps, file: SftpFileTex
   return nodes;
 }
 
-function renderToolbar(t: Translate, props: SftpFileViewProps): El {
+function renderToolbar(t: Translate, props: SftpFileViewProps, showNav = true): El {
   const pane = props.pane;
   const editing = pane.mode === 'edit';
   const ready = pane.kind === 'ready';
@@ -259,7 +259,10 @@ function renderToolbar(t: Translate, props: SftpFileViewProps): El {
   return h(
     'div',
     { className: 'att-toolbar' },
-    renderNav(t, props.mode, props.onMode, 'sftp'),
+    // In the split layout the nav is hoisted to a page-wide header above the tree|file row
+    // (see renderSftpFileView) so the 终端/文件 switch does not jump into the file pane's
+    // toolbar and read as if it belonged to the file. The single-column layout keeps it here.
+    showNav ? renderNav(t, props.mode, props.onMode, 'sftp') : null,
     h('div', { className: 'att-spacer' }),
     // The file being looked at, as a path. Named here rather than only in a title attribute:
     // a `<textarea>` in a narrow column pushes everything else out of sight, and "which file
@@ -455,7 +458,7 @@ export function renderSftpFileView(props: SftpFileViewProps): El {
       // scrolls; without this the editor's own scroll area grows the whole page.
       style: { display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0, minHeight: 0 }
     },
-    renderToolbar(t, props),
+    renderToolbar(t, props, !split),
     // The inline flex is load-bearing in the split layout: the stylesheet's
     // `.att-sftp-file-page > .att-file-content` rule no longer matches through the new
     // `.sftp-file-main` wrapper, and a content area that cannot shrink would push the
@@ -486,9 +489,13 @@ export function renderSftpFileView(props: SftpFileViewProps): El {
       'data-at-terminal-sftp-split': split ? 'true' : 'false',
       ...(split
         ? {
+            // Column, not row: the nav is a page-wide header on top, and the tree|file split
+            // is the row beneath it. Keeping the nav OUT of the file pane's toolbar is the
+            // whole point — inside it the 终端/文件 switch looked like it belonged to the file
+            // and jumped sideways whenever the split opened or closed.
             style: {
               display: 'flex',
-              flexDirection: 'row',
+              flexDirection: 'column',
               alignItems: 'stretch',
               minHeight: 0,
               overflow: 'hidden'
@@ -500,25 +507,57 @@ export function renderSftpFileView(props: SftpFileViewProps): El {
       ? h(
           'div',
           {
-            key: 'sftp-split-tree',
-            className: 'sftp-split-tree',
-            // 240px is the official preview's starting width; 42% lets a narrow-but-wide
-            // panel grow it without starving the editor, and 180px is the readable floor.
+            key: 'sftp-split-header',
+            className: 'sftp-split-header',
             style: {
-              flex: '0 1 240px',
-              width: '42%',
-              minWidth: '180px',
-              maxWidth: '320px',
+              flex: '0 0 auto',
               display: 'flex',
-              flexDirection: 'column',
+              alignItems: 'center',
               minHeight: 0,
-              borderRight: '.5px solid var(--dsw-alias-border-l3)',
+              borderBottom: '.5px solid var(--dsw-alias-border-l3)'
+            }
+          },
+          renderNav(t, props.mode, props.onMode, 'sftp')
+        )
+      : null,
+    split
+      ? h(
+          'div',
+          {
+            key: 'sftp-split-row',
+            className: 'sftp-split-row',
+            style: {
+              flex: '1 1 auto',
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'stretch',
+              minHeight: 0,
               overflow: 'hidden'
             }
           },
-          props.tree
+          h(
+            'div',
+            {
+              key: 'sftp-split-tree',
+              className: 'sftp-split-tree',
+              // 240px is the official preview's starting width; 42% lets a narrow-but-wide
+              // panel grow it without starving the editor, and 180px is the readable floor.
+              style: {
+                flex: '0 1 240px',
+                width: '42%',
+                minWidth: '180px',
+                maxWidth: '320px',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                borderRight: '.5px solid var(--dsw-alias-border-l3)',
+                overflow: 'hidden'
+              }
+            },
+            props.tree
+          ),
+          main
         )
-      : null,
-    main
+      : main
   );
 }

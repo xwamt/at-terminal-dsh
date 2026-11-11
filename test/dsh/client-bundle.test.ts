@@ -3348,6 +3348,19 @@ describe('client bundle — the file tree (DSH-23)', () => {
     expect(
       findByAttribute(harness.tree, 'data-at-terminal-sftp-row')?.props['data-at-terminal-sftp-row']
     ).toBe('parent');
+
+    // The 终端/文件 nav must live in a page-wide header ABOVE the tree|file row, not inside the
+    // file pane's toolbar. When it rode in the toolbar, opening the split shoved the switch into
+    // the top-right of the file column and it read as if it belonged to the file — the exact
+    // layout bug reported from the live panel.
+    const header = findAllByClass(harness.tree, 'sftp-split-header');
+    expect(header).toHaveLength(1);
+    // The page-wide header carries the nav…
+    expect(findAllByClass(header[0] as ElementLike, 'att-nav')).toHaveLength(1);
+    // …and the file pane's own toolbar no longer does (it used to; that is the bug).
+    const fileMain = findAllByClass(harness.tree, 'sftp-file-main');
+    expect(fileMain).toHaveLength(1);
+    expect(findAllByClass(fileMain[0] as ElementLike, 'att-nav')).toHaveLength(0);
   });
 
   it('keeps the single-column layout below 560px', async () => {
