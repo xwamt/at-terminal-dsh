@@ -1,7 +1,7 @@
 {
   "name": "@at-series/dsh-at-terminal-ssh",
   "description": "Keep an AT Terminal SSH shell alive across tool calls — the opt-in composition bundle for @at-series/dsh-at-terminal.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "engines": {
     "node": ">=24.9",
@@ -26,10 +26,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/at-series/at-terminal-dsh.git",
+    "url": "git+https://github.com/xwamt/at-terminal-dsh.git",
     "directory": "dsh-terminal-ssh"
   },
+  "homepage": "https://github.com/xwamt/at-terminal-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/xwamt/at-terminal-dsh/issues"
+  },
   "peerDependencies": {
-    "@at-series/dsh-at-terminal": "^0.3.1"
+    "@at-series/dsh-at-terminal": "^0.3.2"
   }
 }

@@ -1,9 +1,26 @@
 {
   "name": "@at-series/dsh-at-terminal",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "description": "AT Terminal for DeepSeek Harness: SSH/SFTP assets and remote SSH terminals.",
   "icon": "./icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xwamt/at-terminal-dsh.git",
+    "directory": "dsh"
+  },
+  "homepage": "https://github.com/xwamt/at-terminal-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/xwamt/at-terminal-dsh/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "ssh",
+    "sftp",
+    "terminal"
+  ],
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",
