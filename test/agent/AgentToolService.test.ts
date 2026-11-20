@@ -1419,3 +1419,43 @@ describe('AgentToolService — concurrent execution monitor (P2)', () => {
     await first;
   });
 });
+
+
+describe('AgentToolService — sftp read progress (Q2)', () => {
+  it('starts a read transfer at an honest 0% / 0 B/s instead of a fabricated rate', async () => {
+    const updateTransfer = vi.fn();
+    const completeTransfer = vi.fn();
+    const service = createService({
+      configManager: { getServer: async () => server(), listServers: async () => [server()] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor,
+      sftp: {
+        readFile: vi.fn(async () => ({
+          serverId: 'server-1',
+          path: '/srv/app.bin',
+          content: 'x',
+          truncated: false,
+          offset: 0,
+          size: 1,
+          modifiedAt: 1
+        }))
+      } as never,
+      executionBridge: {
+        updateTransfer,
+        completeTransfer,
+        recordAudit: vi.fn()
+      } as never
+    });
+
+    await service.sftpReadFile({ serverId: 'server-1', path: '/srv/app.bin' });
+
+    expect(updateTransfer).toHaveBeenCalledWith({
+      id: expect.any(String),
+      filename: 'app.bin',
+      type: 'download',
+      progressPercent: 0,
+      bytesPerSec: 0
+    });
+    expect(completeTransfer).toHaveBeenCalledTimes(1);
+  });
+});

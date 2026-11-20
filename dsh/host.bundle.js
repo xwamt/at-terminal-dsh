@@ -16752,8 +16752,11 @@ var AgentToolService = class {
       id: transferId,
       filename,
       type: "download",
-      progressPercent: 30,
-      bytesPerSec: 1024 * 50
+      // The API this tool calls is a buffered read: there is no byte stream to measure, so
+      // any non-zero rate here would be invented. Match `sftpWriteFile`'s streaming initial
+      // state and let `completeTransfer` remove the row when the read returns.
+      progressPercent: 0,
+      bytesPerSec: 0
     });
     try {
       let res = await this.requireSftp().readFile(input);
