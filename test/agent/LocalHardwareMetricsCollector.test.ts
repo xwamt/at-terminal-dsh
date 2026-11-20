@@ -165,6 +165,39 @@ describe('LocalHardwareMetricsCollector readings', () => {
     expect(metrics.disk.mounts[0].mount).toBe('C:');
   });
 
+  it('coalesces concurrent getMetrics() calls behind one probe', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = vi.fn(async () => {
+      await gate;
+      return '{}';
+    });
+    const collector = new LocalHardwareMetricsCollector({
+      platform: 'win32',
+      now: () => 1000,
+      run,
+      cpus: () => [{ model: 'cpu', speed: 1, times: { user: 10, nice: 0, sys: 10, idle: 80, irq: 0 } }],
+      totalmem: () => 1000,
+      freemem: () => 400,
+      loadavg: () => [0, 0, 0]
+    });
+
+    // The HUD poll, the sidebar pane and a tool call can all ask at the same instant. One
+    // probe must serve all three; running them concurrently rewrites `prevCpu`/`prevNet`
+    // under each other and turns the second reading into a zero-delta lie.
+    const first = collector.getMetrics();
+    const second = collector.getMetrics();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(a).toBe(b);
+    expect(a.disk.mounts).toEqual([]);
+  });
+
   it('still returns CPU and memory when every platform command fails', async () => {
     const collector = new LocalHardwareMetricsCollector({
       platform: 'darwin',

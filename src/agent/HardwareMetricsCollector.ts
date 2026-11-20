@@ -44,6 +44,12 @@ export class HardwareMetricsCollector {
   private readonly prevNetBytes = new Map<string, { rx: number; tx: number; ts: number }>();
   private readonly prevCpuTicks = new Map<string, CpuTicksSample>();
   private readonly pollTimers = new Map<string, NodeJS.Timeout>();
+  /**
+   * One probe per server at a time. The monitor polls from several surfaces at once; without
+   * this, overlapping probes each read the previous CPU/network sample and the loser of the
+   * race computes a near-zero delta, which the UI then shows as an idle machine.
+   */
+  private readonly inFlight = new Map<string, Promise<HardwareMetrics>>();
 
   constructor(options: HardwareMetricsCollectorOptions = {}) {
     this.executor = options.executor;
@@ -61,14 +67,30 @@ export class HardwareMetricsCollector {
       return this.createFallbackMetrics(server.id);
     }
 
+    const pending = this.inFlight.get(server.id);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const collected = this.collectMetrics(server, now, cached).finally(() => {
+      this.inFlight.delete(server.id);
+    });
+    this.inFlight.set(server.id, collected);
+    return collected;
+  }
+
+  private async collectMetrics(
+    server: ServerConfig,
+    now: number,
+    cached: { metrics: HardwareMetrics; fetchedAt: number } | undefined
+  ): Promise<HardwareMetrics> {
     try {
-      const result = await this.executor.execute(server, {
+      const result = await this.executor?.execute(server, {
         command: METRICS_PROBE_SCRIPT,
         timeoutMs: 4000,
         maxOutputBytes: 64 * 1024
       });
 
-      if (result.exitCode === 0 && result.stdout) {
+      if (result !== undefined && result.exitCode === 0 && result.stdout) {
         const parsed = this.parseProbeOutput(server.id, result.stdout, now);
         this.cache.set(server.id, { metrics: parsed, fetchedAt: now });
         return parsed;
@@ -283,11 +305,9 @@ export class HardwareMetricsCollector {
       }
     }
 
-    if (totalBytes === 0) {
-      totalBytes = 8 * 1024 * 1024 * 1024;
-      freeBytes = 4 * 1024 * 1024 * 1024;
-    }
-
+    // No invented fallback: 8 GiB/4 GiB looked like a reading and made an unreachable or
+    // unparseable host indistinguishable from a healthy one. Zero says "unknown", and the
+    // caller marks the whole snapshot stale when the probe itself failed.
     const effectiveFree = availableBytes > 0 ? availableBytes : freeBytes;
     const usedBytes = Math.max(0, totalBytes - effectiveFree);
     const swapUsed = Math.max(0, swapTotal - swapFree);
@@ -315,9 +335,22 @@ export class HardwareMetricsCollector {
         const used1K = parseInt(parts[2], 10);
         const pctStr = parts[4].replace('%', '');
         const usePercent = parseInt(pctStr, 10) || 0;
-        const mount = parts[5];
+        const mount = parts.slice(5).join(' ');
 
-        if (total1K > 0 && (mount === '/' || mount.startsWith('/data') || mount.startsWith('/home') || mount.startsWith('/var'))) {
+        // Data disks are not only /data and /home: /mnt, /opt, /srv and /var are normal
+        // mount points too, and dropping them made a host with its database on /mnt look
+        // like it had one tiny root filesystem. Pseudo filesystems are never storage.
+        const pseudo = fs === 'tmpfs' || fs === 'devtmpfs' || fs === 'squashfs' || fs === 'overlay' && mount !== '/';
+        const interestingMount =
+          fs.startsWith('/dev/') ||
+          mount === '/' ||
+          mount.startsWith('/data') ||
+          mount.startsWith('/mnt') ||
+          mount.startsWith('/opt') ||
+          mount.startsWith('/srv') ||
+          mount.startsWith('/home') ||
+          mount.startsWith('/var');
+        if (total1K > 0 && interestingMount && !pseudo) {
           mounts.push({
             fs,
             mount,
@@ -329,16 +362,8 @@ export class HardwareMetricsCollector {
       }
     }
 
-    if (mounts.length === 0) {
-      mounts.push({
-        fs: '/dev/root',
-        mount: '/',
-        totalBytes: 50 * 1024 * 1024 * 1024,
-        usedBytes: 15 * 1024 * 1024 * 1024,
-        usePercent: 30
-      });
-    }
-
+    // No fabricated 50 GiB `/dev/root` fallback: when `df` produced nothing the honest answer
+    // is "no mounts known", not a made-up capacity that outlives every failed probe.
     return { mounts };
   }
 

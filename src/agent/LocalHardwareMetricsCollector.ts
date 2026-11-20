@@ -322,6 +322,13 @@ export class LocalHardwareMetricsCollector {
   private previousCpu?: CpuSample;
   private previousNetwork?: NetworkTotals & { ts: number };
   private cache?: { metrics: HardwareMetrics; fetchedAt: number };
+  /**
+   * One probe at a time. The HUD polls every 4 s while the sidebar pane and an Agent tool can
+   * ask at the same instant; two overlapping probes each snapshot `previousCpu` /
+   * `previousNetwork`, so the second computes its delta against the first probe's *new*
+   * sample and reports `0` CPU or `0 B/s` — a measurement error that looks like an idle host.
+   */
+  private inFlight?: Promise<HardwareMetrics>;
 
   constructor(options: LocalHardwareMetricsCollectorOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -339,7 +346,16 @@ export class LocalHardwareMetricsCollector {
     if (cached !== undefined && now - cached.fetchedAt < CACHE_TTL_MS) {
       return cached.metrics;
     }
+    if (this.inFlight !== undefined) {
+      return this.inFlight;
+    }
+    this.inFlight = this.collectMetrics(now).finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
 
+  private async collectMetrics(now: number): Promise<HardwareMetrics> {
     const [memory, disk, networkTotals, processes] = await Promise.all([
       this.readMemory().catch(() => null),
       this.readDisk().catch(() => null),

@@ -16993,6 +16993,12 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
   prevNetBytes = /* @__PURE__ */ new Map();
   prevCpuTicks = /* @__PURE__ */ new Map();
   pollTimers = /* @__PURE__ */ new Map();
+  /**
+   * One probe per server at a time. The monitor polls from several surfaces at once; without
+   * this, overlapping probes each read the previous CPU/network sample and the loser of the
+   * race computes a near-zero delta, which the UI then shows as an idle machine.
+   */
+  inFlight = /* @__PURE__ */ new Map();
   constructor(options = {}) {
     this.executor = options.executor, this.now = options.now ?? Date.now;
   }
@@ -17002,13 +17008,22 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
       return cached3.metrics;
     if (!this.executor)
       return this.createFallbackMetrics(server.id);
+    let pending = this.inFlight.get(server.id);
+    if (pending !== void 0)
+      return pending;
+    let collected = this.collectMetrics(server, now, cached3).finally(() => {
+      this.inFlight.delete(server.id);
+    });
+    return this.inFlight.set(server.id, collected), collected;
+  }
+  async collectMetrics(server, now, cached3) {
     try {
-      let result = await this.executor.execute(server, {
+      let result = await this.executor?.execute(server, {
         command: METRICS_PROBE_SCRIPT,
         timeoutMs: 4e3,
         maxOutputBytes: 65536
       });
-      if (result.exitCode === 0 && result.stdout) {
+      if (result !== void 0 && result.exitCode === 0 && result.stdout) {
         let parsed = this.parseProbeOutput(server.id, result.stdout, now);
         return this.cache.set(server.id, { metrics: parsed, fetchedAt: now }), parsed;
       }
@@ -17135,7 +17150,6 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
           break;
         }
       }
-    totalBytes === 0 && (totalBytes = 8 * 1024 * 1024 * 1024, freeBytes = 4 * 1024 * 1024 * 1024);
     let effectiveFree = availableBytes > 0 ? availableBytes : freeBytes, usedBytes = Math.max(0, totalBytes - effectiveFree), swapUsed = Math.max(0, swapTotal - swapFree);
     return {
       totalBytes,
@@ -17154,8 +17168,8 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
       if (!line) continue;
       let parts2 = line.split(/\s+/);
       if (parts2.length >= 6) {
-        let fs2 = parts2[0], total1K = parseInt(parts2[1], 10), used1K = parseInt(parts2[2], 10), pctStr = parts2[4].replace("%", ""), usePercent = parseInt(pctStr, 10) || 0, mount = parts2[5];
-        total1K > 0 && (mount === "/" || mount.startsWith("/data") || mount.startsWith("/home") || mount.startsWith("/var")) && mounts.push({
+        let fs2 = parts2[0], total1K = parseInt(parts2[1], 10), used1K = parseInt(parts2[2], 10), pctStr = parts2[4].replace("%", ""), usePercent = parseInt(pctStr, 10) || 0, mount = parts2.slice(5).join(" "), pseudo = fs2 === "tmpfs" || fs2 === "devtmpfs" || fs2 === "squashfs" || fs2 === "overlay" && mount !== "/", interestingMount = fs2.startsWith("/dev/") || mount === "/" || mount.startsWith("/data") || mount.startsWith("/mnt") || mount.startsWith("/opt") || mount.startsWith("/srv") || mount.startsWith("/home") || mount.startsWith("/var");
+        total1K > 0 && interestingMount && !pseudo && mounts.push({
           fs: fs2,
           mount,
           totalBytes: total1K * 1024,
@@ -17164,13 +17178,7 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
         });
       }
     }
-    return mounts.length === 0 && mounts.push({
-      fs: "/dev/root",
-      mount: "/",
-      totalBytes: 50 * 1024 * 1024 * 1024,
-      usedBytes: 15 * 1024 * 1024 * 1024,
-      usePercent: 30
-    }), { mounts };
+    return { mounts };
   }
   parseNetwork(serverId, netStr, ts) {
     let rxBytesTotal = 0, txBytesTotal = 0, lines = netStr.split(`
@@ -17420,13 +17428,23 @@ var WINDOWS_DISK_SCRIPT = "$items = Get-CimInstance Win32_LogicalDisk -Filter 'D
   previousCpu;
   previousNetwork;
   cache;
+  /**
+   * One probe at a time. The HUD polls every 4 s while the sidebar pane and an Agent tool can
+   * ask at the same instant; two overlapping probes each snapshot `previousCpu` /
+   * `previousNetwork`, so the second computes its delta against the first probe's *new*
+   * sample and reports `0` CPU or `0 B/s` — a measurement error that looks like an idle host.
+   */
+  inFlight;
   constructor(options = {}) {
     this.now = options.now ?? Date.now, this.platform = options.platform ?? osPlatform(), this.run = options.run ?? defaultRun, this.readCpus = options.cpus ?? osCpus, this.readTotalmem = options.totalmem ?? osTotalmem, this.readFreemem = options.freemem ?? osFreemem, this.readLoadavg = options.loadavg ?? osLoadavg;
   }
   async getMetrics() {
     let now = this.now(), cached3 = this.cache;
-    if (cached3 !== void 0 && now - cached3.fetchedAt < CACHE_TTL_MS)
-      return cached3.metrics;
+    return cached3 !== void 0 && now - cached3.fetchedAt < CACHE_TTL_MS ? cached3.metrics : this.inFlight !== void 0 ? this.inFlight : (this.inFlight = this.collectMetrics(now).finally(() => {
+      this.inFlight = void 0;
+    }), this.inFlight);
+  }
+  async collectMetrics(now) {
     let [memory, disk, networkTotals, processes] = await Promise.all([
       this.readMemory().catch(() => null),
       this.readDisk().catch(() => null),
