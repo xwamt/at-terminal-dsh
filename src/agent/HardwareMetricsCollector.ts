@@ -367,8 +367,10 @@ export class HardwareMetricsCollector {
       for (const line of lines) {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 9 && parts[0] !== 'lo0' && parts[0] !== 'Name' && parts[2]?.startsWith('<Link#')) {
-          const rx = parseInt(parts[5], 10);
-          const tx = parseInt(parts[8], 10);
+          // Read from the right edge: the Address column is present on some `<Link#>` rows and
+          // blank on others, so a left-based index shifts by one and reads Ierrs as Ibytes.
+          const rx = parseInt(parts[parts.length - 5], 10);
+          const tx = parseInt(parts[parts.length - 2], 10);
           if (!isNaN(rx)) rxBytesTotal += rx;
           if (!isNaN(tx)) txBytesTotal += tx;
         }

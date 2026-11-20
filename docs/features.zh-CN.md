@@ -79,7 +79,7 @@ AT Terminal MCP 通过共享 **AT Series** hub（`~/.at-series/mcp/hub.js`）发
 | `sftp_rename` | 写入 | 重命名或移动远程文件/目录；源路径与目标路径都需要写授权。 |
 | `sftp_delete` | 写入 | 删除单个远程文件（拒绝目录——目录请改用 `run_remote_command` 执行显式 `rm`，该路径走命令策略）；即使完全信任也总是询问用户，且答案永不记住。 |
 | `open_monitor` | 界面 | 打开监控（硬件指标或 Agent 执行状态）：`mode: "hud"`（默认）浮窗，`mode: "tab"` 放进右侧栏页签。没有已连接的浏览器面板时返回 `opened: false, reason: "no-client"`，因为此时不会有任何东西显示出来；`mode: "tab"` 下 `opened: false` 也可能表示侧边栏没有可放置页签的会话。 |
-| `get_hardware_metrics` | 只读 | 读取 SSH 服务器的 CPU、内存、磁盘、网络吞吐与占用最高的进程。探测脚本是内置的，绕过命令策略引擎；该调用仍然会进审计。 |
+| `get_hardware_metrics` | 只读 | 读取 SSH 服务器的 CPU、内存、磁盘、网络吞吐与占用最高的进程；没有连接服务器时读取 Host 本机。远端探测脚本是内置的，绕过命令策略引擎；该调用仍然会进审计。 |
 | `get_agent_execution_status` | 只读 | 报告正在执行的动作、最近的审计记录与进行中的 SFTP 传输。`source: file` 表示数据来自 `agent-audit.jsonl`（重启后仍在）；`source: memory` 表示不在了。 |
 | `job_output` | 只读 | 读取后台 `run_remote_command` 自上次读取以来新产出的内容；`wait` 可阻塞到作业结算或预算用尽。每次调用会消费掉它返回的部分。 |
 | `job_kill` | 命令 | 停止后台作业。对 SSH 命令而言是向远端进程组发 SIGTERM 并最多等一秒确认它确实消失，所以「killed」意味着进程已结束，而不只是信号发出去了。 |

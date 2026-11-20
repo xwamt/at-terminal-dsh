@@ -3,7 +3,7 @@
 > **DeepSeek Harness (DSH) 原生 SSH 终端、SFTP 远程文件工作区与 Agent 直连运维套件。**  
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
-[![DSH Verified](https://img.shields.io/badge/DSH-0.2.2--rc.2_Verified-brightgreen.svg)](#installation--setup--安装与配置)
+[![DSH Verified](https://img.shields.io/badge/DSH-0.2.2--rc.5_Verified-brightgreen.svg)](#installation--setup--安装与配置)
 [![Test Coverage](https://img.shields.io/badge/tests-101%2F101%20passed%20(1551%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
@@ -59,6 +59,8 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
    - **Idle disconnect releases the whole session**: after `sshManager.idleDisconnectMinutes` (default 60, `0` disables) with no terminal input or output, the SSH terminal closes and every SFTP connection attached to it — including the agent's pooled SFTP session — is released. The timer measures terminal traffic, not operating-system idle time.
 7. **Floating Monitor HUD**:
    - Connects as a capsule (CPU / memory chips) instead of a window that covers the terminal, then expands into Overview, Hardware and Agent execution tabs.
+   - With no SSH server connected, the same HUD reads the **local Host machine** — `vm_stat` / `netstat` on macOS, PowerShell CIM on Windows, `/proc` on Linux — and labels itself `Local machine · <platform>`.
+   - The capsule drags from its six-dot grip or any non-button chrome; the CPU / memory chips keep their clicks.
    - Per-connection audit history: the Agent tab shows the four most recent rows, while **History** reveals everything this connection recorded and resets on disconnect.
    - Long commands and container mount paths clip to one line with an expand control, so the panel never scrolls sideways.
 8. **Platform-Native Shortcuts**:
@@ -155,7 +157,7 @@ independently toggled rows.
 | `at_terminal_sftp_rename` | SFTP | Move or rename a path; source and destination both need write authorization |
 | `at_terminal_sftp_delete` | SFTP | Delete a single file. Directories are refused — use `at_terminal_run_remote_command` with an explicit `rm` for one; the user always confirms |
 | `at_terminal_open_monitor` | UI | Open the monitor — `mode: "hud"` (default) floats it, `mode: "tab"` puts it in the right sidebar; answers `opened: false, reason: "no-client"` when no panel is connected |
-| `at_terminal_get_hardware_metrics` | Metrics | Read CPU, memory, disk, network, and top processes for an SSH server |
+| `at_terminal_get_hardware_metrics` | Metrics | Read CPU, memory, disk, network, and top processes for an SSH server, or for the local Host when no server is connected |
 | `at_terminal_get_agent_execution_status` | Audit | Report the live action, recent audits (with `source: file \| memory`), and active transfers |
 | `at_terminal_job_output` | Fallback job reader, registered only when the host's `job_output` is not visible. Reads what a background command has printed since the last read, with `wait` to block until it settles or the budget expires. Each call consumes what it returns |
 | `at_terminal_job_kill` | Fallback job stopper, registered only when the host's `job_kill` is not visible. Stops a background command: SIGTERM to the remote process group, then up to a second proving it is gone, so a reported kill means the process ended |
@@ -228,7 +230,8 @@ independently toggled rows.
 #### 7. 监控悬浮窗（胶囊 / 总览 / 历史）
 - **连接即胶囊**：连接服务器后悬浮窗以胶囊形态出现（CPU / 内存小条），不再默认展开挡住终端；点胶囊右端的 **展开箭头** 才展开为「总览 / 硬件指标 / Agent 执行」三页。
 - **监控按钮只给胶囊**：会话头部按钮、终端工具条按钮、资产右键「监控」与 `⌘⇧M` 都只把胶囊显示出来（此前关掉再开也会弹成展开态）；只有 `at_terminal_open_monitor` 这种明确要看窗口的入口才展开。
-- **只有六个点能拖**：拖动把手是胶囊左端的六点 grip，胶囊其余位置（含内边距）不再响应拖动——chip 点得准，把手只负责拖动；展开后的窗口仍可按住标题栏拖动、双击标题栏收起。
+- **胶囊可拖动**：六点 grip 是标称把手，胶囊的非按钮区域（内边距、仪表图标、服务器标签）也可以拖动；CPU / 内存 / 展开 / 关闭仍是各自独立的按钮，不会误触发拖动。展开后的窗口仍可按住标题栏拖动、双击标题栏收起。
+- **无连接时看本机**：没有连接任何 SSH 服务器时，监控显示 Host 所在机器的 CPU / 内存 / 磁盘 / 网络——macOS 走 `vm_stat` 与 `netstat`，Windows 走 PowerShell CIM，Linux 走 `/proc`；胶囊上标注「本机」（展开后在目标栏显示「本机 · 平台」），不再显示空胶囊或上一台已关闭资产的数据。
 - **两种呈现**：`at_terminal_open_monitor` 的 `mode: "hud"` 浮窗、`mode: "tab"` 落到右侧栏页签（页签自带目标服务器，不会被「最近连接的那台」顶掉）。
 - **按连接隔离的审计历史**：Agent 执行页默认展示最近 4 条审计，「历史执行」可查看本次连接以来的全部记录，断线或重连后自动重置。
 - **长内容折叠**：超长命令与容器挂载路径单行省略并提供展开按钮，面板不再出现横向滚动。

@@ -346,7 +346,8 @@ Swap:     2147483648           0  2147483648
 
       // Given a 1200x800 viewport and 400x520 window
       // Top-left overflow:
-      expect(clampPosition(-100, -50, 400, 520)).toEqual({ x: 8, y: 8 });
+      // The top edge is the native titlebar strip: y floors at 56, not the 8px viewport margin.
+      expect(clampPosition(-100, -50, 400, 520)).toEqual({ x: 8, y: 56 });
 
       // Bottom-right overflow:
       // maxX = 1200 - 400 - 8 = 792, maxY = 800 - 520 - 8 = 272
@@ -372,11 +373,43 @@ Swap:     2147483648           0  2147483648
       expect(loaded.x).toBe(350);
       expect(loaded.y).toBe(120);
 
+      // A position saved under macOS's native titlebar strip must be lifted out on restore,
+      // or the whole capsule sits in the window-drag geometry and receives no pointer events.
+      storageMap['dsh.at-terminal.monitor.hud.pos'] = JSON.stringify({ x: 1500, y: 35 });
+      const restored = loadSavedPosition();
+      expect(restored.y).toBe(56);
+
       vi.unstubAllGlobals();
     });
   });
 
   describe('Active Terminal Session Tracking & Dynamic Target Switching', () => {
+    it('drops the target when the last connected tab closes', async () => {
+      const {
+        ensureSession,
+        markSessionActive,
+        getActiveTerminalState,
+        notifyActiveTerminal,
+        disposeSession,
+        disposeAllSessions
+      } = await import('../../../../src/platform/dsh/client/sessions');
+
+      disposeAllSessions('test-reset');
+      const session = ensureSession('tab-close');
+      session.serverId = 'srv-9';
+      session.state = { kind: 'connected', text: '' };
+      session.opened = true;
+      markSessionActive('tab-close');
+      expect(getActiveTerminalState().activeServerId).toBe('srv-9');
+
+      disposeSession('tab-close', false, 'test-close');
+      notifyActiveTerminal();
+      const state = getActiveTerminalState();
+      expect(state.hasAnyConnected).toBe(false);
+      expect(state.activeServerId).toBeNull();
+      expect(state.activeLabel).toBeNull();
+    });
+
     it('only activates when connected to a terminal and switches target with active tab', async () => {
       const {
         ensureSession,
@@ -430,11 +463,16 @@ Swap:     2147483648           0  2147483648
       expect(stateTab1Again.activeKey).toBe('tab-1');
       expect(stateTab1Again.activeServerId).toBe('srv-1');
 
-      // 5. When all sessions disconnect
+      // 5. When all sessions disconnect the monitor must let go of the last server, not keep
+      //    showing it. The old `lastKnownConnected*` fallback made `activeServerId` stay 'srv-1'
+      //    here, and the HUD's next open polled that host again.
       sess1.state = { kind: 'disconnected', text: '' };
       sess2.state = { kind: 'disconnected', text: '' };
       notifyActiveTerminal();
-      expect(getActiveTerminalState().hasAnyConnected).toBe(false);
+      const stateDisconnected = getActiveTerminalState();
+      expect(stateDisconnected.hasAnyConnected).toBe(false);
+      expect(stateDisconnected.activeServerId).toBeNull();
+      expect(stateDisconnected.activeLabel).toBeNull();
 
       unsubscribe();
       disposeAllSessions('test-cleanup');

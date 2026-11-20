@@ -2425,6 +2425,8 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -2433,13 +2435,11 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
   padding: 5px 12px;
   font-size: 12px;
   /*
-   * Not a drag surface.
-   *
-   * The capsule moves by its six-dot handle only, so it shows the default cursor \u2014 it used to say
-   * grab on the whole pill, which advertised a drag that the pill's own pointerdown does not start
-   * (and before that, a drag that started *there* instead of on the handle). No touch-action: none
-   * either: a touch drag over the pill is the page's scroll, not a gesture.
+   * The capsule's non-button chrome drags the window (the six-dot grip is the labelled handle and
+   * the rest of the padding is a forgiving second surface). The cursor says so; the buttons inside
+   * override it with a pointer cursor below.
    */
+  cursor: grab;
   box-shadow: var(--dsw-shadow-lv2);
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
@@ -2453,6 +2453,7 @@ ${ROOT_SELECTOR} .group-combobox-toggle:hover {
 
 .att-hud-pill.is-dragging {
   border-color: var(--dsw-alias-brand-primary);
+  cursor: grabbing;
 }
 
 /*

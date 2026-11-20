@@ -13,24 +13,35 @@ const STORAGE_KEY = 'dsh.at-terminal.monitor.hud.pos';
 /**
  * Keep the HUD inside the viewport.
  *
- * `width`/`height` are the box the caller *believes* it is about to show (400x520 expanded,
- * 280x40 collapsed). The stylesheet already caps the real box with `min(400px, 100vw - 16px)`,
- * so at 360px the caller's 400 is a lie and clamping against it pushed the window off the
- * right edge: `maxX` became a number below `margin`, and the header — the only drag handle —
- * went with it. Shrinking the assumed box to what actually fits is what makes the clamp
- * correct at every viewport instead of only at the ones the fixed size happened to suit.
+ * `width`/`height` are the box the caller *believes* it is about to show. The capsule's width is
+ * content-dependent (chips, server label, locale), so callers must pass the measured
+ * `getBoundingClientRect()` whenever the node exists; the fixed sizes are only mount-time
+ * estimates. Clamping against a stale 280px capsule while the real one is ~398px wide is what
+ * left the ✕ outside the viewport at the right edge.
  */
 export function clampPosition(x: number, y: number, width: number, height: number): { x: number; y: number } {
   const margin = 8;
+  /*
+   * Keep the HUD below the native window titlebar strip.
+   *
+   * On the desktop the first ~48 CSS px of the window are the macOS traffic-light row / Windows
+   * caption row (`--dsh-frame-top-clearance`). `-webkit-app-region: drag` there is geometry, not
+   * stacking: a web node drawn over it still does not receive pointer events. A saved position of
+   * y=35 puts the whole 40px capsule inside that strip, so dragging, expanding and ✕ all silently
+   * do nothing even though the pillar is visible. The capsule's own default y is 56 for this
+   * reason; clamping must enforce the same floor for restored positions.
+   */
+  const titlebarClearance = 56;
   const winW = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1200;
   const winH = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 800;
   const boxW = Math.min(width, Math.max(0, winW - margin * 2));
   const boxH = Math.min(height, Math.max(0, winH - margin * 2));
   const maxX = Math.max(margin, winW - boxW - margin);
   const maxY = Math.max(margin, winH - boxH - margin);
+  const minY = Math.min(titlebarClearance, maxY);
   return {
     x: Math.max(margin, Math.min(maxX, Math.round(x))),
-    y: Math.max(margin, Math.min(maxY, Math.round(y)))
+    y: Math.max(minY, Math.min(maxY, Math.round(y)))
   };
 }
 
@@ -47,12 +58,12 @@ export function loadSavedPosition(): { x: number; y: number } {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
-        return clampPosition(parsed.x, parsed.y, 280, 40);
+        return clampPosition(parsed.x, parsed.y, 420, 40);
       }
     }
   } catch {}
   const fallbackX = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth - 320 : 800;
-  return clampPosition(fallbackX, 56, 280, 40);
+  return clampPosition(fallbackX, 56, 420, 40);
 }
 
 export function savePosition(pos: { x: number; y: number }): void {
@@ -221,7 +232,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
    * off screen — so the widget is remounted on every hide/show, and a naive effect re-applied the
    * stale command on each of those mounts. The visible effect of that was a window the user had
    * expanded by hand snapping back to the capsule the next time the HUD was shown, plus a jump
-   * through the 280×40 clamp.
+   * through the capsule clamp.
    *
    * The latch is a ref, so a *new* instruction (the container bumps `capsuleRequest` for every
    * "open as capsule" request precisely because `forceExpanded` alone cannot encode a repeat) still
@@ -255,7 +266,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
       setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
     } else if (instruction === 'capsule' && !(firstRun && forceExpanded === undefined)) {
       setExpanded(false);
-      setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+      setPos((prev) => clampPosition(prev.x, prev.y, 420, 40));
     }
   }, [forceExpanded, capsuleRequest]);
 
@@ -266,16 +277,31 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     }
   }, [initialSubtab]);
 
-  // Viewport resize boundary adjustment
+  /**
+   * Keep the window inside the viewport using its **actual** box.
+   *
+   * The old version clamped against a hard-coded 280x40 capsule. The capsule is not 280 wide:
+   * its chips and, since local monitoring, the `本机 · macOS` label make it 320–400 px depending on
+   * the locale and the numbers. At the right edge the clamp therefore left the pill's right side —
+   * including ✕ — outside the viewport, which reads exactly as "the capsule is blank and cannot be
+   * closed". Measuring after every form/label change is the only width that stays true.
+   */
   useEffect(() => {
-    const onResize = () => {
-      const width = expanded ? 400 : 280;
-      const height = expanded ? 520 : 40;
-      setPos((prev) => clampPosition(prev.x, prev.y, width, height));
+    const clampToBox = () => {
+      const box = overlayRef.current?.getBoundingClientRect();
+      if (box === undefined || box.width <= 0 || box.height <= 0) return;
+      setPos((prev) => {
+        const next = clampPosition(prev.x, prev.y, box.width, box.height);
+        return next.x === prev.x && next.y === prev.y ? prev : next;
+      });
     };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [expanded]);
+    const frame = requestAnimationFrame(clampToBox);
+    window.addEventListener('resize', clampToBox);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', clampToBox);
+    };
+  }, [expanded, metrics?.scope, metrics?.platform, activeServerId, activeLabel]);
 
   /**
    * Pointer capture on the overlay, with both halves of the contract.
@@ -305,17 +331,12 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
   };
 
   /**
-   * Arm a drag from the six-dot handle. That handle is the **only** place a capsule drag starts.
+   * Arm one drag gesture.
    *
-   * Three attempts got this wrong before, and the user's report is the design brief: the capsule
-   * has a grip for exactly this, so dragging was never supposed to work from anywhere.
-   *
-   * - Dropping the container's drag outright is what produced the "the handle cannot drag, the
-   *   rest can" report: `closest('button')` refused every chip, so the only place left was the
-   *   pill's own padding — and the grip was not wired to anything at all.
-   * - So the grip arms the drag and the pill deliberately does not. A press on the pill's padding
-   *   starts nothing, which is the point: the chips keep their clicks and the capsule moves only by
-   *   its handle.
+   * The six-dot grip is the *labelled* handle, but the capsule's non-button chrome is a drag
+   * surface too. Requiring a press inside a 14 px glyph made the pill feel immovable; every
+   * control keeps its click because the window-level handler exempts `<button>` targets before
+   * arming anything.
    */
   const handlePointerDown = (e: { button: number; pointerId: number; clientX: number; clientY: number }, isPill: boolean) => {
     if (e.button !== 0) return;
@@ -329,6 +350,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
      * the newcomer leaves the running gesture intact, which is what a drag surface should do.
      */
     if (dragStateRef.current !== null) return;
+    const box = overlayRef.current?.getBoundingClientRect();
     dragStateRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
@@ -336,8 +358,8 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
       initialX: posRef.current.x,
       initialY: posRef.current.y,
       hasMoved: false,
-      width: isPill ? 280 : 400,
-      height: isPill ? 40 : 520,
+      width: box !== undefined && box.width > 0 ? box.width : isPill ? 420 : 400,
+      height: box !== undefined && box.height > 0 ? box.height : isPill ? 40 : 520,
       isPill
     };
     suppressClickRef.current = false;
@@ -399,16 +421,26 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     const onDown = (event: PointerEvent): void => {
       const overlay = overlayRef.current;
       if (overlay === null || !(event.target instanceof Node) || !overlay.contains(event.target)) return;
+      /*
+       * A new press invalidates any click suppression left by the previous gesture.
+       *
+       * The drag's finishing `click` arrives immediately after the release and has no new
+       * pointerdown before it, so this cannot swallow that one. But a drag whose release landed
+       * outside the overlay produces no such click at all; the flag then stayed true, and the
+       * *next* press — typically ✕ or a chip — had its click eaten. Clearing here, before any
+       * button branch, makes the first click after a drag work.
+       */
+      if (dragStateRef.current === null) suppressClickRef.current = false;
       if (gripPointerDown(event)) return;
-      // The expanded window keeps its header as the drag surface — with its own buttons exempt,
-      // or pressing ✕ would move the window. The capsule has no second surface: everything that is
-      // not the six-dot handle is a control or padding, and a press there must do nothing.
-      if (expandedRef.current) {
-        const target = event.target as HTMLElement;
-        if (!target?.closest || target.closest('button') === null) {
-          if (event.button === 0) event.preventDefault();
-          handlePointerDown(event, false);
-        }
+      /*
+       * Both forms drag from their non-button chrome — the expanded window from its header, the
+       * capsule from its padding, gauge and server chip. Buttons are exempt so CPU/MEM/expand/close
+       * keep their clicks, and one call site keeps the "who can arm a drag" question answerable.
+       */
+      const target = event.target as HTMLElement;
+      if (!target?.closest || target.closest('button') === null) {
+        if (event.button === 0) event.preventDefault();
+        handlePointerDown(event, !expandedRef.current);
       }
     };
     window.addEventListener('pointerdown', onDown, true);
@@ -420,15 +452,44 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
     const target = e.target as HTMLElement;
     if (target?.closest && target.closest('button')) return;
     setExpanded(false);
-    setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+    setPos((prev) => clampPosition(prev.x, prev.y, 420, 40));
   };
-  const cpuPercent = metrics?.cpu.usagePercent ?? 0;
+  const cpuPercent = metrics?.cpu?.usagePercent ?? 0;
   const cpuLevel = cpuPercent > 85 ? 'error' : cpuPercent > 70 ? 'warn' : 'normal';
-  const memUsedBytes = metrics?.memory.usedBytes ?? 0;
-  const memTotalBytes = metrics?.memory.totalBytes || 1;
+  const memUsedBytes = metrics?.memory?.usedBytes ?? 0;
+  const memTotalBytes = metrics?.memory?.totalBytes || 1;
   const memPercent = Math.min(100, Math.round((memUsedBytes / memTotalBytes) * 100));
   const memLevel = memPercent > 85 ? 'error' : memPercent > 70 ? 'warn' : 'normal';
-  const primaryDisk = metrics?.disk.mounts?.[0];
+  const primaryDisk = metrics?.disk?.mounts?.[0];
+  /**
+   * What the pill says this reading belongs to.
+   *
+   * A local reading has no `serverId` worth showing (`local` is a wire id, not a hostname), so it
+   * gets explicit copy plus the platform: the point of the local mode is that the user can tell
+   * at a glance whether they are looking at this machine or a remote asset. Remote readings keep
+   * the old preference order — live tab label, then the id, then whatever the probe returned.
+   */
+  const localPlatform =
+    metrics?.platform === 'darwin'
+      ? 'macOS'
+      : metrics?.platform === 'win32'
+        ? 'Windows'
+        : metrics?.platform === 'linux'
+          ? 'Linux'
+          : '';
+  // Before the first local probe resolves there is no `scope` yet; a HUD with no target at all
+  // is known to be local, so the label should not say "no server" for that first frame.
+  const isLocalMetrics = metrics?.scope === 'local' || (metrics === null && activeServerId === null);
+  const machineLabel = isLocalMetrics
+    ? `${t('monitor.hud.local')}${localPlatform === '' ? '' : ` · ${localPlatform}`}`
+    : activeLabel || activeServerId || metrics?.serverId || t('monitor.hud.noServer');
+  // The capsule stays narrow: "本机" is enough there, the platform is in the title and in the
+  // expanded window's server bar. A long chip is what pushed the ✕ outside narrow viewports.
+  const pillMachineLabel = isLocalMetrics ? t('monitor.hud.local') : machineLabel;
+  // `0%` is a measurement; "no reading yet" is not. The pill used to print zeros while the probe
+  // was still in flight, which is indistinguishable from an idle host.
+  const cpuText = metrics === null ? '--' : `${cpuPercent}%`;
+  const memText = metrics === null ? '--' : `${memPercent}%`;
 
   const diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? 'error' : (primaryDisk?.usePercent ?? 0) > 70 ? 'warn' : 'normal';
   const rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0);
@@ -444,7 +505,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
   };
   const collapse = () => {
     setExpanded(false);
-    setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+    setPos((prev) => clampPosition(prev.x, prev.y, 420, 40));
   };
   const agentShort = isAgentActive
     ? agentStatus === 'confirmation_waiting'
@@ -530,16 +591,16 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
           gripRegular({ size: 14 })
         ),
         h('span', { 'aria-hidden': true }, gaugeRegular({ size: 14 })),
-        (activeLabel || activeServerId) &&
+        (activeLabel || activeServerId || isLocalMetrics) &&
           h(
             'span',
             {
               className: 'att-hud-pill-chip',
-              title: `${t('monitor.server')}${activeLabel || activeServerId}`,
+              title: `${t('monitor.server')}${machineLabel}`,
               style: { maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
             },
             serverRegular({ size: 12 }),
-            ` ${activeLabel || activeServerId}`
+            ` ${pillMachineLabel}`
           ),
         h(
           'button',
@@ -547,10 +608,10 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             type: 'button',
             className: 'att-hud-pill-chip',
             title: t('monitor.tab.hardware'),
-            'aria-label': t('monitor.hud.cpuChip', { percent: `${cpuPercent}%` }),
+            'aria-label': t('monitor.hud.cpuChip', { percent: cpuText }),
             onClick: () => openExpanded('hardware')
           },
-          `CPU ${cpuPercent}%`
+          `CPU ${cpuText}`
         ),
         h(
           'button',
@@ -558,10 +619,10 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             type: 'button',
             className: 'att-hud-pill-chip',
             title: t('monitor.tab.hardware'),
-            'aria-label': t('monitor.hud.memChip', { percent: `${memPercent}%` }),
+            'aria-label': t('monitor.hud.memChip', { percent: memText }),
             onClick: () => openExpanded('hardware')
           },
-          `MEM ${memPercent}%`
+          `MEM ${memText}`
         ),
         isAgentActive
           ? h(
@@ -722,7 +783,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
                 whiteSpace: 'nowrap'
               }
             },
-            activeLabel || activeServerId || metrics?.serverId || t('monitor.hud.noServer')
+            machineLabel
           )
         ),
 
@@ -952,7 +1013,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             h(HardwareMonitorView, {
               t,
               metrics,
-              loading: false,
+              loading: metrics === null,
               onRefresh: () => {}
             }),
 
@@ -960,7 +1021,7 @@ export function MonitorHudWidget(props: MonitorHudWidgetProps): El {
             h(AgentMonitorView, {
               t,
               snapshot,
-              loading: false,
+              loading: snapshot === null,
               onRefresh: () => {},
               history: auditHistory
             })

@@ -594,6 +594,9 @@ function MonitorHudContainer(props: {
   const [visible, setVisible] = useState<boolean>(false);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  /** Live copy for the controller callback, whose effect is mount-scoped. */
+  const activeServerIdRef = useRef<string | null>(null);
+  activeServerIdRef.current = activeServerId;
   const [forceExpanded, setForceExpanded] = useState<boolean | undefined>(undefined);
   /**
    * Bumped on every `open()` that asks for the capsule.
@@ -678,9 +681,25 @@ function MonitorHudContainer(props: {
           if (target === 'hardware') setInitialSubtab('hardware');
           else if (target === 'agent_execution') setInitialSubtab('agent');
           else setInitialSubtab('overview');
-          // An explicit request picks its own server; otherwise the active-terminal sync below
-          // keeps deciding, which is what an idle HUD should do.
-          if (serverId !== undefined && serverId !== '') setActiveServerId(serverId);
+          /*
+           * The target is part of the request, not a leftover from the previous one.
+           *
+           * An explicit serverId wins. An omitted one means "whatever terminal is connected
+           * now", and the answer has to be read at open time — otherwise closing a terminal
+           * tab left the previous server in state, and the next open polled that host again
+           * (for the executor's five-minute pooled connection, on top of looking wrong). With
+           * nothing connected this resolves to `null`, which the HUD renders as local metrics.
+           */
+          if (serverId !== undefined) {
+            const nextServerId = serverId === '' ? null : serverId;
+            // An explicit target from another row must not wear the previous row's label.
+            if (nextServerId !== activeServerIdRef.current) setActiveLabel(null);
+            setActiveServerId(nextServerId);
+          } else {
+            const current = getActiveTerminalState();
+            setActiveServerId(current.activeServerId);
+            setActiveLabel(current.activeLabel);
+          }
         },
         close: () => {
           // ✕ is a decision, not a pause: remembered, and it outranks every automatic show.
@@ -751,6 +770,14 @@ function MonitorHudContainer(props: {
         seenAuditIdsRef.current = new Set();
         setAuditHistory([]);
         setForceExpanded(false);
+        /*
+         * Drop the old reading too, not only the window.
+         *
+         * Keeping `metrics` left the last remote host's numbers in state; the next open showed
+         * them for one poll interval (and if the local probe was still in flight, longer) under
+         * a "本地" label. Clearing here makes "no connection" mean one thing everywhere.
+         */
+        setMetrics(null);
         // Hidden, not dismissed: losing the connection must not switch the window off for good,
         // or a dropped link would silently cancel a preference the user never expressed.
         publishVisibility(false);
@@ -762,6 +789,21 @@ function MonitorHudContainer(props: {
       unsubscribe();
     };
   }, []);
+
+  /*
+   * A new target has no reading yet.
+   *
+   * This runs separately from the poll below so the clear happens even while the HUD is hidden
+   * (the poll returns early then), and so switching from one connected tab to another cannot
+   * paint the previous host's numbers under the new host's name.
+   */
+  const lastTargetRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastTargetRef.current !== activeServerId) {
+      lastTargetRef.current = activeServerId;
+      setMetrics(null);
+    }
+  }, [activeServerId]);
 
   // Poll metrics for current activeServerId
   useEffect(() => {

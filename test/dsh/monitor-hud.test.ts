@@ -67,6 +67,11 @@ describe('clampPosition (UI2-08)', () => {
     expect(pos.y).toBeGreaterThanOrEqual(8);
   });
 
+  it('lifts a saved position out of the native titlebar strip', () => {
+    viewport(1280, 800);
+    expect(clampPosition(852, 35, 351, 40)).toEqual({ x: 852, y: 56 });
+  });
+
   it('clamps to the far corner on a roomy viewport instead of pinning to the margin', () => {
     viewport(1200, 800);
     // 1200 - 400 - 8 = 792 and 800 - 520 - 8 = 272: the corner, not the minimum.
@@ -75,7 +80,22 @@ describe('clampPosition (UI2-08)', () => {
 
   it('never returns a negative or sub-margin coordinate', () => {
     viewport(1200, 800);
-    expect(clampPosition(-500, -500, 400, 520)).toEqual({ x: 8, y: 8 });
+    // y is floored at 56 so the capsule cannot sit under the native titlebar drag strip.
+    expect(clampPosition(-500, -500, 400, 520)).toEqual({ x: 8, y: 56 });
+  });
+
+  it('clamps against the measured capsule, not the old 280px assumption', async () => {
+    // At a narrow viewport a 398px pill clamped as if it were 280px hangs 110px off the right
+    // edge — the ✕ goes with it. The widget must clamp against `getBoundingClientRect()`.
+    expect(HUD).toContain('overlayRef.current?.getBoundingClientRect()');
+    expect(HUD).toContain('clampPosition(prev.x, prev.y, box.width, box.height)');
+  });
+
+  it('pulls a 398px capsule fully inside a 1148px viewport', () => {
+    viewport(1148, 800);
+    const pos = clampPosition(860, 53, 398, 40);
+    expect(pos.x + 398).toBeLessThanOrEqual(1148);
+    expect(pos.x).toBe(742);
   });
 
   it('survives a viewport narrower than the window itself', () => {
@@ -106,6 +126,13 @@ describe('HUD semantics (UI2-08)', () => {
     // The expand chevron was a decorative span with a title and nothing else.
     expect(HUD).toContain("className: 'att-hud-pill-expand'");
     expect(HUD).toContain("'aria-label': t('monitor.hud.expand')");
+  });
+
+  it('labels a local reading as the Host machine, with its platform', () => {
+    expect(HUD).toContain("metrics?.scope === 'local'");
+    expect(HUD).toContain("t('monitor.hud.local')");
+    expect(HUD).toContain("metrics?.platform === 'darwin'");
+    expect(HUD).toContain("metrics?.platform === 'win32'");
   });
 
   it('titles the HUD with its own key instead of the tab label', () => {
@@ -529,19 +556,16 @@ describe('the capsule drags by its handle', () => {
     expect(HUD).toMatch(/ref: \(node: HTMLElement \| null\) => \{\s*overlayRef\.current = node;/);
   });
 
-  it('makes only the handle start a capsule drag', () => {
-    // The window branch of the press handler arms a drag only for the grip...
+  it('starts a capsule drag from its chrome but never from a button', () => {
+    // The grip is the labelled handle; the rest of the pill's non-button chrome is a forgiving
+    // second surface. Both share one call site so "who can arm a drag" has one answer.
     expect(HUD).toContain("'data-hud-drag': 'pill'");
     expect(pressEffect).toContain('if (gripPointerDown(event)) return;');
-    // ...and the capsule branch below it is gated on `expanded`, so a press on the pill's padding
-    // arms nothing at all.
-    expect(pressEffect).toContain('if (expandedRef.current) {');
-    expect(pressEffect.indexOf('if (expandedRef.current) {')).toBeGreaterThan(
-      pressEffect.indexOf('if (gripPointerDown(event)) return;')
-    );
-    // The pill's props start no drag either: that was attempt 2, and it is what broke the chips.
+    expect(pressEffect).toContain('handlePointerDown(event, !expandedRef.current);');
+    expect(pressEffect).toContain("target.closest('button') === null");
+    // The pill's own props start no drag: React-level arming is still banned (attempt 2 broke
+    // the chips by turning every small press into a drag).
     expect(pill).not.toContain('onPointerDown');
-    // Nor does the pill advertise a drag it no longer starts.
     expect(pill).not.toContain("title: t('monitor.hud.dragTip')");
     expect(grip.slice(0, 500)).toContain("title: t('monitor.hud.gripTip')");
     // The pill keeps the click-swallowing capture handler that goes with a drag.
@@ -587,7 +611,7 @@ describe('the capsule drags by its handle', () => {
 
   it('keeps the expanded window draggable by its header', () => {
     // Unchanged behaviour, asserted so a future edit to the pill path does not quietly take it.
-    expect(HUD).toContain('handlePointerDown(event, false)');
+    expect(HUD).toContain('handlePointerDown(event, !expandedRef.current)');
     expect(HUD).toMatch(/const handlePointerDown = \(e: \{[^}]*\}, isPill: boolean\)/);
     // Its own buttons must not start a drag, or pressing ✕ would move the window instead.
     expect(HUD).toContain("if (!target?.closest || target.closest('button') === null) {");
@@ -618,5 +642,8 @@ describe('the capsule drags by its handle', () => {
     expect(pressEffect).toContain("if (!target?.closest || target.closest('button') === null) {");
     // And the click guard can never lock in: every press clears it, and it is consumed once.
     expect(HUD).toContain('suppressClickRef.current = false;');
+    // The press that clears it must be the window-level one *before* the button exemption —
+    // otherwise the first click on ✕ after a drag that released outside the pill is swallowed.
+    expect(pressEffect).toContain('if (dragStateRef.current === null) suppressClickRef.current = false;');
   });
 });

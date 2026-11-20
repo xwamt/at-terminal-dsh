@@ -945,6 +945,7 @@ var NS = "atTerminal", zh = {
   "monitor.hud.memChip": "\u5185\u5B58\u5360\u7528 {percent}\uFF0C\u6253\u5F00\u786C\u4EF6\u6307\u6807",
   "monitor.hud.agentChip": "Agent {status}\uFF0C\u6253\u5F00 Agent \u6267\u884C",
   "monitor.hud.noServer": "\u672A\u9009\u62E9\u670D\u52A1\u5668",
+  "monitor.hud.local": "\u672C\u673A",
   "monitor.agent.ready": "\u7A7A\u95F2\u5C31\u7EEA",
   "monitor.cpu.title": "CPU \u4F7F\u7528\u7387",
   "monitor.cpu.cores": "\u6838\u5FC3\u5206\u5E03",
@@ -1364,6 +1365,7 @@ var NS = "atTerminal", zh = {
   "monitor.hud.memChip": "Memory at {percent}, open hardware metrics",
   "monitor.hud.agentChip": "Agent {status}, open agent execution",
   "monitor.hud.noServer": "No server selected",
+  "monitor.hud.local": "Local machine",
   "monitor.agent.ready": "Ready / Idle",
   "monitor.cpu.title": "CPU Usage",
   "monitor.cpu.cores": "Cores",
@@ -1571,21 +1573,14 @@ function createTerminalFrameHandler(deps) {
 // src/platform/dsh/client/sessions.ts
 var TERMINAL_ID = "at-terminal-pane", RETAIN_LIMIT_BYTES = 4 * 1024 * 1024, RETAIN_LIMIT_CHUNKS = 2e4, RESET_BYTES = new Uint8Array(
   [..."\x1B[0m\x1B[2J\x1B[3J\x1B[H"].map((char) => char.charCodeAt(0))
-), sessions = /* @__PURE__ */ new Map(), activeSessionKey = null, lastKnownConnectedServerId = null, lastKnownConnectedLabel = null, activeTerminalListeners = /* @__PURE__ */ new Set();
+), sessions = /* @__PURE__ */ new Map(), activeSessionKey = null, activeTerminalListeners = /* @__PURE__ */ new Set();
 function getActiveTerminalState() {
-  let active = activeSessionKey ? sessions.get(activeSessionKey) : null, allSessions = Array.from(sessions.values()), hasAnyConnected = allSessions.some((s) => s.state.kind === "connected");
-  if (active && active.state.kind === "connected")
-    lastKnownConnectedServerId = active.serverId, lastKnownConnectedLabel = badges.get(active.key)?.label || active.serverId;
-  else if (!active && hasAnyConnected) {
-    let connectedSession = allSessions.find((s) => s.state.kind === "connected");
-    connectedSession && (active = connectedSession, lastKnownConnectedServerId = connectedSession.serverId, lastKnownConnectedLabel = badges.get(connectedSession.key)?.label || connectedSession.serverId);
-  }
-  let activeKey = active?.key ?? (hasAnyConnected ? allSessions.find((s) => s.state.kind === "connected")?.key ?? null : null), activeServerId = active?.serverId ?? lastKnownConnectedServerId, activeLabel = (activeKey ? badges.get(activeKey)?.label : null) ?? lastKnownConnectedLabel, isConnected = !!(active && active.state.kind === "connected");
+  let connectedSessions = Array.from(sessions.values()).filter((session) => session.state.kind === "connected"), active = activeSessionKey === null ? void 0 : sessions.get(activeSessionKey), target = active !== void 0 && active.state.kind === "connected" ? active : connectedSessions[0], hasAnyConnected = connectedSessions.length > 0, activeKey = target?.key ?? null, activeServerId = target?.serverId ?? null, activeLabel = target === void 0 ? null : badges.get(target.key)?.label || target.serverId;
   return {
     activeKey,
     activeServerId,
     activeLabel,
-    isConnected,
+    isConnected: target !== void 0,
     hasAnyConnected
   };
 }
@@ -1753,7 +1748,7 @@ function disposeSession(key, notifyHost = !0, why = "unspecified") {
     "session",
     null,
     null
-  ), sessions.delete(key), teardown(session, notifyHost), clearTabBadge(key);
+  ), sessions.delete(key), activeSessionKey === key && (activeSessionKey = null), teardown(session, notifyHost), clearTabBadge(key);
   let listeners = [...session.listeners];
   session.listeners.clear();
   for (let listener of listeners)
@@ -6545,7 +6540,13 @@ function AtTerminalMonitorBody(props) {
   }, [hud]), (0, import_react9.useEffect)(() => {
     let unmounted = !1;
     return callRpc("servers.list", {}).then((res) => {
-      !unmounted && res?.servers && (setServers(res.servers), !selectedServerId && res.servers.length > 0 && setSelectedServerId(res.servers[0].id));
+      if (!unmounted && res?.servers) {
+        let list = res.servers;
+        if (setServers(list), !selectedServerId) {
+          let connected = list.find((entry) => entry.connected === !0);
+          setSelectedServerId(connected?.id ?? "");
+        }
+      }
     }).catch(() => {
     }), () => {
       unmounted = !0;
@@ -6636,7 +6637,7 @@ function AtTerminalMonitorBody(props) {
       h(
         "div",
         { style: { display: "flex", alignItems: "center", gap: "8px" } },
-        activeTab === "hardware" && servers.length > 0 && h(
+        activeTab === "hardware" && h(
           "label",
           { style: { fontSize: "12px", display: "flex", alignItems: "center", gap: "4px" } },
           t("monitor.server"),
@@ -6648,6 +6649,10 @@ function AtTerminalMonitorBody(props) {
               value: selectedServerId,
               onChange: (e) => setSelectedServerId(e.target.value)
             },
+            // `''` is the local machine. It is first and always present so a user with no live
+            // terminal has somewhere to land, and so the local view is reachable deliberately
+            // even while remote servers exist.
+            h("option", { value: "" }, t("monitor.hud.local")),
             ...servers.map((s) => h("option", { key: s.id, value: s.id }, s.label || s.host))
           )
         ),
@@ -6898,10 +6903,10 @@ function AtTerminalCommandRow(props) {
 var import_react11 = require("react");
 var STORAGE_KEY = "dsh.at-terminal.monitor.hud.pos";
 function clampPosition(x, y, width, height) {
-  let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, boxW = Math.min(width, Math.max(0, winW - 16)), boxH = Math.min(height, Math.max(0, winH - 16)), maxX = Math.max(8, winW - boxW - 8), maxY = Math.max(8, winH - boxH - 8);
+  let winW = typeof window < "u" && window.innerWidth > 0 ? window.innerWidth : 1200, winH = typeof window < "u" && window.innerHeight > 0 ? window.innerHeight : 800, boxW = Math.min(width, Math.max(0, winW - 16)), boxH = Math.min(height, Math.max(0, winH - 16)), maxX = Math.max(8, winW - boxW - 8), maxY = Math.max(8, winH - boxH - 8), minY = Math.min(56, maxY);
   return {
     x: Math.max(8, Math.min(maxX, Math.round(x))),
-    y: Math.max(8, Math.min(maxY, Math.round(y)))
+    y: Math.max(minY, Math.min(maxY, Math.round(y)))
   };
 }
 function loadSavedPosition() {
@@ -6912,12 +6917,12 @@ function loadSavedPosition() {
     if (raw) {
       let parsed = JSON.parse(raw);
       if (typeof parsed?.x == "number" && typeof parsed?.y == "number")
-        return clampPosition(parsed.x, parsed.y, 280, 40);
+        return clampPosition(parsed.x, parsed.y, 420, 40);
     }
   } catch {
   }
   let fallbackX = typeof window < "u" && window.innerWidth ? window.innerWidth - 320 : 800;
-  return clampPosition(fallbackX, 56, 280, 40);
+  return clampPosition(fallbackX, 56, 420, 40);
 }
 function savePosition(pos) {
   let storage = typeof window < "u" && window.localStorage ? window.localStorage : typeof localStorage < "u" ? localStorage : null;
@@ -6962,16 +6967,21 @@ function MonitorHudWidget(props) {
     let instruction = forceExpanded === !0 ? "expanded" : forceExpanded === !1 || capsuleRequest !== void 0 ? "capsule" : "initial", stamp = `${instruction}:${capsuleRequest ?? 0}`;
     if (appliedFormRef.current === stamp) return;
     let firstRun = appliedFormRef.current === null;
-    appliedFormRef.current = stamp, instruction === "expanded" ? (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520))) : instruction === "capsule" && !(firstRun && forceExpanded === void 0) && (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
+    appliedFormRef.current = stamp, instruction === "expanded" ? (setExpanded(!0), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520))) : instruction === "capsule" && !(firstRun && forceExpanded === void 0) && (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 420, 40)));
   }, [forceExpanded, capsuleRequest]), (0, import_react11.useEffect)(() => {
     initialSubtab && setActiveTab(initialSubtab);
   }, [initialSubtab]), (0, import_react11.useEffect)(() => {
-    let onResize = () => {
-      let width = expanded ? 400 : 280, height = expanded ? 520 : 40;
-      setPos((prev) => clampPosition(prev.x, prev.y, width, height));
+    let clampToBox = () => {
+      let box = overlayRef.current?.getBoundingClientRect();
+      box === void 0 || box.width <= 0 || box.height <= 0 || setPos((prev) => {
+        let next = clampPosition(prev.x, prev.y, box.width, box.height);
+        return next.x === prev.x && next.y === prev.y ? prev : next;
+      });
+    }, frame = requestAnimationFrame(clampToBox);
+    return window.addEventListener("resize", clampToBox), () => {
+      cancelAnimationFrame(frame), window.removeEventListener("resize", clampToBox);
     };
-    return window.addEventListener("resize", onResize), () => window.removeEventListener("resize", onResize);
-  }, [expanded]);
+  }, [expanded, metrics?.scope, metrics?.platform, activeServerId, activeLabel]);
   let capturePointer = (pointerId) => {
     let node = overlayRef.current;
     if (!(node === null || typeof node.setPointerCapture != "function"))
@@ -6987,17 +6997,19 @@ function MonitorHudWidget(props) {
       } catch {
       }
   }, handlePointerDown = (e, isPill) => {
-    e.button === 0 && dragStateRef.current === null && (dragStateRef.current = {
+    if (e.button !== 0 || dragStateRef.current !== null) return;
+    let box = overlayRef.current?.getBoundingClientRect();
+    dragStateRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       initialX: posRef.current.x,
       initialY: posRef.current.y,
       hasMoved: !1,
-      width: isPill ? 280 : 400,
-      height: isPill ? 40 : 520,
+      width: box !== void 0 && box.width > 0 ? box.width : isPill ? 420 : 400,
+      height: box !== void 0 && box.height > 0 ? box.height : isPill ? 40 : 520,
       isPill
-    }, suppressClickRef.current = !1, capturePointer(e.pointerId), setArmed(!0));
+    }, suppressClickRef.current = !1, capturePointer(e.pointerId), setArmed(!0);
   }, gripPointerDown = (event) => {
     let target = event.target;
     return !(target instanceof Element) || target.closest("[data-hud-drag]") === null ? !1 : (event.button !== 0 || (event.preventDefault(), event.stopPropagation(), handlePointerDown(event, !0)), !0);
@@ -7005,20 +7017,19 @@ function MonitorHudWidget(props) {
   expandedRef.current = expanded, (0, import_react11.useEffect)(() => {
     let onDown = (event) => {
       let overlay2 = overlayRef.current;
-      if (!(overlay2 === null || !(event.target instanceof Node) || !overlay2.contains(event.target)) && !gripPointerDown(event) && expandedRef.current) {
-        let target = event.target;
-        (!target?.closest || target.closest("button") === null) && (event.button === 0 && event.preventDefault(), handlePointerDown(event, !1));
-      }
+      if (overlay2 === null || !(event.target instanceof Node) || !overlay2.contains(event.target) || (dragStateRef.current === null && (suppressClickRef.current = !1), gripPointerDown(event))) return;
+      let target = event.target;
+      (!target?.closest || target.closest("button") === null) && (event.button === 0 && event.preventDefault(), handlePointerDown(event, !expandedRef.current));
     };
     return window.addEventListener("pointerdown", onDown, !0), () => window.removeEventListener("pointerdown", onDown, !0);
   }, []);
   let handleHeaderDoubleClick = (e) => {
     let target = e.target;
-    target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40)));
-  }, cpuPercent = metrics?.cpu.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory.usedBytes ?? 0, memTotalBytes = metrics?.memory.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk.mounts?.[0], diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
+    target?.closest && target.closest("button") || (setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 420, 40)));
+  }, cpuPercent = metrics?.cpu?.usagePercent ?? 0, cpuLevel = cpuPercent > 85 ? "error" : cpuPercent > 70 ? "warn" : "normal", memUsedBytes = metrics?.memory?.usedBytes ?? 0, memTotalBytes = metrics?.memory?.totalBytes || 1, memPercent = Math.min(100, Math.round(memUsedBytes / memTotalBytes * 100)), memLevel = memPercent > 85 ? "error" : memPercent > 70 ? "warn" : "normal", primaryDisk = metrics?.disk?.mounts?.[0], localPlatform = metrics?.platform === "darwin" ? "macOS" : metrics?.platform === "win32" ? "Windows" : metrics?.platform === "linux" ? "Linux" : "", isLocalMetrics = metrics?.scope === "local" || metrics === null && activeServerId === null, machineLabel = isLocalMetrics ? `${t("monitor.hud.local")}${localPlatform === "" ? "" : ` \xB7 ${localPlatform}`}` : activeLabel || activeServerId || metrics?.serverId || t("monitor.hud.noServer"), pillMachineLabel = isLocalMetrics ? t("monitor.hud.local") : machineLabel, cpuText = metrics === null ? "--" : `${cpuPercent}%`, memText = metrics === null ? "--" : `${memPercent}%`, diskLevel = (primaryDisk?.usePercent ?? 0) > 85 ? "error" : (primaryDisk?.usePercent ?? 0) > 70 ? "warn" : "normal", rxStr = formatThroughput(metrics?.network?.rxBytesPerSec ?? 0), txStr = formatThroughput(metrics?.network?.txBytesPerSec ?? 0), isAgentActive = !!snapshot?.currentAction, agentStatus = snapshot?.currentAction?.status, openExpanded = (tab) => {
     setExpanded(!0), setActiveTab(tab), setPos((prev) => clampPosition(prev.x, prev.y, 400, 520));
   }, collapse = () => {
-    setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 280, 40));
+    setExpanded(!1), setPos((prev) => clampPosition(prev.x, prev.y, 420, 40));
   }, agentShort = isAgentActive ? t(agentStatus === "confirmation_waiting" ? "monitor.status.waitingShort" : "monitor.status.runningShort") : "";
   return h(
     "div",
@@ -7094,15 +7105,15 @@ function MonitorHudWidget(props) {
         gripRegular({ size: 14 })
       ),
       h("span", { "aria-hidden": !0 }, gaugeRegular({ size: 14 })),
-      (activeLabel || activeServerId) && h(
+      (activeLabel || activeServerId || isLocalMetrics) && h(
         "span",
         {
           className: "att-hud-pill-chip",
-          title: `${t("monitor.server")}${activeLabel || activeServerId}`,
+          title: `${t("monitor.server")}${machineLabel}`,
           style: { maxWidth: "110px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
         },
         serverRegular({ size: 12 }),
-        ` ${activeLabel || activeServerId}`
+        ` ${pillMachineLabel}`
       ),
       h(
         "button",
@@ -7110,10 +7121,10 @@ function MonitorHudWidget(props) {
           type: "button",
           className: "att-hud-pill-chip",
           title: t("monitor.tab.hardware"),
-          "aria-label": t("monitor.hud.cpuChip", { percent: `${cpuPercent}%` }),
+          "aria-label": t("monitor.hud.cpuChip", { percent: cpuText }),
           onClick: () => openExpanded("hardware")
         },
-        `CPU ${cpuPercent}%`
+        `CPU ${cpuText}`
       ),
       h(
         "button",
@@ -7121,10 +7132,10 @@ function MonitorHudWidget(props) {
           type: "button",
           className: "att-hud-pill-chip",
           title: t("monitor.tab.hardware"),
-          "aria-label": t("monitor.hud.memChip", { percent: `${memPercent}%` }),
+          "aria-label": t("monitor.hud.memChip", { percent: memText }),
           onClick: () => openExpanded("hardware")
         },
-        `MEM ${memPercent}%`
+        `MEM ${memText}`
       ),
       isAgentActive ? h(
         "button",
@@ -7273,7 +7284,7 @@ function MonitorHudWidget(props) {
               whiteSpace: "nowrap"
             }
           },
-          activeLabel || activeServerId || metrics?.serverId || t("monitor.hud.noServer")
+          machineLabel
         )
       ),
       // Subtabs Navigation Bar
@@ -7469,14 +7480,14 @@ function MonitorHudWidget(props) {
         activeTab === "hardware" && h(HardwareMonitorView, {
           t,
           metrics,
-          loading: !1,
+          loading: metrics === null,
           onRefresh: () => {
           }
         }),
         activeTab === "agent" && h(AgentMonitorView, {
           t,
           snapshot,
-          loading: !1,
+          loading: snapshot === null,
           onRefresh: () => {
           },
           history: auditHistory
@@ -8052,7 +8063,9 @@ function MonitorHeaderButton(props) {
   );
 }
 function MonitorHudContainer(props) {
-  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react14.useState)(null), [snapshot, setSnapshot] = (0, import_react14.useState)(null), [visible, setVisible] = (0, import_react14.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react14.useState)(null), [activeLabel, setActiveLabel] = (0, import_react14.useState)(null), [forceExpanded, setForceExpanded] = (0, import_react14.useState)(void 0), [capsuleRequest, setCapsuleRequest] = (0, import_react14.useState)(0), [initialSubtab, setInitialSubtab] = (0, import_react14.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react14.useState)([]), connectedRef = (0, import_react14.useRef)(!1), connectionStartedAtRef = (0, import_react14.useRef)(0), seenAuditIdsRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), dismissedRef = (0, import_react14.useRef)(!1), visibleRef = (0, import_react14.useRef)(!1), visibilityListenersRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), publishVisibility = (next) => {
+  let { t, onRegisterController } = props, [metrics, setMetrics] = (0, import_react14.useState)(null), [snapshot, setSnapshot] = (0, import_react14.useState)(null), [visible, setVisible] = (0, import_react14.useState)(!1), [activeServerId, setActiveServerId] = (0, import_react14.useState)(null), [activeLabel, setActiveLabel] = (0, import_react14.useState)(null), activeServerIdRef = (0, import_react14.useRef)(null);
+  activeServerIdRef.current = activeServerId;
+  let [forceExpanded, setForceExpanded] = (0, import_react14.useState)(void 0), [capsuleRequest, setCapsuleRequest] = (0, import_react14.useState)(0), [initialSubtab, setInitialSubtab] = (0, import_react14.useState)("overview"), [auditHistory, setAuditHistory] = (0, import_react14.useState)([]), connectedRef = (0, import_react14.useRef)(!1), connectionStartedAtRef = (0, import_react14.useRef)(0), seenAuditIdsRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), dismissedRef = (0, import_react14.useRef)(!1), visibleRef = (0, import_react14.useRef)(!1), visibilityListenersRef = (0, import_react14.useRef)(/* @__PURE__ */ new Set()), publishVisibility = (next) => {
     visibleRef.current = next, setVisible(next);
     for (let listener of visibilityListenersRef.current) listener(next);
   }, showHud = () => {
@@ -8060,18 +8073,24 @@ function MonitorHudContainer(props) {
   }, hideHud = () => {
     dismissedRef.current = !0, publishVisibility(!1);
   };
-  return (0, import_react14.useEffect)(() => {
+  (0, import_react14.useEffect)(() => {
     if (onRegisterController)
       return onRegisterController({
         open: (target, serverId, options) => {
           let expanded = options?.expanded === !0;
-          postDiagnostic(
+          if (postDiagnostic(
             "info",
             `hud open target=${target ?? "overview"} expanded=${expanded} wasDismissed=${dismissedRef.current}`,
             "hud",
             null,
             null
-          ), showHud(), expanded ? setForceExpanded(!0) : (setForceExpanded(!1), setCapsuleRequest((n) => n + 1)), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0 && serverId !== "" && setActiveServerId(serverId);
+          ), showHud(), expanded ? setForceExpanded(!0) : (setForceExpanded(!1), setCapsuleRequest((n) => n + 1)), setInitialSubtab(target === "hardware" ? "hardware" : target === "agent_execution" ? "agent" : "overview"), serverId !== void 0) {
+            let nextServerId = serverId === "" ? null : serverId;
+            nextServerId !== activeServerIdRef.current && setActiveLabel(null), setActiveServerId(nextServerId);
+          } else {
+            let current = getActiveTerminalState();
+            setActiveServerId(current.activeServerId), setActiveLabel(current.activeLabel);
+          }
         },
         close: () => {
           hideHud(), setForceExpanded(!1);
@@ -8088,12 +8107,16 @@ function MonitorHudContainer(props) {
       };
   }, [onRegisterController]), (0, import_react14.useEffect)(() => {
     let handleActiveTerminal = (state) => {
-      setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? connectedRef.current || (connectedRef.current = !0, connectionStartedAtRef.current = Date.now(), seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setInitialSubtab("overview"), postDiagnostic("info", `hud autoshow dismissed=${dismissedRef.current}`, "hud", null, null), dismissedRef.current || showHud()) : (connectedRef.current = !1, connectionStartedAtRef.current = 0, seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), publishVisibility(!1));
+      setActiveServerId(state.activeServerId), setActiveLabel(state.activeLabel), state.hasAnyConnected ? connectedRef.current || (connectedRef.current = !0, connectionStartedAtRef.current = Date.now(), seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setInitialSubtab("overview"), postDiagnostic("info", `hud autoshow dismissed=${dismissedRef.current}`, "hud", null, null), dismissedRef.current || showHud()) : (connectedRef.current = !1, connectionStartedAtRef.current = 0, seenAuditIdsRef.current = /* @__PURE__ */ new Set(), setAuditHistory([]), setForceExpanded(!1), setMetrics(null), publishVisibility(!1));
     }, unsubscribe = subscribeActiveTerminal(handleActiveTerminal);
     return handleActiveTerminal(getActiveTerminalState()), () => {
       unsubscribe();
     };
-  }, []), (0, import_react14.useEffect)(() => {
+  }, []);
+  let lastTargetRef = (0, import_react14.useRef)(null);
+  return (0, import_react14.useEffect)(() => {
+    lastTargetRef.current !== activeServerId && (lastTargetRef.current = activeServerId, setMetrics(null));
+  }, [activeServerId]), (0, import_react14.useEffect)(() => {
     if (!visible) return;
     let unmounted = !1, fetchLatest = () => {
       Promise.all([

@@ -30,7 +30,7 @@ import type {
  * resolution and should not have to: the service is the layer that decided.
  */
 export interface MetricsResolution {
-  resolvedBy: ResolvedBy;
+  resolvedBy: ResolvedBy | 'local';
   candidates?: ServerCandidate[];
 }
 
@@ -60,6 +60,14 @@ export interface AgentToolServiceDependencies {
   auditTail?: AgentAuditTail;
   policyEvaluator?: RemoteCommandPolicyEvaluator;
   metricsCollector?: HardwareMetricsCollector;
+  /**
+   * The local fallback: metrics for the machine the Host itself runs on.
+   *
+   * Optional in unit tests that only exercise remote targeting; the real composition
+   * (`createDshAgentToolService`) always supplies one. When it is absent, the old
+   * "connect a terminal first" error is preserved rather than inventing a second failure.
+   */
+  localMetricsCollector?: { getMetrics(): Promise<HardwareMetrics> };
   executionBridge?: AgentExecutionBridge;
   broadcastMonitor?: (event: string, data: unknown) => void;
   /**
@@ -361,6 +369,26 @@ export class AgentToolService {
   }
 
   async getHardwareMetrics(serverId?: string): Promise<HardwareMetrics & MetricsResolution> {
+    /*
+     * No connected terminal and no named server means "this machine", not an error.
+     *
+     * The HUD is a page-level surface: pressing its toolbar button before any SSH tab exists used
+     * to send `serverId: undefined` into `resolveTarget`, which raised "serverId is required when
+     * there is no connected active SSH terminal" — the pill stayed at its placeholder zeros and
+     * looked empty, and every 4 s poll produced the same failure. The monitor is now useful in
+     * that state: the Host reads its own CPU/memory/disk/network, with one reader per platform.
+     *
+     * An explicit `serverId` is never redirected here: naming a remote server, connected or not,
+     * is a request about that server and must keep its existing error when it cannot be reached.
+     */
+    if (serverId === undefined || serverId === '') {
+      const connected = this.dependencies.terminalContext.getSnapshot().connectedTerminals;
+      if (connected.length === 0 && this.dependencies.localMetricsCollector !== undefined) {
+        const local = await this.dependencies.localMetricsCollector.getMetrics();
+        return { ...local, resolvedBy: 'local' };
+      }
+    }
+
     // Read intent: metrics can be inferred when only one server is connected, and when several
     // are, the numbers are still worth having as long as they say which host they describe.
     const target = await this.resolveTarget(serverId, 'read');

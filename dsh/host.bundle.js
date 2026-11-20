@@ -16637,6 +16637,8 @@ var AgentToolService = class {
     }
   }
   async getHardwareMetrics(serverId) {
+    if ((serverId === void 0 || serverId === "") && this.dependencies.terminalContext.getSnapshot().connectedTerminals.length === 0 && this.dependencies.localMetricsCollector !== void 0)
+      return { ...await this.dependencies.localMetricsCollector.getMetrics(), resolvedBy: "local" };
     let target2 = await this.resolveTarget(serverId, "read"), resolution = {
       resolvedBy: target2.resolvedBy,
       ...target2.candidates === void 0 ? {} : { candidates: target2.candidates }
@@ -17184,7 +17186,7 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
       for (let line of lines) {
         let parts2 = line.trim().split(/\s+/);
         if (parts2.length >= 9 && parts2[0] !== "lo0" && parts2[0] !== "Name" && parts2[2]?.startsWith("<Link#")) {
-          let rx = parseInt(parts2[5], 10), tx = parseInt(parts2[8], 10);
+          let rx = parseInt(parts2[parts2.length - 5], 10), tx = parseInt(parts2[parts2.length - 2], 10);
           isNaN(rx) || (rxBytesTotal += rx), isNaN(tx) || (txBytesTotal += tx);
         }
       }
@@ -17241,6 +17243,304 @@ ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu 2>/dev/null || ps -eo pid,user,%cpu,
     for (let timer of this.pollTimers.values())
       clearInterval(timer);
     this.pollTimers.clear(), this.cache.clear(), this.prevNetBytes.clear(), this.prevCpuTicks.clear();
+  }
+};
+
+// src/agent/LocalHardwareMetricsCollector.ts
+import { execFile } from "node:child_process";
+import { readFile as readFile3 } from "node:fs/promises";
+import { cpus as osCpus, freemem as osFreemem, loadavg as osLoadavg, platform as osPlatform, totalmem as osTotalmem } from "node:os";
+var LOCAL_METRICS_SERVER_ID = "local", CACHE_TTL_MS = 1500, COMMAND_TIMEOUT_MS = 2e3;
+function defaultRun(command, args2) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      command,
+      args2,
+      { timeout: COMMAND_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: !0 },
+      (error, stdout) => {
+        if (error !== null) {
+          reject(error);
+          return;
+        }
+        resolve(String(stdout));
+      }
+    );
+  });
+}
+function finite(value, fallback = 0) {
+  let n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+function roundPercent(value) {
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+function parseDfOutput(text, platform2 = osPlatform()) {
+  let mounts = [], lines = text.split(`
+`);
+  for (let raw of lines.slice(1)) {
+    let line = raw.trim();
+    if (line === "") continue;
+    let parts2 = line.split(/\s+/);
+    if (parts2.length < 6) continue;
+    let fs2 = parts2[0];
+    if (!fs2.startsWith("/dev/") && parts2.slice(5).join(" ") !== "/") continue;
+    let totalK = finite(parts2[1]), usedK = finite(parts2[2]);
+    if (totalK <= 0) continue;
+    let mount = parts2.slice(5).join(" ");
+    if (mount === "" || mount === "/dev" || platform2 === "darwin" && mount.startsWith("/System/Volumes/")) continue;
+    let capacity = parts2[4].replace("%", ""), usePercent = Number.isFinite(Number(capacity)) ? Math.min(100, Math.max(0, Math.round(Number(capacity)))) : totalK > 0 ? Math.round(usedK / totalK * 100) : 0;
+    mounts.push({
+      fs: fs2,
+      mount,
+      totalBytes: Math.round(totalK * 1024),
+      usedBytes: Math.round(usedK * 1024),
+      usePercent
+    });
+  }
+  return { mounts };
+}
+function parseMeminfoOutput(text) {
+  let values = /* @__PURE__ */ new Map();
+  for (let line of text.split(`
+`)) {
+    let match = /^([A-Za-z_()]+):\s+(\d+)\s*kB\s*$/.exec(line.trim());
+    match !== null && values.set(match[1], Number(match[2]) * 1024);
+  }
+  let totalBytes = values.get("MemTotal") ?? 0, freeBytes = values.get("MemAvailable") ?? values.get("MemFree") ?? 0, cachedBytes = values.get("Cached"), swapTotalBytes = values.get("SwapTotal"), swapFreeBytes = values.get("SwapFree");
+  return {
+    totalBytes,
+    freeBytes,
+    usedBytes: Math.max(0, totalBytes - freeBytes),
+    ...cachedBytes === void 0 ? {} : { cachedBytes },
+    ...swapTotalBytes === void 0 ? {} : { swapTotalBytes, swapUsedBytes: Math.max(0, swapTotalBytes - (swapFreeBytes ?? 0)) }
+  };
+}
+function parseVmStatOutput(text, totalBytes) {
+  let pageSize = /page size of\s+(\d+)\s+bytes/i.exec(text)?.[1], size = pageSize === void 0 ? 4096 : Number(pageSize), pages = /* @__PURE__ */ new Map();
+  for (let match of text.matchAll(/^Pages ([a-z ]+):\s+(\d+)\.?\s*$/gim))
+    pages.set(match[1].trim(), Number(match[2]));
+  let free = (pages.get("free") ?? 0) * size, inactive = (pages.get("inactive") ?? 0) * size, speculative = (pages.get("speculative") ?? 0) * size, purgeable = (pages.get("purgeable") ?? 0) * size, available = free + inactive + speculative;
+  return {
+    totalBytes,
+    freeBytes: available,
+    usedBytes: Math.max(0, totalBytes - available),
+    cachedBytes: inactive + speculative + purgeable
+  };
+}
+function parseLinuxNetDev(text) {
+  let rx = 0, tx = 0;
+  for (let line of text.split(`
+`)) {
+    let colon = line.indexOf(":");
+    if (colon === -1) continue;
+    let name2 = line.slice(0, colon).trim();
+    if (name2 === "" || name2 === "lo") continue;
+    let stats = line.slice(colon + 1).trim().split(/\s+/);
+    stats.length < 9 || (rx += finite(stats[0]), tx += finite(stats[8]));
+  }
+  return { rx, tx };
+}
+function parseMacNetstat(text) {
+  let rx = 0, tx = 0;
+  for (let raw of text.split(`
+`)) {
+    let line = raw.trim();
+    if (line === "" || line.startsWith("Name")) continue;
+    let parts2 = line.split(/\s+/);
+    parts2.length < 9 || parts2[0] === "lo0" || !parts2[2]?.startsWith("<Link#") || (rx += finite(parts2[parts2.length - 5]), tx += finite(parts2[parts2.length - 2]));
+  }
+  return { rx, tx };
+}
+function parsePsOutput(text) {
+  let rows = [];
+  for (let raw of text.split(`
+`)) {
+    let line = raw.trim();
+    if (line === "") continue;
+    let match = /^(\d+)\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s+(.+)$/.exec(line);
+    if (match !== null && (rows.push({
+      pid: Number(match[1]),
+      user: match[2],
+      cpuPercent: finite(match[3]),
+      memPercent: finite(match[4]),
+      command: match[5].trim()
+    }), rows.length === 5))
+      break;
+  }
+  return rows;
+}
+function jsonRows(text) {
+  let trimmed = text.trim();
+  if (trimmed === "") return [];
+  let parsed = JSON.parse(trimmed);
+  return Array.isArray(parsed) ? parsed.filter((row) => typeof row == "object" && row !== null) : typeof parsed == "object" && parsed !== null ? [parsed] : [];
+}
+function parseWindowsDiskJson(text) {
+  let mounts = [];
+  for (let row of jsonRows(text)) {
+    let totalBytes = finite(row.Size);
+    if (totalBytes <= 0) continue;
+    let freeBytes = finite(row.FreeSpace), usedBytes = Math.max(0, totalBytes - freeBytes);
+    mounts.push({
+      fs: typeof row.FileSystem == "string" && row.FileSystem !== "" ? row.FileSystem : "NTFS",
+      mount: typeof row.DeviceID == "string" ? row.DeviceID : "?",
+      totalBytes,
+      usedBytes,
+      usePercent: Math.round(usedBytes / totalBytes * 100)
+    });
+  }
+  return { mounts };
+}
+function parseWindowsNetworkJson(text) {
+  let rx = 0, tx = 0;
+  for (let row of jsonRows(text))
+    rx += finite(row.ReceivedBytes), tx += finite(row.SentBytes);
+  return { rx, tx };
+}
+function parseWindowsProcessJson(text) {
+  return jsonRows(text).slice(0, 5).map((row) => ({
+    pid: Number(finite(row.Id)),
+    user: typeof row.User == "string" && row.User !== "" ? row.User : "-",
+    cpuPercent: finite(row.CpuPercent),
+    memPercent: finite(row.MemPercent),
+    command: typeof row.Command == "string" ? row.Command : String(row.ProcessName ?? "")
+  }));
+}
+var WINDOWS_DISK_SCRIPT = "$items = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,FileSystem,Size,FreeSpace; @($items) | ConvertTo-Json -Compress", WINDOWS_NET_SCRIPT = "$items = Get-NetAdapterStatistics | Where-Object { $_.Name -notlike '*Loopback*' } | Select-Object Name,ReceivedBytes,SentBytes; @($items) | ConvertTo-Json -Compress", WINDOWS_PS_SCRIPT = '$now = Get-Date; $total = [double](Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory; $items = Get-Process | Where-Object { $_.CPU -ne $null } | Sort-Object CPU -Descending | Select-Object -First 5 | ForEach-Object { $age = 1; try { $age = [math]::Max(1, ($now - $_.StartTime).TotalSeconds) } catch {}; [pscustomobject]@{ Id = $_.Id; User = ""; CpuPercent = [math]::Round(([double]$_.CPU / $age) * 100 / [Environment]::ProcessorCount, 1); MemPercent = [math]::Round(([double]$_.WorkingSet64 / [math]::Max(1, $total)) * 100, 1); Command = $_.ProcessName } }; @($items) | ConvertTo-Json -Compress', LocalHardwareMetricsCollector = class {
+  now;
+  platform;
+  run;
+  readCpus;
+  readTotalmem;
+  readFreemem;
+  readLoadavg;
+  previousCpu;
+  previousNetwork;
+  cache;
+  constructor(options = {}) {
+    this.now = options.now ?? Date.now, this.platform = options.platform ?? osPlatform(), this.run = options.run ?? defaultRun, this.readCpus = options.cpus ?? osCpus, this.readTotalmem = options.totalmem ?? osTotalmem, this.readFreemem = options.freemem ?? osFreemem, this.readLoadavg = options.loadavg ?? osLoadavg;
+  }
+  async getMetrics() {
+    let now = this.now(), cached3 = this.cache;
+    if (cached3 !== void 0 && now - cached3.fetchedAt < CACHE_TTL_MS)
+      return cached3.metrics;
+    let [memory, disk, networkTotals, processes] = await Promise.all([
+      this.readMemory().catch(() => null),
+      this.readDisk().catch(() => null),
+      this.readNetworkTotals().catch(() => null),
+      this.readProcesses().catch(() => null)
+    ]), memoryMetrics = memory ?? this.fallbackMemory(), metrics = {
+      serverId: LOCAL_METRICS_SERVER_ID,
+      scope: "local",
+      platform: this.platform,
+      timestamp: now,
+      cpu: this.readCpu(now),
+      memory: memoryMetrics,
+      disk: disk ?? { mounts: [] },
+      network: this.rateNetwork(networkTotals, now),
+      processes: processes ?? [],
+      stale: !1,
+      fetchedAt: now
+    };
+    return this.cache = { metrics, fetchedAt: now }, metrics;
+  }
+  fallbackMemory() {
+    let totalBytes = this.readTotalmem(), freeBytes = this.readFreemem();
+    return { totalBytes, freeBytes, usedBytes: Math.max(0, totalBytes - freeBytes) };
+  }
+  readCpu(now) {
+    let entries = this.readCpus().map((cpu) => {
+      let times = cpu.times;
+      return { total: times.user + times.nice + times.sys + times.idle + times.irq, idle: times.idle };
+    }), total = entries.reduce((sum, entry) => sum + entry.total, 0), idle = entries.reduce((sum, entry) => sum + entry.idle, 0), previous = this.previousCpu, usagePercent = 0, cores = [];
+    if (previous !== void 0 && now > previous.ts && total >= previous.total) {
+      let deltaTotal = total - previous.total, deltaIdle = idle - previous.idle;
+      deltaTotal > 0 && (usagePercent = roundPercent(100 * (1 - deltaIdle / deltaTotal)));
+      for (let index = 0; index < entries.length; index += 1) {
+        let before = previous.cores[index];
+        if (before === void 0 || entries[index].total < before.total) {
+          cores.push(usagePercent);
+          continue;
+        }
+        let coreTotal = entries[index].total - before.total, coreIdle = entries[index].idle - before.idle;
+        cores.push(coreTotal > 0 ? roundPercent(100 * (1 - coreIdle / coreTotal)) : 0);
+      }
+    } else {
+      usagePercent = total > 0 ? roundPercent(100 * (1 - idle / total)) : 0;
+      for (let index = 0; index < entries.length; index += 1) cores.push(usagePercent);
+    }
+    this.previousCpu = { total, idle, cores: entries, ts: now };
+    let loads = this.readLoadavg();
+    return {
+      usagePercent,
+      cores: cores.length > 0 ? cores : [usagePercent],
+      loadAvg: [finite(loads[0]), finite(loads[1]), finite(loads[2])]
+    };
+  }
+  rateNetwork(totals, now) {
+    if (totals === null)
+      return { rxBytesPerSec: 0, txBytesPerSec: 0 };
+    let previous = this.previousNetwork;
+    if (this.previousNetwork = { ...totals, ts: now }, previous === void 0 || now <= previous.ts) return { rxBytesPerSec: 0, txBytesPerSec: 0 };
+    let seconds = (now - previous.ts) / 1e3;
+    return {
+      rxBytesPerSec: Math.max(0, Math.round((totals.rx - previous.rx) / seconds)),
+      txBytesPerSec: Math.max(0, Math.round((totals.tx - previous.tx) / seconds))
+    };
+  }
+  async readMemory() {
+    if (this.platform === "darwin") {
+      let text = await this.run("/usr/bin/vm_stat", []);
+      return parseVmStatOutput(text, this.readTotalmem());
+    }
+    if (this.platform === "linux") {
+      let text = await readFile3("/proc/meminfo", "utf8");
+      return parseMeminfoOutput(text);
+    }
+    return this.fallbackMemory();
+  }
+  async readDisk() {
+    if (this.platform === "win32") {
+      let text2 = await this.run("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        WINDOWS_DISK_SCRIPT
+      ]);
+      return parseWindowsDiskJson(text2);
+    }
+    let command = this.platform === "darwin" ? "/bin/df" : "df", text = await this.run(command, ["-k", "-P"]);
+    return parseDfOutput(text, this.platform);
+  }
+  async readNetworkTotals() {
+    if (this.platform === "win32") {
+      let text2 = await this.run("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        WINDOWS_NET_SCRIPT
+      ]);
+      return parseWindowsNetworkJson(text2);
+    }
+    if (this.platform === "linux") {
+      let text2 = await readFile3("/proc/net/dev", "utf8");
+      return parseLinuxNetDev(text2);
+    }
+    let text = await this.run("/usr/sbin/netstat", ["-ibn"]);
+    return parseMacNetstat(text);
+  }
+  async readProcesses() {
+    if (this.platform === "win32") {
+      let text2 = await this.run("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        WINDOWS_PS_SCRIPT
+      ]);
+      return parseWindowsProcessJson(text2);
+    }
+    let text = this.platform === "darwin" ? await this.run("/bin/ps", ["-Ao", "pid=,user=,%cpu=,%mem=,comm=", "-r"]) : await this.run("ps", ["-eo", "pid=,user=,%cpu=,%mem=,comm=", "--sort=-%cpu"]);
+    return parsePsOutput(text);
   }
 };
 
@@ -19220,7 +19520,7 @@ function defaultNoConfirmation() {
 }
 
 // src/policy-runtime/index.ts
-import { readFile as readFile3 } from "node:fs/promises";
+import { readFile as readFile4 } from "node:fs/promises";
 import { join as join4 } from "node:path";
 
 // node_modules/@at-series/command-policy/dist/shell.js
@@ -20033,7 +20333,7 @@ function sn2(e = {}) {
 
 // src/policy-runtime/index.ts
 function createTerminalPolicyRuntime(options = {}) {
-  let assetDirectory = options.assetDirectory, assetResolver = assetDirectory ? async (asset) => readFile3(join4(assetDirectory, asset.fileName)) : void 0;
+  let assetDirectory = options.assetDirectory, assetResolver = assetDirectory ? async (asset) => readFile4(join4(assetDirectory, asset.fileName)) : void 0;
   return sn2(assetResolver ? { assetResolver } : {});
 }
 
@@ -20457,7 +20757,7 @@ function createDshAgentToolService(options) {
     authorizer: writeAuthorizer,
     resolveBackgroundServer: (serverId) => configManager.getServer(serverId),
     ...options.audit === void 0 ? {} : { audit: options.audit }
-  }), policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator(), metricsCollector = options.metricsCollector ?? new HardwareMetricsCollector({ executor }), executionBridge = options.executionBridge ?? new AgentExecutionBridge();
+  }), policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator(), metricsCollector = options.metricsCollector ?? new HardwareMetricsCollector({ executor }), localMetricsCollector = options.localMetricsCollector ?? new LocalHardwareMetricsCollector(), executionBridge = options.executionBridge ?? new AgentExecutionBridge();
   return new AgentToolService({
     configManager,
     terminalContext,
@@ -20466,6 +20766,7 @@ function createDshAgentToolService(options) {
     confirmation,
     policyEvaluator,
     metricsCollector,
+    localMetricsCollector,
     executionBridge,
     ...options.audit === void 0 ? {} : { audit: options.audit },
     ...options.readAuditTail === void 0 ? {} : { auditTail: { readRecent: options.readAuditTail } },
@@ -20475,7 +20776,7 @@ function createDshAgentToolService(options) {
 }
 
 // src/platform/dsh/audit.ts
-import { readFile as readFile4 } from "node:fs/promises";
+import { readFile as readFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
 
 // src/agent/AgentAuditLog.ts
@@ -20563,7 +20864,7 @@ function createDshAuditLog(options) {
     channel,
     ...options.now === void 0 ? {} : { now: options.now },
     ...options.writeFs === void 0 ? {} : { fs: options.writeFs }
-  }), filePath = join7(options.storageDir, AGENT_AUDIT_FILE_NAME), readText = options.readText ?? ((file) => readFile4(file, "utf8"));
+  }), filePath = join7(options.storageDir, AGENT_AUDIT_FILE_NAME), readText = options.readText ?? ((file) => readFile5(file, "utf8"));
   return {
     filePath,
     record(entry) {

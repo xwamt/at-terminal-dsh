@@ -1145,6 +1145,62 @@ describe('AgentToolService — an unnamed target with several servers connected 
   });
 });
 
+describe('AgentToolService — local metrics with no connected server', () => {
+  const localMetrics = {
+    serverId: 'local',
+    scope: 'local' as const,
+    platform: 'darwin' as const,
+    timestamp: 1,
+    cpu: { usagePercent: 12, cores: [12], loadAvg: [1, 1, 1] as [number, number, number] },
+    memory: { totalBytes: 100, usedBytes: 40, freeBytes: 60 },
+    disk: { mounts: [] },
+    network: { rxBytesPerSec: 0, txBytesPerSec: 0 },
+    processes: [],
+    stale: false,
+    fetchedAt: 1
+  };
+
+  it('falls back to the Host machine when an unnamed read has nothing connected', async () => {
+    const local = { getMetrics: vi.fn(async () => localMetrics) };
+    const remote = { getMetrics: vi.fn() };
+    const service = createService({
+      configManager: { getServer: async () => undefined, listServers: async () => [] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor,
+      metricsCollector: remote as never,
+      localMetricsCollector: local
+    });
+
+    const metrics = await service.getHardwareMetrics();
+
+    expect(metrics).toMatchObject({ serverId: 'local', scope: 'local', resolvedBy: 'local' });
+    expect(local.getMetrics).toHaveBeenCalledTimes(1);
+    // The remote path must not be exercised just to decide it has no target.
+    expect(remote.getMetrics).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicitly named server on the remote path even with nothing connected', async () => {
+    const local = { getMetrics: vi.fn(async () => localMetrics) };
+    const remote = { getMetrics: vi.fn(async () => ({ ...localMetrics, serverId: 'server-1', scope: 'remote' as const })) };
+    const service = createService({
+      configManager: {
+        getServer: async () => ({ ...server('server-1'), backgroundConnectionAllowed: true }),
+        listServers: async () => [server('server-1')]
+      } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute: vi.fn() } as unknown as RemoteCommandExecutor,
+      metricsCollector: remote as never,
+      localMetricsCollector: local
+    });
+
+    const metrics = await service.getHardwareMetrics('server-1');
+
+    expect(metrics).toMatchObject({ serverId: 'server-1', resolvedBy: 'explicit' });
+    expect(remote.getMetrics).toHaveBeenCalledTimes(1);
+    expect(local.getMetrics).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * What the HUD and the audit trail say about an upload.
  *

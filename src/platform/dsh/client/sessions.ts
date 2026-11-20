@@ -193,32 +193,38 @@ export interface ActiveTerminalState {
   hasAnyConnected: boolean;
 }
 
+/** The tab body that is currently on screen, if any. */
 let activeSessionKey: string | null = null;
-let lastKnownConnectedServerId: string | null = null;
-let lastKnownConnectedLabel: string | null = null;
 const activeTerminalListeners = new Set<(info: ActiveTerminalState) => void>();
 
+/**
+ * What the floating monitor should show, derived fresh from the live registry.
+ *
+ * The previous version kept `lastKnownConnectedServerId`/`lastKnownConnectedLabel` as a
+ * fallback when no tab was active. That made the HUD follow the last *ever* server instead of
+ * the last *connected* one: closing the terminal tab left the id behind, so the next monitor
+ * open (and its 4 s metrics poll) went back to that host and kept an SSH connection in the
+ * executor pool. The rule has to be state, not memory — a server that no session is connected
+ * to is not a monitor target.
+ *
+ * `hasAnyConnected` is likewise the only switch the HUD uses for auto-show/hide. A session that
+ * is `connecting` or `disconnected` is not a target: the HUD shows the local machine until a
+ * terminal actually reaches `connected`, which is exactly the "no server → 本机" case.
+ */
 export function getActiveTerminalState(): ActiveTerminalState {
-  let active = activeSessionKey ? sessions.get(activeSessionKey) : null;
   const allSessions = Array.from(sessions.values());
-  const hasAnyConnected = allSessions.some((s) => s.state.kind === 'connected');
+  const connectedSessions = allSessions.filter((session) => session.state.kind === 'connected');
+  const active = activeSessionKey === null ? undefined : sessions.get(activeSessionKey);
+  const target =
+    active !== undefined && active.state.kind === 'connected'
+      ? active
+      : connectedSessions[0];
 
-  if (active && active.state.kind === 'connected') {
-    lastKnownConnectedServerId = active.serverId;
-    lastKnownConnectedLabel = badges.get(active.key)?.label || active.serverId;
-  } else if (!active && hasAnyConnected) {
-    const connectedSession = allSessions.find((s) => s.state.kind === 'connected');
-    if (connectedSession) {
-      active = connectedSession;
-      lastKnownConnectedServerId = connectedSession.serverId;
-      lastKnownConnectedLabel = badges.get(connectedSession.key)?.label || connectedSession.serverId;
-    }
-  }
-
-  const activeKey = active?.key ?? (hasAnyConnected ? (allSessions.find((s) => s.state.kind === 'connected')?.key ?? null) : null);
-  const activeServerId = active?.serverId ?? lastKnownConnectedServerId;
-  const activeLabel = (activeKey ? badges.get(activeKey)?.label : null) ?? lastKnownConnectedLabel;
-  const isConnected = Boolean(active && active.state.kind === 'connected');
+  const hasAnyConnected = connectedSessions.length > 0;
+  const activeKey = target?.key ?? null;
+  const activeServerId = target?.serverId ?? null;
+  const activeLabel = target === undefined ? null : badges.get(target.key)?.label || target.serverId;
+  const isConnected = target !== undefined;
 
   return {
     activeKey,
@@ -600,6 +606,7 @@ export function disposeSession(key: string, notifyHost = true, why = 'unspecifie
     null
   );
   sessions.delete(key);
+  if (activeSessionKey === key) activeSessionKey = null;
   teardown(session, notifyHost);
   clearTabBadge(key);
   // Snapshot, clear, then call: `disposeSession` is the one place that both notifies and empties

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { AgentAuditRecorder } from '../../agent/AgentAuditLog';
 import { AgentToolService } from '../../agent/AgentToolService';
 import { HardwareMetricsCollector } from '../../agent/HardwareMetricsCollector';
+import { LocalHardwareMetricsCollector } from '../../agent/LocalHardwareMetricsCollector';
 import { AgentExecutionBridge } from '../../agent/AgentExecutionBridge';
 import type { RemoteCommandPolicyEvaluator } from '../../agent/loadRemoteCommandPolicy';
 import { RemoteCommandExecutor } from '../../agent/RemoteCommandExecutor';
@@ -41,6 +42,8 @@ export interface DshAgentServiceOptions {
   readonly policyEvaluator?: RemoteCommandPolicyEvaluator;
   readonly broadcastMonitor?: (event: string, data: unknown) => void;
   readonly metricsCollector?: HardwareMetricsCollector;
+  /** Local machine readings; injected only by tests that need a deterministic probe. */
+  readonly localMetricsCollector?: LocalHardwareMetricsCollector;
   readonly executionBridge?: AgentExecutionBridge;
   /**
    * The durable audit trail. Mapped onto both services' `audit` option.
@@ -120,6 +123,7 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
 
   const policyEvaluator = options.policyEvaluator ?? createDshPolicyEvaluator();
   const metricsCollector = options.metricsCollector ?? new HardwareMetricsCollector({ executor });
+  const localMetricsCollector = options.localMetricsCollector ?? new LocalHardwareMetricsCollector();
   const executionBridge = options.executionBridge ?? new AgentExecutionBridge();
 
   return new AgentToolService({
@@ -130,6 +134,7 @@ export function createDshAgentToolService(options: DshAgentServiceOptions): Agen
     confirmation,
     policyEvaluator,
     metricsCollector,
+    localMetricsCollector,
     executionBridge,
     ...(options.audit === undefined ? {} : { audit: options.audit }),
     ...(options.readAuditTail === undefined

@@ -38,6 +38,8 @@ export interface ServerView {
   keepAliveInterval?: number;
   agentCommandTrust?: string;
   backgroundConnectionAllowed?: boolean;
+  /** Whether an AT Terminal session is connected to this server right now. */
+  connected?: boolean;
 }
 
 export type TrustLevel = 'none' | 'policy' | 'full';
@@ -1040,6 +1042,13 @@ export interface ProcessMetrics {
 
 export interface HardwareMetrics {
   serverId: string;
+  /**
+   * What the reading describes. Absent means a remote asset (the original shape); `local` means
+   * the Host machine itself, which is what the monitor shows when no SSH server is connected.
+   */
+  scope?: 'local' | 'remote';
+  /** The Host platform for a local reading (`darwin`/`win32`/`linux`), for the label. */
+  platform?: string;
   timestamp: number;
   cpu: CpuMetrics;
   memory: MemoryMetrics;

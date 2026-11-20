@@ -61,9 +61,16 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
     callRpc('servers.list', {})
       .then((res: any) => {
         if (!unmounted && res?.servers) {
-          setServers(res.servers);
-          if (!selectedServerId && res.servers.length > 0) {
-            setSelectedServerId(res.servers[0].id);
+          const list = res.servers as ServerView[];
+          setServers(list);
+          if (!selectedServerId) {
+            // Prefer a live terminal over an arbitrary configured row. `servers.list` also
+            // contains background-allowed servers that are not connected; selecting one of
+            // those by default would monitor a host the user never opened — the same stale
+            // target the HUD had. With nothing connected the pane stays on `''`, which the
+            // Host answers with the local machine reading.
+            const connected = list.find((entry) => entry.connected === true);
+            setSelectedServerId(connected?.id ?? '');
           }
         }
       })
@@ -194,7 +201,6 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
         'div',
         { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
         activeTab === 'hardware' &&
-          servers.length > 0 &&
           h(
             'label',
             { style: { fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' } },
@@ -207,6 +213,10 @@ export function AtTerminalMonitorBody(props: AtTerminalMonitorBodyProps): El {
                 value: selectedServerId,
                 onChange: (e: { target: { value: string } }) => setSelectedServerId(e.target.value)
               },
+              // `''` is the local machine. It is first and always present so a user with no live
+              // terminal has somewhere to land, and so the local view is reachable deliberately
+              // even while remote servers exist.
+              h('option', { value: '' }, t('monitor.hud.local')),
               ...servers.map((s) => h('option', { key: s.id, value: s.id }, s.label || s.host))
             )
           ),
