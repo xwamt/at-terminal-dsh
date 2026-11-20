@@ -84,18 +84,29 @@ describe('the guard', () => {
     expect(guard({ name: 'at_terminal_sftp_delete', arguments: { path: '/srv/app/old.log' } })).toBeUndefined();
   });
 
-  it('refuses a delete of a sensitive path, and names the way out', () => {
+  it('refuses a delete of a sensitive path with a structured, auditable denial', () => {
     for (const path of ['/etc/cron.d/backup', '/home/deploy/.ssh/authorized_keys', '/etc/systemd/system/x.service']) {
-      const reason = guard({ name: 'at_terminal_sftp_delete', arguments: { path } });
-      expect(reason).toContain('sensitive system path');
-      expect(reason).toContain('at_terminal_run_remote_command');
+      const denial = guard({ name: 'at_terminal_sftp_delete', arguments: { path } }) as {
+        reason: string;
+        info: { name: string; code: string };
+      };
+      // The host's `ToolGuard` accepts `{reason, info}`; the code is what the audit trail
+      // records instead of a generic `runtime_error`.
+      expect(denial.reason).toContain('sensitive system path');
+      expect(denial.reason).toContain('at_terminal_run_remote_command');
+      expect(denial.info).toEqual({ name: 'AtTerminalPolicyError', code: 'sensitive_path_denied' });
     }
   });
 
-  it('refuses an AT Terminal tool that has no classification', () => {
+  it('refuses an unclassified AT Terminal tool with a structured denial', () => {
     // Fail closed: registering a tool and forgetting the row is how an unguarded entry point
     // would appear, and a guard that shrugged would be the wrong default.
-    expect(guard({ name: 'at_terminal_sftp_copy', arguments: {} })).toContain('no row in dsh/policy.js');
+    const denial = guard({ name: 'at_terminal_sftp_copy', arguments: {} }) as {
+      reason: string;
+      info: { name: string; code: string };
+    };
+    expect(denial.reason).toContain('no row in dsh/policy.js');
+    expect(denial.info).toEqual({ name: 'AtTerminalPolicyError', code: 'unclassified_tool_denied' });
   });
 
   it('does not throw on missing or non-string arguments', () => {

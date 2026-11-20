@@ -127,32 +127,38 @@ export function readPreExecuteDecision(exec) {
  * to be the only check.
  *
  * @param {{ isSensitiveRemotePath: (path: string) => boolean }} dependencies
- * @returns {(exec: object) => string | undefined}
+ * @returns {(exec: object) => { reason: string, info: { name: string, code: string } } | undefined}
  */
 export function createGuard({ isSensitiveRemotePath } = {}) {
   if (typeof isSensitiveRemotePath !== 'function') {
     throw new TypeError('createGuard() needs isSensitiveRemotePath: a guard must not guess')
   }
-  return function guardReason(exec) {
+  return function guardDenial(exec) {
     const name = exec?.name
     if (!isOwnTool(name)) return undefined
     const entry = classify(name)
     if (entry === undefined) {
-      return (
-        `AT Terminal tool "${name}" has no row in dsh/policy.js, so this build cannot say what it is ` +
-        'allowed to do. Add a classification before shipping it.'
-      )
+      return {
+        reason:
+          `AT Terminal tool "${name}" has no row in dsh/policy.js, so this build cannot say what it is ` +
+          'allowed to do. Add a classification before shipping it.',
+        // `ToolGuardDenial.info` is persisted beside the failed call; `auditEntryFrom` turns
+        // `code` into the audit row's reason instead of reporting a generic runtime_error.
+        info: { name: 'AtTerminalPolicyError', code: 'unclassified_tool_denied' }
+      }
     }
     if (entry.guard !== 'refuse-sensitive-path') return undefined
     const path = exec?.arguments?.path
     if (typeof path !== 'string' || path === '') return undefined
     if (!isSensitiveRemotePath(path)) return undefined
-    return (
-      `Refusing to delete "${path}" through ${name}: it is a sensitive system path, and this tool ` +
-      'never auto-approves one. Use at_terminal_run_remote_command with an explicit rm if the ' +
-      'deletion is really intended — that path goes through the command policy, the destructive ' +
-      'warning and the audit trail.'
-    )
+    return {
+      reason:
+        `Refusing to delete "${path}" through ${name}: it is a sensitive system path, and this tool ` +
+        'never auto-approves one. Use at_terminal_run_remote_command with an explicit rm if the ' +
+        'deletion is really intended — that path goes through the command policy, the destructive ' +
+        'warning and the audit trail.',
+      info: { name: 'AtTerminalPolicyError', code: 'sensitive_path_denied' }
+    }
   }
 }
 

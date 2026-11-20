@@ -1881,7 +1881,7 @@ await check('theme-tokens', 'The token bridge carries no literal colors', () => 
  * looking classified while no stage recognised it.
  */
 await check('policy', 'Every tool is classified, and every classification is a tool', async () => {
-  const { TOOL_POLICY, RISK_CATEGORIES } = await import('../policy.js')
+  const { TOOL_POLICY, RISK_CATEGORIES, createGuard } = await import('../policy.js')
   const registered = createTools({ version: manifest.version }).map((tool) => tool.name)
   const classified = Object.keys(TOOL_POLICY)
 
@@ -1909,6 +1909,18 @@ await check('policy', 'Every tool is classified, and every classification is a t
   // `at_terminal_sftp_delete` would accept sensitive paths and the guard would be decorative.
   assert.equal(TOOL_POLICY.at_terminal_sftp_delete.guard, 'refuse-sensitive-path')
   assert.equal(TOOL_POLICY.at_terminal_get_hardware_metrics.probe, 'builtin')
+
+  // DSH 0.2.2's `ToolGuard` accepts a plain string or `{ reason, info }`; `info.code` is what
+  // the audit observer reads to record a stable reason. Pin the structured shape so a returned
+  // string cannot silently turn a policy refusal back into `runtime_error`.
+  const denial = createGuard({ isSensitiveRemotePath: () => true })({
+    name: 'at_terminal_sftp_delete',
+    arguments: { path: '/etc/passwd' }
+  })
+  assert.equal(typeof denial, 'object', 'a policy refusal must carry structured ToolErrorInfo')
+  assert.equal(typeof denial?.reason, 'string', 'ToolGuardDenial.reason must be a string')
+  assert.equal(typeof denial?.info?.name, 'string', 'ToolGuardDenial.info.name must be a string')
+  assert.equal(denial?.info?.code, 'sensitive_path_denied', 'ToolGuardDenial.info.code must be the stable audit code')
 
   // `ToolRuntime.executionMode()` only schedules a call in parallel when the tool exposes
   // `isConcurrencySafe` AND it returns exact `true`. The policy row is the bundle's own

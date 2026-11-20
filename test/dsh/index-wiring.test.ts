@@ -806,11 +806,17 @@ describe('dsh Host half — wiring', () => {
     expect(guard({ name: 'at_terminal_ping', arguments: {} })).toBeUndefined();
     expect(guard({ name: 'not_ours', arguments: {} })).toBeUndefined();
     expect(guard({ name: 'at_terminal_sftp_delete', arguments: { path: '/srv/logs/a.log' } })).toBeUndefined();
-    // Two refusals: an unclassified tool of ours, and a sensitive delete.
-    expect(guard({ name: 'at_terminal_unclassified', arguments: {} })).toContain('no row in dsh/policy.js');
-    expect(guard({ name: 'at_terminal_sftp_delete', arguments: { path: '/etc/cron.d/backup' } })).toContain(
-      'sensitive system path'
-    );
+    // Two refusals: an unclassified tool of ours, and a sensitive delete. DSH 0.2.2's
+    // `ToolGuard` accepts `{reason, info}`; the reason is what the model reads.
+    const unclassified = guard({ name: 'at_terminal_unclassified', arguments: {} }) as unknown as {
+      reason: string;
+    };
+    expect(unclassified.reason).toContain('no row in dsh/policy.js');
+    const sensitive = guard({
+      name: 'at_terminal_sftp_delete',
+      arguments: { path: '/etc/cron.d/backup' }
+    }) as unknown as { reason: string };
+    expect(sensitive.reason).toContain('sensitive system path');
 
     for (const dispose of harness.disposers) dispose();
     expect(harness.guards).toHaveLength(0);
@@ -1024,6 +1030,39 @@ describe('dsh Host half — wiring', () => {
       fire(harness, 'tools/result', { name: 'at_terminal_ping', get arguments() { throw new Error('boom'); }, agent: {} }, { isError: false, value: {} })
     ).not.toThrow();
     expect(harness.logger.join()).toContain('audit observer failed');
+  });
+
+  it('uses a structured policy denial code as the audit reason instead of runtime_error', async () => {
+    const harness = createHarness();
+    hostHalf.apply(harness.ctx, {});
+    await waitForServices(harness);
+
+    fire(
+      harness,
+      'tools/result',
+      {
+        name: 'at_terminal_sftp_delete',
+        callId: 'call-policy',
+        arguments: { path: '/etc/passwd' },
+        agent: { session: { id: 'sess-1' } }
+      },
+      {
+        isError: true,
+        error: {
+          message: 'Refusing to delete "/etc/passwd": it is a sensitive system path.',
+          info: { name: 'AtTerminalPolicyError', code: 'sensitive_path_denied' }
+        },
+        content: []
+      }
+    );
+
+    const lines = await readWhenReady(joinPath(process.env.DSH_HOME as string, 'at-terminal', 'agent-audit.jsonl'));
+    // `ToolGuardDenial.info.code` is persisted by DSH; without reading it the row would say
+    // `runtime_error` and an operator could not tell a policy refusal from a dead host.
+    expect(JSON.parse(lines[0])).toMatchObject({
+      tool: 'sftp_delete',
+      reasonCode: 'sensitive_path_denied'
+    });
   });
 
   it('reports `memory` when the audit file has nothing in it yet', async () => {

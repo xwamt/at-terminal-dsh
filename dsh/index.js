@@ -131,6 +131,11 @@ function auditEntryFrom(exec, result) {
   const value = failed ? undefined : result?.value
   const reasonCode =
     (typeof result?.error?.info?.reasonCode === 'string' && result.error.info.reasonCode) ||
+    // DSH 0.2.2's `ToolErrorInfo` carries `code`; a guard denial stores its stable identity
+    // there (`sensitive_path_denied`), so the audit row can say *why* instead of collapsing
+    // every policy refusal into `runtime_error`. `reasonCode` is kept first for service
+    // errors that historically supplied that richer field.
+    (typeof result?.error?.info?.code === 'string' && result.error.info.code) ||
     // A built-in probe never meets the command policy, so `completed` would read as "the
     // policy allowed it". The distinction comes from the policy table rather than from the
     // tool minting a reason code of its own: one table, one answer, and the tool's output

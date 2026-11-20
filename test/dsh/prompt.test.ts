@@ -61,11 +61,13 @@ describe('the prompt section', () => {
     };
 
     expect(section.text({ scope: {}, toolSet: host })).toContain(
-      'collect it with job_output, end it with job_kill'
+      'call job_output only when you need incremental output'
     );
+    expect(section.text({ scope: {}, toolSet: host })).toContain('end it with job_kill');
     expect(section.text({ scope: {}, toolSet: fallback })).toContain(
-      'collect it with at_terminal_job_output, end it with at_terminal_job_kill'
+      'call at_terminal_job_output only when you need incremental output'
     );
+    expect(section.text({ scope: {}, toolSet: fallback })).toContain('end it with at_terminal_job_kill');
   });
 
   it('is empty when only resident tools are visible, and fail-open without an admission set', () => {
