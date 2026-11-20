@@ -62,6 +62,9 @@ export class SftpSession {
 
   async connect(): Promise<void> {
     const client = new (await getSsh2()).Client();
+    // Permanent error listener so ssh2's post-reject "Connection lost before handshake"
+    // or post-connect socket errors never escape as uncaught EventEmitter exceptions.
+    client.on('error', () => undefined);
     this.client = client;
     const handle = await buildSshConnectionHandle(this.server, this.passwords, this.hostKeyVerifier);
     this.connectionHandle = handle;

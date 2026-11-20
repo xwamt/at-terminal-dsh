@@ -18,6 +18,9 @@ export async function testSshConnection(
   });
   const { Client } = await getSsh2();
   const client = new Client();
+  // Keep a permanent no-op error listener so client.end() inside cleanup() cannot
+  // trigger an uncaught "Connection lost before handshake" error event.
+  client.on('error', () => undefined);
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -28,8 +31,8 @@ export async function testSshConnection(
 
     const cleanup = (): void => {
       clearTimeout(timeout);
-      client.removeAllListeners('ready');
-      client.removeAllListeners('error');
+      client.off('ready', resolveOnce);
+      client.off('error', rejectOnce);
       client.end();
       handle.dispose();
     };

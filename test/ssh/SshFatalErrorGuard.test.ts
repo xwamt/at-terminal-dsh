@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
 /**
@@ -124,5 +125,79 @@ describe('ssh2 client error handling — the fatal-error crash', () => {
     // `dispose()` ends the jump client; a host hanging up during teardown must not throw.
     expect(() => emitUnguarded(jump as never)).not.toThrow();
     handle?.dispose();
+  });
+});
+
+describe('late fatal ssh2 errors during connect teardown', () => {
+  it('SftpSession swallows late fatal ssh2 errors emitted during or after failed connect teardown', async () => {
+    let latestClient: EventEmitter | undefined;
+    vi.doMock('../../src/ssh/ssh2Loader', () => ({
+      getSsh2: async () => ({
+        Client: class extends EventEmitter {
+          connect(): void {
+            latestClient = this;
+            this.emit('error', new Error('First handshake failure'));
+          }
+          end(): void {
+            // ssh2 emits a second fatal error when end() closes a pre-handshake socket
+            this.emit('error', Object.assign(new Error('Connection lost before handshake'), { level: 'protocol' }));
+          }
+          sftp(): void {}
+        }
+      })
+    }));
+
+    const { SftpSession } = await import('../../src/sftp/SftpSession');
+    const session = new SftpSession(
+      {
+        id: 'srv-1',
+        label: 'Prod',
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        authType: 'agent',
+        keepAliveInterval: 15
+      } as never,
+      { getPassword: async () => undefined },
+      { verify: async () => true },
+      { allowSudoFallback: false }
+    );
+
+    await expect(session.connect()).rejects.toThrow('First handshake failure');
+    expect(() => latestClient?.emit('error', new Error('Post-close stray error'))).not.toThrow();
+  });
+
+  it('testSshConnection keeps an error guard installed when cleanup calls client.end()', async () => {
+    vi.doMock('../../src/ssh/ssh2Loader', () => ({
+      getSsh2: async () => ({
+        Client: class extends EventEmitter {
+          connect(): void {
+            this.emit('error', new Error('Auth refused'));
+          }
+          end(): void {
+            // Emitted right after cleanup() in SshConnectionTester
+            this.emit('error', new Error('Connection lost before handshake'));
+          }
+        }
+      })
+    }));
+
+    const { testSshConnection } = await import('../../src/ssh/SshConnectionTester');
+    await expect(
+      testSshConnection(
+        {
+          id: 'srv-1',
+          label: 'Prod',
+          host: '10.0.0.1',
+          port: 22,
+          username: 'root',
+          authType: 'agent',
+          keepAliveInterval: 15
+        } as never,
+        { getPassword: async () => undefined },
+        { verify: async () => true },
+        500
+      )
+    ).rejects.toThrow('Auth refused');
   });
 });

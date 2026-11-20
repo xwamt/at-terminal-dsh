@@ -15029,7 +15029,8 @@ var SFTP_WRITE_STEP_TIMEOUT_MS = 55e3, REMOTE_TEMP_CLEANUP_TIMEOUT_MS = 2e3, DIR
   connectionHandle;
   async connect() {
     let client = new (await getSsh2()).Client();
-    this.client = client;
+    client.on("error", () => {
+    }), this.client = client;
     let handle2 = await buildSshConnectionHandle(this.server, this.passwords, this.hostKeyVerifier);
     this.connectionHandle = handle2;
     try {
