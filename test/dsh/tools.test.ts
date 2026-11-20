@@ -1370,4 +1370,29 @@ describe('dsh/tools.js — read tools report how the host was chosen (S5-04)', (
     expect(tool.output.render({ path: '/srv' }, result)[0].text).not.toContain('Resolved implicitly');
     expect(result.candidates).toBeUndefined();
   });
+
+  it('declares isConcurrencySafe only on the stateless read tools', () => {
+    const tools = createTools({ version: '0.1.0' });
+    const safe = tools
+      .filter((tool: any) => typeof tool.isConcurrencySafe === 'function')
+      .map((tool: any) => tool.name)
+      .sort();
+
+    expect(safe).toEqual(
+      [
+        'at_terminal_get_hardware_metrics',
+        'at_terminal_get_terminal_context',
+        'at_terminal_list_ssh_servers',
+        'at_terminal_ping',
+        'at_terminal_sftp_list_directory',
+        'at_terminal_sftp_read_file',
+        'at_terminal_sftp_stat_path'
+      ].sort()
+    );
+    for (const tool of tools) {
+      if (typeof tool.isConcurrencySafe === 'function') {
+        expect(tool.isConcurrencySafe({})).toBe(true);
+      }
+    }
+  });
 });

@@ -313,6 +313,8 @@ function normalizeTerminalSummary(s) {
 export function createPingTool({ version = 'unknown', now = () => new Date(), config = {} } = {}) {
   return {
     name: 'at_terminal_ping',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
@@ -382,6 +384,8 @@ export function createPingTool({ version = 'unknown', now = () => new Date(), co
 export function createListSshServersTool({ resolveAgentService, runInContext, onServersListed } = {}) {
   return {
     name: 'at_terminal_list_ssh_servers',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 10000,
@@ -459,6 +463,8 @@ export function createListSshServersTool({ resolveAgentService, runInContext, on
 export function createGetTerminalContextTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_get_terminal_context',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 5000,
@@ -700,6 +706,8 @@ export function createRunRemoteCommandTool({
 export function createSftpListDirectoryTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_sftp_list_directory',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 30000,
@@ -787,6 +795,8 @@ export function createSftpListDirectoryTool({ resolveAgentService, runInContext 
 export function createSftpStatPathTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_sftp_stat_path',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 10000,
@@ -852,6 +862,8 @@ export function createSftpStatPathTool({ resolveAgentService, runInContext } = {
 export function createSftpReadFileTool({ resolveAgentService, runInContext, resolveSpillStore, logger } = {}) {
   return {
     name: 'at_terminal_sftp_read_file',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 20000,
@@ -1607,6 +1619,8 @@ export function createOpenMonitorTool({ resolveAgentService, runInContext } = {}
 export function createGetHardwareMetricsTool({ resolveAgentService, runInContext } = {}) {
   return {
     name: 'at_terminal_get_hardware_metrics',
+    // Stateless read: sibling calls may run in parallel (`ToolRuntime.executionMode`).
+    isConcurrencySafe: () => true,
     // Declared, not enforced here: `@deepseek-ai/dsh-tool-call-timeout-policy` turns this into
     // TOOL_TIMEOUT. A second timer inside the tool would double-count.
     timeoutMs: 8000,

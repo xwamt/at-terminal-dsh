@@ -27,13 +27,47 @@ describe('the coverage table', () => {
     expect(classify('read_file')).toBeUndefined();
     expect(classify('at_terminal_nope')).toBeUndefined();
     expect(classify(undefined)).toBeUndefined();
-    expect(classify('at_terminal_ping')).toEqual({ risk: 'read' });
+    expect(classify('at_terminal_ping')).toMatchObject({ risk: 'read' });
   });
 
   it('classifies remote edit as a write, so the same authorizer owns its prompt', () => {
     // An edit replaces remote bytes exactly like a write; classifying it as `read` would
     // bypass SftpWriteAuthorizer entirely and make the tool the one unguarded mutation.
     expect(classify('at_terminal_sftp_edit_file')).toEqual({ risk: 'write-remote' });
+  });
+
+  it('marks exactly the seven stateless read tools parallel, and nothing else', () => {
+    const parallelReadTools = [
+      'at_terminal_ping',
+      'at_terminal_list_ssh_servers',
+      'at_terminal_get_terminal_context',
+      'at_terminal_sftp_list_directory',
+      'at_terminal_sftp_stat_path',
+      'at_terminal_sftp_read_file',
+      'at_terminal_get_hardware_metrics'
+    ];
+    const tools = createTools({ version: '0.0.0' }) as Array<{
+      name: string;
+      isConcurrencySafe?: (args: unknown) => boolean;
+    }>;
+
+    for (const [name, entry] of Object.entries(TOOL_POLICY)) {
+      const declared = (entry as { parallel?: boolean }).parallel === true;
+      expect({ name, declared }).toEqual({ name, declared: parallelReadTools.includes(name) });
+    }
+    for (const tool of tools) {
+      const declared = (TOOL_POLICY as Record<string, { parallel?: boolean }>)[tool.name]?.parallel === true;
+      // `executionMode()` only opts in on an exact `true`; a function that returns anything
+      // else is still exclusive. Presence and the policy row are checked together so the
+      // two cannot drift.
+      expect({ name: tool.name, hasFn: typeof tool.isConcurrencySafe === 'function' }).toEqual({
+        name: tool.name,
+        hasFn: declared
+      });
+      if (declared) {
+        expect(tool.isConcurrencySafe?.({})).toBe(true);
+      }
+    }
   });
 });
 

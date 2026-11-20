@@ -1910,6 +1910,25 @@ await check('policy', 'Every tool is classified, and every classification is a t
   assert.equal(TOOL_POLICY.at_terminal_sftp_delete.guard, 'refuse-sensitive-path')
   assert.equal(TOOL_POLICY.at_terminal_get_hardware_metrics.probe, 'builtin')
 
+  // `ToolRuntime.executionMode()` only schedules a call in parallel when the tool exposes
+  // `isConcurrencySafe` AND it returns exact `true`. The policy row is the bundle's own
+  // declaration of that decision, so the two must agree in both directions: a row marked
+  // parallel without the function silently serializes, and a function without the row is an
+  // unreviewed concurrency opt-in.
+  for (const tool of createTools({ version: manifest.version })) {
+    const row = TOOL_POLICY[tool.name]
+    const declaredParallel = row?.parallel === true
+    const hasFn = typeof tool.isConcurrencySafe === 'function'
+    assert.equal(
+      hasFn,
+      declaredParallel,
+      `${tool.name}: isConcurrencySafe presence (${hasFn}) must match TOOL_POLICY.parallel (${declaredParallel})`
+    )
+    if (hasFn) {
+      assert.equal(tool.isConcurrencySafe({}), true, `${tool.name}: isConcurrencySafe({}) must return true`)
+    }
+  }
+
   return `${classified.length} classified tool(s), ${RISK_CATEGORIES.length} risk categories`
 })
 

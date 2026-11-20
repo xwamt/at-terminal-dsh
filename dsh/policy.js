@@ -43,13 +43,13 @@ export const RISK_CATEGORIES = Object.freeze(['read', 'command', 'write-remote',
  * | `ui` | changes what the user sees, not what a server holds |
  */
 export const TOOL_POLICY = Object.freeze({
-  at_terminal_ping: Object.freeze({ risk: 'read' }),
-  at_terminal_list_ssh_servers: Object.freeze({ risk: 'read' }),
-  at_terminal_get_terminal_context: Object.freeze({ risk: 'read' }),
+  at_terminal_ping: Object.freeze({ risk: 'read', parallel: true }),
+  at_terminal_list_ssh_servers: Object.freeze({ risk: 'read', parallel: true }),
+  at_terminal_get_terminal_context: Object.freeze({ risk: 'read', parallel: true }),
   at_terminal_run_remote_command: Object.freeze({ risk: 'command' }),
-  at_terminal_sftp_list_directory: Object.freeze({ risk: 'read' }),
-  at_terminal_sftp_stat_path: Object.freeze({ risk: 'read' }),
-  at_terminal_sftp_read_file: Object.freeze({ risk: 'read' }),
+  at_terminal_sftp_list_directory: Object.freeze({ risk: 'read', parallel: true }),
+  at_terminal_sftp_stat_path: Object.freeze({ risk: 'read', parallel: true }),
+  at_terminal_sftp_read_file: Object.freeze({ risk: 'read', parallel: true }),
   at_terminal_sftp_edit_file: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_write_file: Object.freeze({ risk: 'write-remote' }),
   at_terminal_sftp_create_file: Object.freeze({ risk: 'write-remote' }),
@@ -61,7 +61,7 @@ export const TOOL_POLICY = Object.freeze({
   // `command`: nothing reaches a shell.
   at_terminal_sftp_apply_patch: Object.freeze({ risk: 'write-remote' }),
   at_terminal_open_monitor: Object.freeze({ risk: 'ui' }),
-  at_terminal_get_hardware_metrics: Object.freeze({ risk: 'read', probe: 'builtin' }),
+  at_terminal_get_hardware_metrics: Object.freeze({ risk: 'read', probe: 'builtin', parallel: true }),
   at_terminal_get_agent_execution_status: Object.freeze({ risk: 'read' }),
   // Job control is not a command and never reaches a host: `read` stops the output it
   // collects, and `disturb` names what `job_kill` really does. It is graded `command`
