@@ -140,6 +140,10 @@ terminal_close({ sessionId })
 
 - **靠 `name` 选服务器**：官方的 `terminal_open` 没有 `serverId` 参数。id 与名称都接受；
   两台服务器同名时**报错并列出两个 id**，不会替你选一个。
+- **Agent 打开的持久终端按后台连接准入**：服务器要么允许后台连接，要么已在 AT Terminal
+  面板里打开着终端标签页；SubAgent 一律拒绝（用户看不到它的终端），单个 Agent 最多同时持有
+  4 个会话。`terminal_open({ cwd })` 会先执行 `cd -- <安全引用后的路径>`，让 shell 从调用方
+  指定的目录开始，而不是登录家目录。
 - **就绪判断是「看到提示符」这种文本证据**：只有当输出尾部确实像提示符时才结算成 `stdin_read`；
   否则静默结算为 `inferred_idle`，超过期限结算为 `timeout`。`inferred_idle` **不等于**命令已结束
   —— 这与宿主自带终端工具的告警一致。

@@ -150,6 +150,11 @@ terminal_close({ sessionId })
 - **The server is chosen by `name`**, because `terminal_open` has no `serverId` parameter. An id
   or a label is accepted; a label shared by two servers is refused with both ids named, rather
   than resolved to one of them.
+- **An agent-opened shell is admitted like a background connection.** The server must either
+  allow background connections or already have a terminal tab open in the AT Terminal panel;
+  SubAgents are refused (the user cannot see their terminals), and one Agent may hold at most
+  four live sessions. `terminal_open({ cwd })` runs `cd -- <quoted path>` as the first command,
+  so the shell starts where the caller asked instead of in the login home.
 - **Readiness is prompt evidence.** A send settles as `stdin_read` only when the tail of the
   output actually looks like a prompt; otherwise silence settles it as `inferred_idle`, and the
   deadline as `timeout`. `inferred_idle` does not prove the command finished — the same warning

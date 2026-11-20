@@ -117,7 +117,9 @@ node dsh/scripts/verify.mjs
 12. **opt-in terminal bundle** — `dsh-terminal-ssh` must stay a real,
    isolated composition: one `cordis:group` row with `isolate.terminals`,
    the official registry → backend → tools order, prefixed ids, and a
-   `./terminal-backend` export that is present and listed in `files`.
+   `./terminal-backend` export that is present and listed in `files`. The
+   compiled backend is also exercised to prove its send operation implements
+   DSH 0.2.2's `readOutput()` / boolean `cancel()` contract.
 
 Check 4 is static and always runs. Checks 6 and 7 extract the real
 `@deepseek-ai/dsh-tools` and `@deepseek-ai/schemastery` dependency closures out of
