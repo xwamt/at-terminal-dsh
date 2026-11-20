@@ -872,7 +872,11 @@ describe('dsh/tools.js createTools', () => {
       }),
       getAgentExecutionStatus: vi.fn().mockResolvedValue({
         timestamp: 2000,
-        currentAction: { id: 'act-1', command: 'df -h', runningTimeMs: 40, status: 'running' },
+        currentAction: { id: 'act-1', command: 'df -h', runningTimeMs: 40, status: 'running', agentId: 'agent-1' },
+        activeActions: [
+          { id: 'act-1', command: 'df -h', runningTimeMs: 40, status: 'running', agentId: 'agent-1' },
+          { id: 'act-2', command: 'uptime', runningTimeMs: 20, status: 'running', agentId: 'agent-2' }
+        ],
         recentAudits: [{ id: 'a1', timestamp: 1900, command: 'ls', decision: 'allowed', riskLevel: 'low' }],
         activeTransfers: [{ id: 't1', type: 'download', filename: 'file.tar', progressPercent: 50, bytesPerSec: 1024 }]
       })
@@ -894,6 +898,9 @@ describe('dsh/tools.js createTools', () => {
     expect(agentRes.hasActiveAction).toBe(true);
     expect(agentRes.currentCommand).toBe('df -h');
     expect(agentRes.activeTransfersCount).toBe(1);
+    expect(agentRes.activeActions).toHaveLength(2);
+    expect(agentRes.activeActions?.[1]).toMatchObject({ agentId: 'agent-2', command: 'uptime' });
+    expect(agentTool.output.schema.properties.activeActions.type).toBe('array');
     const agentRendered = agentTool.output.render({}, agentRes);
     expect(agentRendered[0].text).toContain('Running [df -h]');
   });

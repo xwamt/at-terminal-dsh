@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AgentAuditSummary, AgentExecutionSnapshot, Translate } from '../models';
+import type { AgentActionSnapshot, AgentActionStatus, AgentAuditSummary, AgentExecutionSnapshot, Translate } from '../models';
 import { chevronDownRegular, chevronRightRegular } from '../icons';
 import { formatFileSize } from '../../../../sftp/FileSize';
 import { formatThroughput } from '../models';
@@ -27,6 +27,46 @@ function riskLabel(t: Translate, level: string | undefined): string {
     default:
       return t('monitor.risk.unknown');
   }
+}
+
+/** One status badge, shared by the live action and the concurrent action list. */
+function actionStatusBadge(t: Translate, status: AgentActionStatus): El {
+  return h(
+    'span',
+    {
+      className: `att-monitor-badge ${
+        status === 'running'
+          ? 'att-monitor-badge-running'
+          : status === 'confirmation_waiting'
+            ? 'att-monitor-badge-waiting'
+            : status === 'success'
+              ? 'att-monitor-badge-success'
+              : 'att-monitor-badge-denied'
+      }`
+    },
+    status === 'running' && h('span', { className: 'att-monitor-badge-pulse-dot' }),
+    t(`monitor.status.${status === 'confirmation_waiting' ? 'waiting' : status}`)
+  );
+}
+
+/** One row of the concurrent list: status, command, elapsed, and which agent owns it. */
+function concurrentActionRow(t: Translate, action: AgentActionSnapshot): El {
+  return h(
+    'div',
+    { key: action.id, style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+    h(
+      'div',
+      { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '11px' } },
+      h(
+        'span',
+        { style: { display: 'flex', gap: '6px', alignItems: 'center', minWidth: 0 } },
+        actionStatusBadge(t, action.status),
+        action.agentId !== undefined && h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, action.agentId)
+      ),
+      h('span', { style: { color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, t('monitor.agent.elapsed', { time: action.runningTimeMs }))
+    ),
+    h('div', { className: 'att-code-preview' }, action.command)
+  );
 }
 
 export interface AgentMonitorViewProps {
@@ -96,9 +136,28 @@ export function AgentMonitorView(props: AgentMonitorViewProps): El {
   const audits = selectAuditRows(recentAudits, history, showHistory);
   const hasHistory = Boolean(history && history.length > RECENT_AUDIT_ROWS);
 
+  const activeActions = snapshot?.activeActions ?? [];
+
   return h(
     'div',
     { className: 'att-monitor-grid', role: 'region', 'aria-label': t('monitor.tab.agent') },
+    // Concurrent Actions Card: only when more than one action is live. `currentAction` still
+    // renders below for every host that predates `activeActions`.
+    activeActions.length > 1 &&
+      h(
+        'div',
+        { className: 'att-monitor-card', style: { gridColumn: '1 / -1' } },
+        h(
+          'div',
+          { className: 'att-monitor-card-header' },
+          h('span', null, t('monitor.agent.concurrentTitle', { count: activeActions.length }))
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+          ...activeActions.map((action) => concurrentActionRow(t, action))
+        )
+      ),
     // Live Action Card
     h(
       'div',
@@ -107,23 +166,7 @@ export function AgentMonitorView(props: AgentMonitorViewProps): El {
         'div',
         { className: 'att-monitor-card-header' },
         h('span', null, t('monitor.agent.actionTitle')),
-        current &&
-          h(
-            'span',
-            {
-              className: `att-monitor-badge ${
-                current.status === 'running'
-                  ? 'att-monitor-badge-running'
-                  : current.status === 'confirmation_waiting'
-                    ? 'att-monitor-badge-waiting'
-                    : current.status === 'success'
-                      ? 'att-monitor-badge-success'
-                      : 'att-monitor-badge-denied'
-              }`
-            },
-            current.status === 'running' && h('span', { className: 'att-monitor-badge-pulse-dot' }),
-            t(`monitor.status.${current.status === 'confirmation_waiting' ? 'waiting' : current.status}`)
-          )
+        current && actionStatusBadge(t, current.status)
       ),
       current
         ? h(

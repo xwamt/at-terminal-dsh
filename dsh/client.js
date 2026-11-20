@@ -968,6 +968,7 @@ var NS = "atTerminal", zh = {
   "monitor.ps.mem": "\u5185\u5B58 %",
   "monitor.ps.command": "\u547D\u4EE4",
   "monitor.agent.actionTitle": "\u6B63\u5728\u6267\u884C\u7684\u6307\u4EE4",
+  "monitor.agent.concurrentTitle": "\u5E76\u53D1\u6267\u884C\u7684\u6307\u4EE4\uFF08{count}\uFF09",
   "monitor.agent.idle": "\u5F53\u524D\u65E0\u6B63\u5728\u6267\u884C\u7684 Agent \u6307\u4EE4",
   "monitor.agent.elapsed": "\u8017\u65F6\uFF1A{time}ms",
   "monitor.agent.output": "\u8F93\u51FA\u5FAE\u7F29\u6D41",
@@ -1388,6 +1389,7 @@ var NS = "atTerminal", zh = {
   "monitor.ps.mem": "Mem %",
   "monitor.ps.command": "Command",
   "monitor.agent.actionTitle": "Live Action",
+  "monitor.agent.concurrentTitle": "Concurrent Actions ({count})",
   "monitor.agent.idle": "No active Agent command",
   "monitor.agent.elapsed": "Elapsed: {time}ms",
   "monitor.agent.output": "Output Stream",
@@ -6323,6 +6325,34 @@ function riskLabel(t, level) {
       return t("monitor.risk.unknown");
   }
 }
+function actionStatusBadge(t, status) {
+  return h(
+    "span",
+    {
+      className: `att-monitor-badge ${status === "running" ? "att-monitor-badge-running" : status === "confirmation_waiting" ? "att-monitor-badge-waiting" : status === "success" ? "att-monitor-badge-success" : "att-monitor-badge-denied"}`
+    },
+    status === "running" && h("span", { className: "att-monitor-badge-pulse-dot" }),
+    t(`monitor.status.${status === "confirmation_waiting" ? "waiting" : status}`)
+  );
+}
+function concurrentActionRow(t, action) {
+  return h(
+    "div",
+    { key: action.id, style: { display: "flex", flexDirection: "column", gap: "4px" } },
+    h(
+      "div",
+      { style: { display: "flex", justifyContent: "space-between", gap: "8px", fontSize: "11px" } },
+      h(
+        "span",
+        { style: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0 } },
+        actionStatusBadge(t, action.status),
+        action.agentId !== void 0 && h("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, action.agentId)
+      ),
+      h("span", { style: { color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" } }, t("monitor.agent.elapsed", { time: action.runningTimeMs }))
+    ),
+    h("div", { className: "att-code-preview" }, action.command)
+  );
+}
 var RECENT_AUDIT_ROWS = 4;
 function selectAuditRows(recent, history, showHistory) {
   return history ? showHistory ? history : history.slice(0, RECENT_AUDIT_ROWS) : recent;
@@ -6338,10 +6368,26 @@ function AgentMonitorView(props) {
       { className: "att-monitor-card", role: "region", "aria-label": t("monitor.tab.agent") },
       h("div", null, t("servers.pending"))
     );
-  let current = snapshot?.currentAction, recentAudits = snapshot?.recentAudits ?? [], activeTransfers = snapshot?.activeTransfers ?? [], audits = selectAuditRows(recentAudits, history, showHistory), hasHistory = !!(history && history.length > RECENT_AUDIT_ROWS);
+  let current = snapshot?.currentAction, recentAudits = snapshot?.recentAudits ?? [], activeTransfers = snapshot?.activeTransfers ?? [], audits = selectAuditRows(recentAudits, history, showHistory), hasHistory = !!(history && history.length > RECENT_AUDIT_ROWS), activeActions = snapshot?.activeActions ?? [];
   return h(
     "div",
     { className: "att-monitor-grid", role: "region", "aria-label": t("monitor.tab.agent") },
+    // Concurrent Actions Card: only when more than one action is live. `currentAction` still
+    // renders below for every host that predates `activeActions`.
+    activeActions.length > 1 && h(
+      "div",
+      { className: "att-monitor-card", style: { gridColumn: "1 / -1" } },
+      h(
+        "div",
+        { className: "att-monitor-card-header" },
+        h("span", null, t("monitor.agent.concurrentTitle", { count: activeActions.length }))
+      ),
+      h(
+        "div",
+        { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+        ...activeActions.map((action) => concurrentActionRow(t, action))
+      )
+    ),
     // Live Action Card
     h(
       "div",
@@ -6350,14 +6396,7 @@ function AgentMonitorView(props) {
         "div",
         { className: "att-monitor-card-header" },
         h("span", null, t("monitor.agent.actionTitle")),
-        current && h(
-          "span",
-          {
-            className: `att-monitor-badge ${current.status === "running" ? "att-monitor-badge-running" : current.status === "confirmation_waiting" ? "att-monitor-badge-waiting" : current.status === "success" ? "att-monitor-badge-success" : "att-monitor-badge-denied"}`
-          },
-          current.status === "running" && h("span", { className: "att-monitor-badge-pulse-dot" }),
-          t(`monitor.status.${current.status === "confirmation_waiting" ? "waiting" : current.status}`)
-        )
+        current && actionStatusBadge(t, current.status)
       ),
       current ? h(
         "div",

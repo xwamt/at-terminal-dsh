@@ -1081,6 +1081,10 @@ export interface AgentActionSnapshot {
   status: AgentActionStatus;
   outputTail?: string;
   serverId?: string;
+  /** Agent that started the action; present for concurrent SubAgent/AgentTeam work. */
+  agentId?: string;
+  /** Session that issued the action, when the Host can see one. */
+  sessionId?: string;
 }
 
 export interface AgentAuditSummary {
@@ -1103,6 +1107,8 @@ export interface TransferProgressSnapshot {
 export interface AgentExecutionSnapshot {
   timestamp: number;
   currentAction?: AgentActionSnapshot;
+  /** Every currently running action, newest first; `currentAction` remains the compatibility view. */
+  activeActions?: AgentActionSnapshot[];
   recentAudits: AgentAuditSummary[];
   activeTransfers: TransferProgressSnapshot[];
 }

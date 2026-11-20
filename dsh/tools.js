@@ -653,7 +653,9 @@ export function createRunRemoteCommandTool({
             cwd: input.cwd,
             maxOutputBytes: input.maxOutputBytes,
             preAuthorized,
-            logger
+            logger,
+            agentId: typeof exec?.agent?.id === 'string' ? exec.agent.id : undefined,
+            sessionId: typeof exec?.agent?.session?.id === 'string' ? exec.agent.session.id : undefined
           })
           if (started.ok) {
             return { kind: 'background', jobId: started.jobId }
@@ -667,7 +669,11 @@ export function createRunRemoteCommandTool({
           // (or proved the server trusts the command). Handing that conclusion over is what
           // keeps one prompt per command: the service keeps its own authorization check, but
           // it no longer opens a second dialog.
-          preAuthorized
+          preAuthorized,
+          // Concurrent SubAgent/AgentTeam calls share one monitor. Passing the identity lets
+          // each action be attributed and kept side by side instead of overwriting the last.
+          agentId: typeof exec?.agent?.id === 'string' ? exec.agent.id : undefined,
+          sessionId: typeof exec?.agent?.session?.id === 'string' ? exec.agent.session.id : undefined
         })
         const spilled = await spillIfOverBudget({
           // Exactly the text `output.render` would have shown, label included: the inline
@@ -1771,6 +1777,25 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
           currentStatus: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           activeTransfersCount: { type: 'integer' },
           source: { type: 'string', enum: ['file', 'memory'] },
+          // Optional and additive: `currentAction` stays the compatibility view, while a
+          // concurrent SubAgent/AgentTeam step can inspect every running command here.
+          activeActions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string' },
+                command: { type: 'string' },
+                runningTimeMs: { type: 'integer' },
+                status: { type: 'string' },
+                serverId: { type: 'string' },
+                agentId: { type: 'string' },
+                sessionId: { type: 'string' },
+                outputTail: { type: 'string' }
+              }
+            }
+          },
           recentAudits: {
             type: 'array',
             items: {
@@ -1810,6 +1835,18 @@ export function createGetAgentExecutionStatusTool({ resolveAgentService, runInCo
           currentCommand: res.currentAction ? res.currentAction.command : null,
           currentStatus: res.currentAction ? res.currentAction.status : null,
           activeTransfersCount: res.activeTransfers ? res.activeTransfers.length : 0,
+          // An empty array rather than omission keeps the field's type stable for callers that
+          // branch on it; `currentAction` still carries the single-action compatibility view.
+          activeActions: (res.activeActions || []).map((a) => ({
+            id: a.id,
+            command: a.command,
+            runningTimeMs: a.runningTimeMs,
+            status: a.status,
+            ...(a.serverId === undefined ? {} : { serverId: a.serverId }),
+            ...(a.agentId === undefined ? {} : { agentId: a.agentId }),
+            ...(a.sessionId === undefined ? {} : { sessionId: a.sessionId }),
+            ...(a.outputTail === undefined ? {} : { outputTail: a.outputTail })
+          })),
           // `file` means the rows came from agent-audit.jsonl and survive a restart;
           // `memory` means the live ring, which is capped and dies with the process.
           source: res.source === 'file' ? 'file' : 'memory',

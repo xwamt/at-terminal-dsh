@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentToolService, type AgentToolServiceDependencies } from '../../src/agent/AgentToolService';
+import { AgentExecutionBridge } from '../../src/agent/AgentExecutionBridge';
 import type { AgentConfirmationPort } from '../../src/agent/AgentConfirmationPort';
 import {
   setRemoteCommandPolicyLoaderForTests
@@ -1344,5 +1345,77 @@ describe('AgentToolService sftp upload reporting', () => {
     expect(expired.recordAudit).toHaveBeenCalledWith(
       expect.objectContaining({ reasonCode: 'upload_timeout' })
     );
+  });
+});
+
+
+describe('AgentToolService — concurrent execution monitor (P2)', () => {
+  it('keeps two running actions side by side and falls currentAction back when one ends', async () => {
+    const allowed = {
+      ...server('server-1'),
+      backgroundConnectionAllowed: true,
+      agentCommandTrust: 'full' as const
+    };
+    const resolvers: Array<() => void> = [];
+    const execute = vi.fn(
+      (_server: unknown, _request: unknown) =>
+        new Promise((resolve) => {
+          resolvers.push(() =>
+            resolve({
+              serverId: 'server-1',
+              serverLabel: 'Production',
+              host: 'server-1.example.com',
+              command: 'sleep',
+              exitCode: 0,
+              stdout: 'ok',
+              stderr: '',
+              durationMs: 1,
+              timedOut: false,
+              truncated: false
+            })
+          );
+        })
+    );
+    const bridge = new AgentExecutionBridge();
+    const service = createService({
+      configManager: { getServer: async () => allowed, listServers: async () => [allowed] } as never,
+      terminalContext: new TerminalContextRegistry(),
+      executor: { execute } as unknown as RemoteCommandExecutor,
+      executionBridge: bridge
+    });
+
+    const first = service.runRemoteCommand({
+      serverId: 'server-1',
+      command: 'sleep 10',
+      agentId: 'agent-1',
+      sessionId: 'session-1'
+    });
+    const second = service.runRemoteCommand({
+      serverId: 'server-1',
+      command: 'sleep 20',
+      agentId: 'agent-2',
+      sessionId: 'session-2'
+    });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+
+    const both = await service.getAgentExecutionStatus();
+    expect(both.activeActions).toHaveLength(2);
+    expect(new Set(both.activeActions?.map((action) => action.agentId))).toEqual(
+      new Set(['agent-1', 'agent-2'])
+    );
+    expect(both.currentAction).toBeDefined();
+    expect(both.activeActions?.every((action) => action.status === 'running')).toBe(true);
+
+    // End the newer action first: the older one must remain visible; `currentAction` is a
+    // compatibility projection and must fall back to the action still running.
+    resolvers[1]?.();
+    await second;
+    const remaining = await service.getAgentExecutionStatus();
+    expect(remaining.activeActions).toHaveLength(1);
+    expect(remaining.activeActions?.[0]?.agentId).toBe('agent-1');
+    expect(remaining.currentAction?.agentId).toBe('agent-1');
+
+    resolvers[0]?.();
+    await first;
   });
 });

@@ -88,6 +88,13 @@ export interface RunRemoteCommandInput {
   maxOutputBytes?: number;
   signal?: AbortSignal;
   /**
+   * Identity for the execution monitor's concurrent action list. Filled by the tool layer
+   * from `exec.agent`; absent on direct service calls, where one action at a time is the
+   * only thing the caller can observe anyway.
+   */
+  agentId?: string;
+  sessionId?: string;
+  /**
    * What the registry's `tools/pre-execute` stage already concluded for this execution.
    *
    * `asked` means the Host put the question to the user and this call only reached the body
@@ -204,7 +211,9 @@ export class AgentToolService {
       id: actionId,
       command,
       serverId: input.serverId,
-      status: 'running'
+      status: 'running',
+      ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId })
     });
     try {
       const { server, authorization, resolvedBy } = await this.authorizeCommand({

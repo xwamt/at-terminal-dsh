@@ -42,6 +42,8 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64000;
  * @param {string|undefined} options.cwd
  * @param {number|undefined} options.maxOutputBytes
  * @param {'auto-approved'|'asked'|undefined} options.preAuthorized
+ * @param {string|undefined} options.agentId
+ * @param {string|undefined} options.sessionId
  * @param {object|undefined} options.logger
  * @returns {{ ok: true, jobId: string } | { ok: false, reason: string }}
  */
@@ -54,6 +56,8 @@ export function startRemoteCommandJob({
   cwd,
   maxOutputBytes,
   preAuthorized,
+  agentId,
+  sessionId,
   logger
 }) {
   if (!jobs || typeof jobs.start !== 'function') {
@@ -92,7 +96,7 @@ export function startRemoteCommandJob({
       ...(toolCall === undefined ? {} : { toolCall }),
       owner,
       outputLimitBytes: limit,
-      run: (handle) => runCommand({ handle, service, serverId, command, cwd, limit, preAuthorized, logger })
+      run: (handle) => runCommand({ handle, service, serverId, command, cwd, limit, preAuthorized, agentId, sessionId, logger })
     })
     return { ok: true, jobId }
   } catch (error) {
@@ -109,7 +113,7 @@ export function startRemoteCommandJob({
  * `run` is called synchronously from inside `start()`, so `handle.id` already exists — that
  * is what the pidfile is named after, and it is generated before `start()` returns.
  */
-function runCommand({ handle, service, serverId, command, cwd, limit, preAuthorized, logger }) {
+function runCommand({ handle, service, serverId, command, cwd, limit, preAuthorized, agentId, sessionId, logger }) {
   const pidfile = pidfileFor(handle.id)
   // A local abort is the only way to make the promise below settle when the remote kill
   // cannot land (dead connection, no pid recorded). Without it a cancelled job would stay
@@ -177,6 +181,8 @@ function runCommand({ handle, service, serverId, command, cwd, limit, preAuthori
         // blocks nothing.
         timeoutMs: 0,
         preAuthorized,
+        agentId,
+        sessionId,
         signal: controller.signal,
         onOutput: (chunk) => handle.append(chunk.text, { channel: chunk.channel })
       })

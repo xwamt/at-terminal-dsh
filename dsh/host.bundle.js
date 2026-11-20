@@ -16509,7 +16509,9 @@ var AgentToolService = class {
       id: actionId,
       command,
       serverId: input.serverId,
-      status: "running"
+      status: "running",
+      ...input.agentId === void 0 ? {} : { agentId: input.agentId },
+      ...input.sessionId === void 0 ? {} : { sessionId: input.sessionId }
     });
     try {
       let { server, authorization, resolvedBy } = await this.authorizeCommand({
@@ -17546,10 +17548,16 @@ var WINDOWS_DISK_SCRIPT = "$items = Get-CimInstance Win32_LogicalDisk -Filter 'D
 };
 
 // src/agent/AgentExecutionBridge.ts
-var AgentExecutionBridge = class {
-  currentAction;
-  actionStartedAt;
-  actionEndedAt;
+var SETTLED_VISIBLE_MS = 3e3, AgentExecutionBridge = class {
+  /**
+   * Every action in the retention window, keyed by the action id the service minted.
+   *
+   * A single `currentAction` was a real bug under DSH 0.2.2's concurrent SubAgent/AgentTeam
+   * scheduling: a second remote command overwrote the first, so the monitor reported only the
+   * newest one and the older work became invisible. The map keeps sibling actions independent;
+   * `currentAction` remains as a backward-compatible projection of the newest one.
+   */
+  actions = /* @__PURE__ */ new Map();
   recentAudits = [];
   activeTransfers = /* @__PURE__ */ new Map();
   listeners = /* @__PURE__ */ new Set();
@@ -17560,27 +17568,36 @@ var AgentExecutionBridge = class {
     this.now = options.now ?? Date.now, this.maxRecentAudits = options.maxRecentAudits ?? 50;
   }
   recordActionStart(params) {
-    let redacted = redactSensitiveText(params.command);
-    this.actionStartedAt = this.now(), this.actionEndedAt = void 0, this.currentAction = {
+    let redacted = redactSensitiveText(params.command), snapshot = {
       id: params.id,
       command: redacted,
       runningTimeMs: 0,
       status: params.status ?? "running",
-      serverId: params.serverId,
+      ...params.serverId === void 0 ? {} : { serverId: params.serverId },
+      ...params.agentId === void 0 ? {} : { agentId: params.agentId },
+      ...params.sessionId === void 0 ? {} : { sessionId: params.sessionId },
       outputTail: ""
-    }, this.notify();
+    };
+    this.actions.set(params.id, { snapshot, startedAt: this.now() }), this.notify();
   }
   recordActionStatus(id, status, outputTail) {
-    this.currentAction && this.currentAction.id === id && (this.currentAction.status = status, outputTail !== void 0 && (this.currentAction.outputTail = outputTail), this.notify());
+    let tracked = this.actions.get(id);
+    tracked !== void 0 && (tracked.snapshot.status = status, outputTail !== void 0 && (tracked.snapshot.outputTail = outputTail), this.notify());
   }
   recordActionEnd(id, status, outputTail) {
-    if (this.currentAction && this.currentAction.id === id) {
-      this.actionEndedAt = this.now(), this.currentAction.status = status, outputTail !== void 0 && (this.currentAction.outputTail = outputTail), this.actionStartedAt !== void 0 && (this.currentAction.runningTimeMs = Math.max(0, this.actionEndedAt - this.actionStartedAt)), this.notify();
-      let timer = setTimeout(() => {
-        this.clearTimers.delete(timer), this.currentAction && this.currentAction.id === id && (this.currentAction = void 0, this.actionStartedAt = void 0, this.actionEndedAt = void 0, this.notify());
-      }, 3e3);
-      timer.unref?.(), this.clearTimers.add(timer);
+    let tracked = this.actions.get(id);
+    if (tracked === void 0) return;
+    if (tracked.endedAt !== void 0) {
+      tracked.snapshot.status = status, outputTail !== void 0 && (tracked.snapshot.outputTail = outputTail), this.notify();
+      return;
     }
+    tracked.endedAt = this.now(), tracked.snapshot.status = status, outputTail !== void 0 && (tracked.snapshot.outputTail = outputTail), tracked.snapshot.runningTimeMs = Math.max(0, tracked.endedAt - tracked.startedAt), this.notify();
+    let timer = setTimeout(() => {
+      this.clearTimers.delete(timer);
+      let current = this.actions.get(id);
+      current !== void 0 && current.endedAt !== void 0 && (this.actions.delete(id), this.notify());
+    }, SETTLED_VISIBLE_MS);
+    timer.unref?.(), this.clearTimers.add(timer);
   }
   recordAudit(entry) {
     let decision = entry.reasonCode === "user_cancelled" || entry.reasonCode.includes("denied") ? "denied" : entry.reasonCode === "user_approved" ? "confirmed" : "allowed", item = {
@@ -17600,14 +17617,11 @@ var AgentExecutionBridge = class {
     this.activeTransfers.delete(id) && this.notify();
   }
   getSnapshot(limit = 10) {
-    let action = this.currentAction ? { ...this.currentAction } : void 0;
-    if (action && this.actionStartedAt !== void 0) {
-      let elapsed = this.actionEndedAt !== void 0 ? this.actionEndedAt - this.actionStartedAt : this.now() - this.actionStartedAt;
-      action.runningTimeMs = Math.max(0, elapsed);
-    }
+    let now = this.now(), tracked = [...this.actions.values()].sort((left, right) => right.startedAt - left.startedAt), activeActions = tracked.filter((action) => action.endedAt === void 0).map((action) => this.project(action, now)), current = tracked.find((action) => action.endedAt === void 0) ?? tracked[0], currentAction = current === void 0 ? void 0 : this.project(current, now);
     return {
-      timestamp: this.now(),
-      currentAction: action,
+      timestamp: now,
+      ...currentAction === void 0 ? {} : { currentAction },
+      activeActions,
       recentAudits: this.recentAudits.slice(0, Math.max(1, limit)),
       activeTransfers: Array.from(this.activeTransfers.values())
     };
@@ -17620,7 +17634,11 @@ var AgentExecutionBridge = class {
   dispose() {
     for (let timer of this.clearTimers)
       clearTimeout(timer);
-    this.clearTimers.clear(), this.listeners.clear(), this.activeTransfers.clear(), this.currentAction = void 0, this.actionStartedAt = void 0, this.actionEndedAt = void 0;
+    this.clearTimers.clear(), this.listeners.clear(), this.activeTransfers.clear(), this.actions.clear();
+  }
+  project(tracked, now) {
+    let elapsed = tracked.endedAt !== void 0 ? tracked.endedAt - tracked.startedAt : now - tracked.startedAt;
+    return { ...tracked.snapshot, runningTimeMs: Math.max(0, elapsed) };
   }
   notify() {
     if (this.listeners.size === 0) return;
