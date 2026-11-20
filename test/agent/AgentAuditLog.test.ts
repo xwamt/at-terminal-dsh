@@ -4,9 +4,15 @@ import { AGENT_AUDIT_FILE_NAME, AgentAuditLog } from '../../src/agent/AgentAudit
 function fakeFs() {
   const appended: Array<{ path: string; data: string }> = [];
   const mkdirs: string[] = [];
+  const renamed: Array<{ from: string; to: string }> = [];
+  let size = 0;
   return {
     appended,
     mkdirs,
+    renamed,
+    setSize(next: number) {
+      size = next;
+    },
     fs: {
       mkdir: vi.fn(async (path: string) => {
         mkdirs.push(path);
@@ -14,6 +20,11 @@ function fakeFs() {
       }),
       appendFile: vi.fn(async (path: string, data: string) => {
         appended.push({ path, data });
+      }),
+      stat: vi.fn(async () => ({ size })),
+      rename: vi.fn(async (from: string, to: string) => {
+        renamed.push({ from, to });
+        size = 0;
       })
     }
   };
@@ -116,6 +127,46 @@ describe('AgentAuditLog', () => {
     await log.flush();
 
     expect(appended.map((entry) => JSON.parse(entry.data).tool)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('rotates agent-audit.jsonl to .1 before the next write once it reaches maxFileBytes', async () => {
+    const fake = fakeFs();
+    const { channel } = fakeChannel();
+    const log = new AgentAuditLog({
+      storageDir: '/globalStorage',
+      channel,
+      now: () => 0,
+      maxFileBytes: 512,
+      fs: fake.fs
+    });
+
+    fake.setSize(512);
+    log.record({ tool: 'a', reasonCode: 'ok' });
+    await log.flush();
+
+    expect(fake.renamed).toHaveLength(1);
+    expect(fake.renamed[0]?.from.endsWith(`/${AGENT_AUDIT_FILE_NAME}`)).toBe(true);
+    expect(fake.renamed[0]?.to.endsWith(`/${AGENT_AUDIT_FILE_NAME}.1`)).toBe(true);
+    expect(fake.appended).toHaveLength(1);
+  });
+
+  it('does not rename a file that is still below maxFileBytes', async () => {
+    const fake = fakeFs();
+    const { channel } = fakeChannel();
+    const log = new AgentAuditLog({
+      storageDir: '/globalStorage',
+      channel,
+      now: () => 0,
+      maxFileBytes: 512,
+      fs: fake.fs
+    });
+
+    fake.setSize(511);
+    log.record({ tool: 'a', reasonCode: 'ok' });
+    await log.flush();
+
+    expect(fake.renamed).toEqual([]);
+    expect(fake.appended).toHaveLength(1);
   });
 
   it('never fails the tool call when the file write fails', async () => {

@@ -15119,12 +15119,12 @@ var SFTP_WRITE_STEP_TIMEOUT_MS = 55e3, REMOTE_TEMP_CLEANUP_TIMEOUT_MS = 2e3, DIR
   async statRaw(path) {
     let sftp = this.requireSftp();
     return await new Promise((resolve, reject) => {
-      sftp.stat(path, (error, stat) => {
+      sftp.stat(path, (error, stat2) => {
         if (error) {
           reject(error);
           return;
         }
-        resolve(stat);
+        resolve(stat2);
       });
     });
   }
@@ -15818,10 +15818,10 @@ function createDshSftpApi({ platform: platform2, createSession }) {
     async readFile(request) {
       let path = requiredRemotePath(request?.path), limit = clampTextLimit(request?.maxBytes);
       return await runTransfer(request?.terminalId, "read", path, async () => {
-        let stat = await manager.stat(path);
-        if (stat.type === "directory")
+        let stat2 = await manager.stat(path);
+        if (stat2.type === "directory")
           throw coded(SFTP_ERROR_NOT_A_FILE, `${path} is a directory, not a file.`);
-        let truncated = stat.size > limit, bytes = await manager.readFile(path, truncated ? limit : stat.size);
+        let truncated = stat2.size > limit, bytes = await manager.readFile(path, truncated ? limit : stat2.size);
         if (looksBinary2(bytes))
           throw coded(
             SFTP_ERROR_BINARY_FILE,
@@ -15834,8 +15834,8 @@ function createDshSftpApi({ platform: platform2, createSession }) {
           text: bytes.toString("utf8").replace(/\r\n/g, `
 `),
           eol: detectEol2(bytes),
-          size: stat.size,
-          modifiedAt: stat.modifiedAt,
+          size: stat2.size,
+          modifiedAt: stat2.modifiedAt,
           truncated
         };
       });
@@ -15870,16 +15870,16 @@ function createDshSftpApi({ platform: platform2, createSession }) {
     async download(request) {
       let path = requiredRemotePath(request?.path);
       return await runTransfer(request?.terminalId, "read", path, async () => {
-        let stat = await manager.stat(path);
-        if (stat.type === "directory")
+        let stat2 = await manager.stat(path);
+        if (stat2.type === "directory")
           throw coded(
             SFTP_ERROR_NOT_A_FILE,
             `${path} is a directory. Recursive download is not available in this panel yet \u2014 use the Terminal page (tar over ssh, or scp -r).`
           );
-        if (stat.size > SFTP_TRANSFER_MAX_BYTES)
+        if (stat2.size > SFTP_TRANSFER_MAX_BYTES)
           throw coded(
             SFTP_ERROR_FILE_TOO_LARGE,
-            `${path} is ${stat.size} bytes, over the ${SFTP_TRANSFER_MAX_BYTES}-byte transfer limit. Use the Terminal page (scp or rsync) for a file this large.`
+            `${path} is ${stat2.size} bytes, over the ${SFTP_TRANSFER_MAX_BYTES}-byte transfer limit. Use the Terminal page (scp or rsync) for a file this large.`
           );
         let bytes = await manager.readFile(path, SFTP_TRANSFER_MAX_BYTES);
         return {
@@ -15888,7 +15888,7 @@ function createDshSftpApi({ platform: platform2, createSession }) {
           // an invalid local name — the same rule the VS Code preview path follows.
           name: safePreviewName(path),
           size: bytes.length,
-          modifiedAt: stat.modifiedAt,
+          modifiedAt: stat2.modifiedAt,
           // Base64 for the same reason the PTY stream uses it: a JSON string cannot carry
           // arbitrary bytes, and a split multi-byte sequence is the obvious casualty.
           base64: bytes.toString("base64")
@@ -18239,18 +18239,18 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     return await this.withAudit("sftp_stat_path", input, async () => {
       let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
       try {
-        let path = await this.resolvePath(lease, input.path), stat = await withTimeout2(
+        let path = await this.resolvePath(lease, input.path), stat2 = await withTimeout2(
           lease.session.stat(path),
           READ_TIMEOUT_MS,
           `Timed out reading metadata for ${path}.`
         );
-        return this.observe(target2, lease, path, stat), {
+        return this.observe(target2, lease, path, stat2), {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
           resolvedBy: target2.resolvedBy,
           ...target2.candidates === void 0 ? {} : { candidates: target2.candidates },
           path,
-          ...stat
+          ...stat2
         };
       } finally {
         lease.release();
@@ -18261,28 +18261,28 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     return await this.withAudit("sftp_read_file", input, async () => {
       let target2 = await this.resolveTarget(input, "read"), lease = await this.leaseFor(target2);
       try {
-        let path = await this.resolvePath(lease, input.path), stat = await withTimeout2(
+        let path = await this.resolvePath(lease, input.path), stat2 = await withTimeout2(
           lease.session.stat(path),
           READ_TIMEOUT_MS,
           `Timed out reading metadata for ${path}.`
-        ), maxBytes = clampReadBytes(input.maxBytes), start2 = resolveReadStart(input.offset, stat.size), window2 = Math.min(Math.max(stat.size - start2, 0), maxBytes), buffer = window2 === 0 ? Buffer.alloc(0) : (await withTimeout2(
+        ), maxBytes = clampReadBytes(input.maxBytes), start2 = resolveReadStart(input.offset, stat2.size), window2 = Math.min(Math.max(stat2.size - start2, 0), maxBytes), buffer = window2 === 0 ? Buffer.alloc(0) : (await withTimeout2(
           lease.session.readFile(path, window2, start2),
           READ_TIMEOUT_MS,
           `Timed out reading remote file ${path}.`
         )).subarray(0, window2);
         if (looksBinary(buffer))
           throw new Error("Remote file appears to be binary.");
-        return this.observe(target2, lease, path, stat), {
+        return this.observe(target2, lease, path, stat2), {
           terminalId: target2.terminalId,
           serverId: target2.server.id,
           resolvedBy: target2.resolvedBy,
           ...target2.candidates === void 0 ? {} : { candidates: target2.candidates },
           path,
           content: buffer.toString("utf8"),
-          truncated: start2 + buffer.length < stat.size,
+          truncated: start2 + buffer.length < stat2.size,
           offset: start2,
-          size: stat.size,
-          modifiedAt: stat.modifiedAt
+          size: stat2.size,
+          modifiedAt: stat2.modifiedAt
         };
       } finally {
         lease.release();
@@ -18473,12 +18473,12 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   }
   /** Resolve the patch base directory; patch paths are relative to it and cannot escape it. */
   async resolvePatchBase(lease, path) {
-    let base = await this.resolvePath(lease, path), stat = await withTimeout2(
+    let base = await this.resolvePath(lease, path), stat2 = await withTimeout2(
       lease.session.stat(base),
       READ_TIMEOUT_MS,
       `Timed out reading metadata for ${base}.`
     );
-    if (stat.type !== void 0 && stat.type !== "directory")
+    if (stat2.type !== void 0 && stat2.type !== "directory")
       throw new Error(`Patch base path is not a directory: ${base}`);
     return base;
   }
@@ -18632,37 +18632,37 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     let known = states.get(path);
     if (known !== void 0)
       return known;
-    let stat = await statIfPresent(lease.session, path);
-    if (stat === void 0) {
+    let stat2 = await statIfPresent(lease.session, path);
+    if (stat2 === void 0) {
       let state2 = { exists: !1, eol: "lf", touched: !1 };
       return states.set(path, state2), state2;
     }
-    if (stat.type !== void 0 && stat.type !== "file")
+    if (stat2.type !== void 0 && stat2.type !== "file")
       throw new Error(`Remote path is not a regular file: ${path}`);
     if (!readText) {
-      this.observe(target2, lease, path, stat);
-      let state2 = { exists: !0, stat, eol: "lf", touched: !1 };
+      this.observe(target2, lease, path, stat2);
+      let state2 = { exists: !0, stat: stat2, eol: "lf", touched: !1 };
       return states.set(path, state2), state2;
     }
-    let content = await this.readPatchFile(target2, lease, path, stat), state = { exists: !0, stat, text: content.text, eol: content.eol, touched: !1 };
+    let content = await this.readPatchFile(target2, lease, path, stat2), state = { exists: !0, stat: stat2, text: content.text, eol: content.eol, touched: !1 };
     return states.set(path, state), state;
   }
   /** Read a file for patch preflight, enforcing the same text/size/binary rules as editFile. */
-  async readPatchFile(target2, lease, path, stat) {
-    if (stat.size > SFTP_EDIT_MAX_BYTES)
-      throw new Error(tooLargeToPatchMessage(stat.size));
-    let readLimit = Math.min(stat.size + 1, SFTP_EDIT_MAX_BYTES + 1), buffer = await withTimeout2(
+  async readPatchFile(target2, lease, path, stat2) {
+    if (stat2.size > SFTP_EDIT_MAX_BYTES)
+      throw new Error(tooLargeToPatchMessage(stat2.size));
+    let readLimit = Math.min(stat2.size + 1, SFTP_EDIT_MAX_BYTES + 1), buffer = await withTimeout2(
       lease.session.readFile(path, readLimit),
       READ_TIMEOUT_MS,
       `Timed out reading remote file ${path}.`
     );
     if (buffer.length > SFTP_EDIT_MAX_BYTES)
       throw new Error(tooLargeToPatchMessage(buffer.length));
-    if (buffer.length !== stat.size)
-      throw new SftpStaleVersionError(path, { size: stat.size, modifiedAt: stat.modifiedAt });
+    if (buffer.length !== stat2.size)
+      throw new SftpStaleVersionError(path, { size: stat2.size, modifiedAt: stat2.modifiedAt });
     if (looksBinary(buffer))
       throw new Error(`Remote file appears to be binary; refusing to patch ${path}.`);
-    return this.observe(target2, lease, path, stat), {
+    return this.observe(target2, lease, path, stat2), {
       text: buffer.toString("utf8").replace(/\r\n/g, `
 `),
       eol: detectEol(buffer)
@@ -18797,13 +18797,13 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
     };
   }
   async readPatchCurrent(target2, lease, path) {
-    let stat = await statIfPresent(lease.session, path);
-    if (stat === void 0)
+    let stat2 = await statIfPresent(lease.session, path);
+    if (stat2 === void 0)
       throw new SftpStaleVersionError(path);
-    if (stat.type !== void 0 && stat.type !== "file")
+    if (stat2.type !== void 0 && stat2.type !== "file")
       throw new Error(`Remote path is not a regular file: ${path}`);
-    let file = await this.readPatchFile(target2, lease, path, stat);
-    return { stat, ...file };
+    let file = await this.readPatchFile(target2, lease, path, stat2);
+    return { stat: stat2, ...file };
   }
   async expectPatchStat(lease, path) {
     return await withTimeout2(
@@ -19219,11 +19219,11 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
   scopeFor(target2, lease) {
     return target2.terminalId === void 0 ? lease.rootKey : `terminal:${target2.terminalId}`;
   }
-  observe(target2, lease, path, stat) {
-    if (!Number.isFinite(stat.size) || !Number.isFinite(stat.modifiedAt))
+  observe(target2, lease, path, stat2) {
+    if (!Number.isFinite(stat2.size) || !Number.isFinite(stat2.modifiedAt))
       return;
     let scope = this.scopeFor(target2, lease), files = this.observations.get(scope);
-    files === void 0 && (files = /* @__PURE__ */ new Map(), this.observations.set(scope, files)), files.set(observationKey(target2.server.id, path), { size: stat.size, modifiedAt: stat.modifiedAt });
+    files === void 0 && (files = /* @__PURE__ */ new Map(), this.observations.set(scope, files)), files.set(observationKey(target2.server.id, path), { size: stat2.size, modifiedAt: stat2.modifiedAt });
   }
   observationFor(target2, lease, path) {
     return this.observations.get(this.scopeFor(target2, lease))?.get(observationKey(target2.server.id, path));
@@ -19292,12 +19292,12 @@ var DEFAULT_READ_BYTES = 64 * 1024, MAX_READ_BYTES = 256 * 1024, DEFAULT_MAX_ENT
    */
   async observeAfterWrite(target2, lease, path) {
     try {
-      let stat = await withTimeout2(
+      let stat2 = await withTimeout2(
         lease.session.stat(path),
         READ_TIMEOUT_MS,
         `Timed out reading metadata for ${path}.`
       );
-      this.observe(target2, lease, path, stat);
+      this.observe(target2, lease, path, stat2);
     } catch {
       this.forgetObservation(target2, lease, path);
     }
@@ -20832,17 +20832,18 @@ import { readFile as readFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
 
 // src/agent/AgentAuditLog.ts
-import { appendFile, mkdir as mkdir2 } from "node:fs/promises";
+import { appendFile, mkdir as mkdir2, rename, stat } from "node:fs/promises";
 import { dirname as dirname3, join as join6 } from "node:path";
-var AGENT_AUDIT_FILE_NAME = "agent-audit.jsonl", AgentAuditLog = class {
+var AGENT_AUDIT_FILE_NAME = "agent-audit.jsonl", DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024, AgentAuditLog = class {
   filePath;
   channel;
   now;
   fs;
+  maxFileBytes;
   /** Serializes appends so concurrent tool calls cannot interleave half-lines. */
   tail = Promise.resolve();
   constructor(options) {
-    this.filePath = join6(options.storageDir, AGENT_AUDIT_FILE_NAME), this.channel = options.channel, this.now = options.now ?? Date.now, this.fs = options.fs ?? { mkdir: mkdir2, appendFile };
+    this.filePath = join6(options.storageDir, AGENT_AUDIT_FILE_NAME), this.channel = options.channel, this.now = options.now ?? Date.now, this.fs = options.fs ?? { mkdir: mkdir2, appendFile, stat, rename }, this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   }
   /** Fire-and-forget: an audit failure must never fail the tool call it describes. */
   record(entry) {
@@ -20852,9 +20853,26 @@ var AGENT_AUDIT_FILE_NAME = "agent-audit.jsonl", AgentAuditLog = class {
       ...entry.command === void 0 ? {} : { command: redactSensitiveText(entry.command) }
     });
     this.channel.appendLine(line), this.tail = this.tail.then(async () => {
-      await this.fs.mkdir(dirname3(this.filePath), { recursive: !0 }), await this.fs.appendFile(this.filePath, `${line}
+      await this.fs.mkdir(dirname3(this.filePath), { recursive: !0 }), await this.rotateIfOversized(), await this.fs.appendFile(this.filePath, `${line}
 `, "utf8");
     }).catch(() => {
+    });
+  }
+  /**
+   * Move the current file aside when the next append would cross the bound.
+   *
+   * The check and the append run inside the same serialized tail, so two concurrent tool
+   * calls cannot both decide to rotate (the second would rename the freshly written file).
+   * A rotation failure is swallowed: an audit file that grows is a smaller problem than a
+   * tool call that fails because the disk refused a rename.
+   */
+  async rotateIfOversized() {
+    if (!Number.isFinite(this.maxFileBytes) || this.maxFileBytes <= 0) return;
+    let measure = this.fs.stat, move = this.fs.rename;
+    if (measure === void 0 || move === void 0) return;
+    let info2 = await measure.call(this.fs, this.filePath).catch(() => {
+    });
+    info2 === void 0 || info2.size < this.maxFileBytes || await move.call(this.fs, this.filePath, `${this.filePath}.1`).catch(() => {
     });
   }
   /** Resolves once every entry recorded so far has been written to disk. */
@@ -20879,6 +20897,14 @@ function createRingChannel(ringSize, logger) {
     },
     lines() {
       return ring;
+    },
+    /**
+     * Seed the ring from the file on the first read. Appends continue into the same ring, so
+     * after one hydration the HUD's small polls are answered from memory instead of reading a
+     * JSONL that grows without bound.
+     */
+    hydrate(lines) {
+      ring.length = 0, ring.push(...lines.slice(-ringSize));
     }
   };
 }
@@ -20916,7 +20942,14 @@ function createDshAuditLog(options) {
     channel,
     ...options.now === void 0 ? {} : { now: options.now },
     ...options.writeFs === void 0 ? {} : { fs: options.writeFs }
-  }), filePath = join7(options.storageDir, AGENT_AUDIT_FILE_NAME), readText = options.readText ?? ((file) => readFile5(file, "utf8"));
+  }), filePath = join7(options.storageDir, AGENT_AUDIT_FILE_NAME), readText = options.readText ?? ((file) => readFile5(file, "utf8")), ringSize = options.ringSize ?? 50, hydrated = !1, summarize = (window2) => {
+    let summaries = [];
+    for (let [index, line] of window2.entries()) {
+      let summary = summaryOfLine(line, index);
+      summary !== void 0 && summaries.push(summary);
+    }
+    return summaries;
+  };
   return {
     filePath,
     record(entry) {
@@ -20927,14 +20960,12 @@ function createDshAuditLog(options) {
     },
     async readRecent(limit) {
       let wanted = Math.max(1, Math.trunc(limit));
+      if (hydrated && wanted <= ringSize && channel.lines().length >= wanted)
+        return summarize(channel.lines().slice(-wanted));
       try {
-        let window2 = (await readText(filePath)).split(`
-`).filter((line) => line.trim() !== "").slice(-wanted), summaries = [];
-        for (let [index, line] of window2.entries()) {
-          let summary = summaryOfLine(line, index);
-          summary !== void 0 && summaries.push(summary);
-        }
-        return summaries;
+        let lines = (await readText(filePath)).split(`
+`).filter((line) => line.trim() !== "");
+        return !hydrated && channel.lines().length === 0 && (channel.hydrate(lines), hydrated = !0), summarize(lines.slice(-wanted));
       } catch {
         return;
       }

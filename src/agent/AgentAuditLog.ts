@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { redactSensitiveText } from '../utils/redaction';
 
@@ -42,6 +42,9 @@ export interface AgentAuditChannel {
 export interface AgentAuditFileSystem {
   mkdir(path: string, options: { recursive: true }): Promise<unknown>;
   appendFile(path: string, data: string, encoding: 'utf8'): Promise<void>;
+  /** Optional so test doubles written before rotation still satisfy the seam. */
+  stat?(path: string): Promise<{ size: number }>;
+  rename?(oldPath: string, newPath: string): Promise<void>;
 }
 
 export interface AgentAuditLogOptions {
@@ -50,6 +53,8 @@ export interface AgentAuditLogOptions {
   channel: AgentAuditChannel;
   now?: () => number;
   fs?: AgentAuditFileSystem;
+  /** Rotate to `<file>.1` before an append once the file reaches this size (default 5 MiB). */
+  maxFileBytes?: number;
 }
 
 /** The slice of the audit log that tool services depend on. */
@@ -60,11 +65,14 @@ export type AgentAuditRecorder = Pick<AgentAuditLog, 'record'>;
  * lands in an OutputChannel the user can watch and a JSONL file that survives the
  * session. Command text is redacted before it is written anywhere.
  */
+const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
+
 export class AgentAuditLog {
   private readonly filePath: string;
   private readonly channel: AgentAuditChannel;
   private readonly now: () => number;
   private readonly fs: AgentAuditFileSystem;
+  private readonly maxFileBytes: number;
   /** Serializes appends so concurrent tool calls cannot interleave half-lines. */
   private tail: Promise<void> = Promise.resolve();
 
@@ -72,7 +80,8 @@ export class AgentAuditLog {
     this.filePath = join(options.storageDir, AGENT_AUDIT_FILE_NAME);
     this.channel = options.channel;
     this.now = options.now ?? Date.now;
-    this.fs = options.fs ?? { mkdir, appendFile };
+    this.fs = options.fs ?? { mkdir, appendFile, stat, rename };
+    this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   }
 
   /** Fire-and-forget: an audit failure must never fail the tool call it describes. */
@@ -86,9 +95,28 @@ export class AgentAuditLog {
     this.tail = this.tail
       .then(async () => {
         await this.fs.mkdir(dirname(this.filePath), { recursive: true });
+        await this.rotateIfOversized();
         await this.fs.appendFile(this.filePath, `${line}\n`, 'utf8');
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * Move the current file aside when the next append would cross the bound.
+   *
+   * The check and the append run inside the same serialized tail, so two concurrent tool
+   * calls cannot both decide to rotate (the second would rename the freshly written file).
+   * A rotation failure is swallowed: an audit file that grows is a smaller problem than a
+   * tool call that fails because the disk refused a rename.
+   */
+  private async rotateIfOversized(): Promise<void> {
+    if (!Number.isFinite(this.maxFileBytes) || this.maxFileBytes <= 0) return;
+    const measure = this.fs.stat;
+    const move = this.fs.rename;
+    if (measure === undefined || move === undefined) return;
+    const info = await measure.call(this.fs, this.filePath).catch(() => undefined);
+    if (info === undefined || info.size < this.maxFileBytes) return;
+    await move.call(this.fs, this.filePath, `${this.filePath}.1`).catch(() => undefined);
   }
 
   /** Resolves once every entry recorded so far has been written to disk. */

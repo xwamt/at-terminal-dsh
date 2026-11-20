@@ -116,6 +116,28 @@ describe('createDshAuditLog', () => {
     expect(new Set(recent?.map((row) => row.id)).size).toBe(2);
   });
 
+  it('hydrates the memory ring once and then answers small reads without re-reading the file', async () => {
+    const lines = [
+      { time: '2026-10-21T00:00:00.000Z', tool: 'run_remote_command', command: 'id', reasonCode: 'completed' },
+      { time: '2026-10-21T00:00:01.000Z', tool: 'run_remote_command', command: 'uptime', reasonCode: 'completed' }
+    ];
+    const readText = vi.fn(async () => `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+    const log = createDshAuditLog({
+      storageDir: '/tmp/at-audit',
+      writeFs: memoryFs().fs,
+      readText
+    });
+
+    expect((await log.readRecent(5))?.map((row) => row.command)).toEqual(['id', 'uptime']);
+    expect(readText).toHaveBeenCalledTimes(1);
+
+    // The HUD polls every few seconds with a small limit. Once the file has been read once,
+    // those polls must not re-read a multi-megabyte JSONL from disk each time.
+    expect((await log.readRecent(1))?.map((row) => row.command)).toEqual(['uptime']);
+    expect((await log.readRecent(2))?.map((row) => row.command)).toEqual(['id', 'uptime']);
+    expect(readText).toHaveBeenCalledTimes(1);
+  });
+
   it('skips a corrupt line instead of failing the whole read', async () => {
     const log = createDshAuditLog({
       storageDir: '/tmp/at-audit',

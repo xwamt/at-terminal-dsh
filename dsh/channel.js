@@ -75,7 +75,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { appendFile } from 'node:fs/promises'
+import { appendFile, rename, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -103,6 +103,34 @@ export const CLIENT_DIAGNOSTIC_FILE = join(
   'at-terminal',
   'client-diagnostics.log'
 )
+
+/** Same 5 MiB bound the agent audit log uses; a diagnostic log must not grow forever. */
+const CLIENT_DIAGNOSTIC_MAX_BYTES = 5 * 1024 * 1024
+
+/**
+ * Serialized append with one-generation rotation.
+ *
+ * `client.diagnostic` is fire-and-forget, so an unawaited stat/rename/append sequence could
+ * interleave with the next diagnostic and rotate a file that was just written. One promise
+ * chain keeps the decision and the append ordered; failures stay swallowed by design.
+ */
+let clientDiagnosticTail = Promise.resolve()
+function appendClientDiagnostic(line) {
+  clientDiagnosticTail = clientDiagnosticTail
+    .then(async () => {
+      try {
+        const info = await stat(CLIENT_DIAGNOSTIC_FILE)
+        if (info.size >= CLIENT_DIAGNOSTIC_MAX_BYTES) {
+          await rename(CLIENT_DIAGNOSTIC_FILE, `${CLIENT_DIAGNOSTIC_FILE}.1`)
+        }
+      } catch {
+        // Absent file is normal; a failed stat must not drop the diagnostic itself.
+      }
+      await appendFile(CLIENT_DIAGNOSTIC_FILE, line, { encoding: 'utf8' })
+    })
+    .catch(() => undefined)
+  return clientDiagnosticTail
+}
 
 export const ROUTES = Object.freeze([
   { kind: 'exact', path: `${PREFIX}/health`, label: 'JSON probe' },
@@ -649,8 +677,9 @@ export function registerChannel(ctx, options) {
         } else {
           ctx.logger.info('at-terminal client diagnostic: %s', entry.message ?? '(no message)')
         }
-        // Asynchronous non-blocking file append to keep Node main loop free
-        appendFile(CLIENT_DIAGNOSTIC_FILE, line, { encoding: 'utf8' }).catch(() => undefined)
+        // Asynchronous non-blocking file append to keep Node main loop free, with the
+        // size check and rotation ordered ahead of it in the same chain.
+        appendClientDiagnostic(line)
         return { recorded: true, file: CLIENT_DIAGNOSTIC_FILE }
       } catch (error) {
         ctx.logger.error('at-terminal: could not record client diagnostic: %s', error?.message)

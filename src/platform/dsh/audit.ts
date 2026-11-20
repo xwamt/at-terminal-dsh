@@ -65,6 +65,7 @@ export interface DshAuditLog {
  */
 function createRingChannel(ringSize: number, logger?: DshAuditLogger): AgentAuditChannel & {
   lines(): readonly string[];
+  hydrate(lines: readonly string[]): void;
 } {
   const ring: string[] = [];
   return {
@@ -79,6 +80,15 @@ function createRingChannel(ringSize: number, logger?: DshAuditLogger): AgentAudi
     },
     lines(): readonly string[] {
       return ring;
+    },
+    /**
+     * Seed the ring from the file on the first read. Appends continue into the same ring, so
+     * after one hydration the HUD's small polls are answered from memory instead of reading a
+     * JSONL that grows without bound.
+     */
+    hydrate(lines: readonly string[]): void {
+      ring.length = 0;
+      ring.push(...lines.slice(-ringSize));
     }
   };
 }
@@ -144,6 +154,18 @@ export function createDshAuditLog(options: DshAuditLogOptions): DshAuditLog {
   });
   const filePath = join(options.storageDir, AGENT_AUDIT_FILE_NAME);
   const readText: DshAuditTextReader = options.readText ?? ((file) => readFile(file, 'utf8'));
+  const ringSize = options.ringSize ?? 50;
+  let hydrated = false;
+
+  const summarize = (window: readonly string[]): AgentAuditSummary[] => {
+    // Oldest first: the caller (and the HUD) wants newest last, exactly like the file.
+    const summaries: AgentAuditSummary[] = [];
+    for (const [index, line] of window.entries()) {
+      const summary = summaryOfLine(line, index);
+      if (summary !== undefined) summaries.push(summary);
+    }
+    return summaries;
+  };
 
   return {
     filePath,
@@ -156,17 +178,20 @@ export function createDshAuditLog(options: DshAuditLogOptions): DshAuditLog {
 
     async readRecent(limit: number): Promise<AgentAuditSummary[] | undefined> {
       const wanted = Math.max(1, Math.trunc(limit));
+      // The monitor polls this on every refresh. Once the file has been read once, a small
+      // window is already mirrored in memory; reading the whole file again would make the
+      // cost grow with the audit history instead of with the number of rows shown.
+      if (hydrated && wanted <= ringSize && channel.lines().length >= wanted) {
+        return summarize(channel.lines().slice(-wanted));
+      }
       try {
         const text = await readText(filePath);
         const lines = text.split('\n').filter((line) => line.trim() !== '');
-        const window = lines.slice(-wanted);
-        // Oldest first: the caller (and the HUD) wants newest last, exactly like the file.
-        const summaries: AgentAuditSummary[] = [];
-        for (const [index, line] of window.entries()) {
-          const summary = summaryOfLine(line, index);
-          if (summary !== undefined) summaries.push(summary);
+        if (!hydrated && channel.lines().length === 0) {
+          channel.hydrate(lines);
+          hydrated = true;
         }
-        return summaries;
+        return summarize(lines.slice(-wanted));
       } catch {
         // Absent file is the normal state before the first tool call; the caller decides
         // whether to fall back to the in-memory ring and says so in its output.
