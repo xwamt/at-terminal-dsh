@@ -737,6 +737,14 @@ export function apply(ctx, config = {}) {
             )
           })
           const terminalContext = new TerminalContextRegistry()
+          /*
+           * Publish the live registry for the opt-in terminal bundle. That bundle is a
+           * separate compilation in the same process and cannot import this one; the
+           * `Platform` singleton is the shared object it can read. Without this, its
+           * `terminal_open` admission check cannot tell "the user already has a panel
+           * terminal on this server" from "this is a pure background connection".
+           */
+          handle.platform.terminalContext = terminalContext
           // SFTP before the terminal: the terminal announces its sessions to this face, which
           // is how the file tree knows which terminal to follow. Constructing them the other
           // way round would need a wiring step that could be forgotten.

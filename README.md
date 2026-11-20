@@ -67,7 +67,7 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
    - Copy, paste and find follow the operating system: `⌘C` / `⌘V` / `⌘F` on macOS, `Ctrl+C` / `Ctrl+V` / `Ctrl+F` on Windows and Linux.
    - On macOS `Ctrl+C` stays a shell interrupt instead of becoming "copy"; the DSH shortcut registry binds `primary`, so new-tab and page switches map the same way.
 9. **Optional Persistent SSH Terminals** (second, opt-in bundle — not installed by default):
-   - Adds a `type: "ssh"` backend to dsh's own `ctx.terminals`, so the six built-in `terminal_*` tools drive a **remote** shell: `terminal_open({ type: "ssh", name: "payment01" })`, then `terminal_send` / `terminal_read`, and `cd` survives between calls.
+   - Adds a `type: "ssh"` backend to dsh's own `ctx.terminals`, so the six built-in `terminal_*` tools drive a **remote** shell: `terminal_open({ type: "ssh", name: "payment01" })`, then `terminal_send` / `terminal_read`, and `cd` survives between calls. Opening one requires the server to allow background connections or to have an AT Terminal panel tab already connected; SubAgents are refused and one Agent holds at most four live sessions.
    - `name` is the server selector (server id first, then label; an ambiguous label is refused rather than guessed), because the official tool takes no `serverId`.
    - Composed as `cordis:group` + `isolate: { terminals: true }`, so a profile without it is byte-for-byte unaffected, and the right-sidebar terminal (a different subsystem) keeps its own registry.
 10. **Settings Page, Trust Library & i18n**:

@@ -52,9 +52,10 @@ Splitting it out also buys two things that would be lost inside the main package
 - `@at-series/dsh-at-terminal` `^0.3.2` (declared as a peer; it exports the SSH backend this bundle
   references by subpath, so the backend lives in one place instead of being copied here)
 - A DeepSeek Harness desktop build that composes `@deepseek-ai/dsh-terminal` — every 0.2.x does
-- A configured server with **Allow background connections** enabled, if you want the agent's
-  one-shot tools to reach it too. The persistent shell does not need that flag; the one-shot
-  command and SFTP tools do.
+- A configured server that either has **Allow background connections** enabled or already has a
+  terminal tab open in the AT Terminal panel. An agent-opened persistent shell is a background
+  connection too: it cannot be seen in the panel, so the same admission rule covers it, the
+  one-shot command tool and SFTP.
 
 ## Enabling and disabling
 

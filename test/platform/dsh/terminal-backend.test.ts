@@ -6,7 +6,7 @@ import {
   type SshConnection,
   type SshOutputHandlers
 } from '../../../src/platform/dsh/terminalBackend/sshBackend';
-import { resolveServerByName } from '../../../src/platform/dsh/terminalEntry';
+import { assertServerAllowsAgentTerminal, resolveServerByName } from '../../../src/platform/dsh/terminalEntry';
 
 /**
  * The `ssh` PTY backend and its session adapter (S6-02).
@@ -214,6 +214,90 @@ describe('ssh backend — send', () => {
   });
 });
 
+describe('ssh backend — owner admission and cwd (E1)', () => {
+  it('refuses a SubAgent-owned persistent terminal before connecting', async () => {
+    const subject = harness();
+    await expect(
+      subject.backend.spawn({
+        sessionId: 'pty-sub',
+        type: 'ssh',
+        name: 'payment01',
+        owner: { id: 'agent-sub', session: { header: { origin: 'subagent' } } }
+      })
+    ).rejects.toThrow(/Subagents cannot open persistent SSH terminals/);
+    expect(subject.open).not.toHaveBeenCalled();
+  });
+
+  it('allows a SubAgent only when the deployment opts in', async () => {
+    const subject = harness();
+    const backend = createSshTerminalBackend({
+      type: 'ssh',
+      idleSilenceMs: idle,
+      sendTimeoutMs: 400,
+      allowSubagents: true,
+      open: subject.open
+    });
+    const session = await backend.spawn({
+      sessionId: 'pty-sub',
+      type: 'ssh',
+      name: 'payment01',
+      owner: { id: 'agent-sub', session: { header: { origin: 'subagent' } } }
+    });
+    expect(session.motd).toContain('root@v:~#');
+    await session.close('test');
+  });
+
+  it('caps one owner at four live sessions and releases the slot on exit', async () => {
+    const subject = harness();
+    const sessions = [];
+    for (let index = 0; index < 4; index += 1) {
+      sessions.push(
+        await subject.backend.spawn({
+          sessionId: `pty-${index}`,
+          type: 'ssh',
+          name: 'payment01',
+          owner: { id: 'agent-1' }
+        })
+      );
+    }
+    await expect(
+      subject.backend.spawn({
+        sessionId: 'pty-over',
+        type: 'ssh',
+        name: 'payment01',
+        owner: { id: 'agent-1' }
+      })
+    ).rejects.toThrow(/limit 4/);
+    expect(subject.open).toHaveBeenCalledTimes(4);
+
+    // Closing one session frees exactly one slot.
+    await sessions[0]?.close('test');
+    await Promise.resolve();
+    const replacement = await subject.backend.spawn({
+      sessionId: 'pty-replacement',
+      type: 'ssh',
+      name: 'payment01',
+      owner: { id: 'agent-1' }
+    });
+    expect(replacement.motd).toContain('root@v:~#');
+    for (const session of sessions.slice(1)) await session.close('test');
+    await replacement.close('test');
+  });
+
+  it('runs cd -- <quoted cwd> as the first command after startup', async () => {
+    const subject = harness();
+    const session = await subject.backend.spawn({
+      sessionId: 'pty-cwd',
+      type: 'ssh',
+      name: 'payment01',
+      cwd: "/var/log/team's logs",
+      owner: { id: 'agent-1' }
+    });
+    expect(subject.writes).toContain("cd -- '/var/log/team'\\''s logs'\r");
+    await session.close('test');
+  });
+});
+
 describe('ssh backend — read, signal, close', () => {
   it('pages scrollback newest-relative, like the local backend', async () => {
     const subject = harness();
@@ -336,5 +420,21 @@ describe('ssh backend — the stored stream is text, not escapes', () => {
     subject.feed('\u001b[K\u001b]0;t\u0007');
 
     expect(session.read({ count: 10 }).totalLines).toBe(before);
+  });
+});
+
+describe('terminalEntry — background admission (E1)', () => {
+  it('allows a server that already has a panel terminal or permits background connections', () => {
+    expect(() => assertServerAllowsAgentTerminal({ id: 'srv-1', label: 'Prod', backgroundConnectionAllowed: true }, false)).not.toThrow();
+    expect(() => assertServerAllowsAgentTerminal({ id: 'srv-1', label: 'Prod' }, true)).not.toThrow();
+  });
+
+  it('refuses a pure background terminal and names both ways to enable it', () => {
+    expect(() => assertServerAllowsAgentTerminal({ id: 'srv-1', label: 'Prod' }, false)).toThrow(
+      /does not allow background connections/
+    );
+    expect(() => assertServerAllowsAgentTerminal({ id: 'srv-1', label: 'Prod' }, false)).toThrow(
+      /open a terminal tab for that server/
+    );
   });
 });

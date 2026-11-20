@@ -60,6 +60,34 @@ const COLS = 120;
 interface ServerRow {
   id: string;
   label: string;
+  /** Mirrors the server form's "Allow background connections" switch. */
+  backgroundConnectionAllowed?: boolean;
+}
+
+/**
+ * The platform object is shared across the two bundles through `globalThis`, and the host
+ * entry publishes its live `TerminalContextRegistry` on it. Read the optional property rather
+ * than importing the host bundle: the opt-in bundle must stay loadable on its own.
+ */
+interface PlatformWithTerminalContext extends Platform {
+  terminalContext?: {
+    getSnapshot(): { connectedTerminals: Array<{ serverId?: string }> };
+  };
+}
+
+/**
+ * An agent-opened persistent SSH terminal is a background connection: it is not a tab in the
+ * user's AT Terminal panel, so the same rule that gates one-shot commands applies. A server
+ * with a panel terminal already connected is usable because the user established that
+ * connection themselves.
+ */
+export function assertServerAllowsAgentTerminal(server: ServerRow, connected: boolean): void {
+  if (connected || server.backgroundConnectionAllowed === true) return;
+  throw new Error(
+    `SSH server "${server.id}" does not allow background connections. ` +
+      'Ask the user to enable "Allow background connections" on the AT Terminal server edit form, ' +
+      'or open a terminal tab for that server in the AT Terminal panel.'
+  );
 }
 
 interface TerminalEvent {
@@ -136,6 +164,7 @@ async function borrowedPlatform(): Promise<Platform> {
 interface Prepared {
   api: TerminalApi;
   servers: () => Promise<ServerRow[]>;
+  isServerConnected: (serverId: string) => boolean;
 }
 
 /** Bind the borrow to the two faces a spawn needs. */
@@ -147,6 +176,16 @@ async function assemble(): Promise<Prepared> {
     servers: async () => {
       const listed = (await serverApi.list()) as { servers?: ServerRow[] };
       return listed.servers ?? [];
+    },
+    isServerConnected: (serverId: string): boolean => {
+      try {
+        const context = (resolved as PlatformWithTerminalContext).terminalContext;
+        return context?.getSnapshot().connectedTerminals.some((terminal) => terminal.serverId === serverId) ?? false;
+      } catch {
+        // A host without the panel context is not a "connected" claim: fail closed to the
+        // server's own background-connection flag instead of letting an error become consent.
+        return false;
+      }
     }
   };
 }
@@ -158,6 +197,7 @@ async function connect(
   handlers: { output(text: string): void; exit(info: { exitCode: number | null; signal: string | null }): void }
 ): Promise<SshConnection> {
   const server = resolveServerByName(await prepared.servers(), name);
+  assertServerAllowsAgentTerminal(server, prepared.isServerConnected(server.id));
   const session = await prepared.api.open({
     serverId: server.id,
     rows: ROWS,

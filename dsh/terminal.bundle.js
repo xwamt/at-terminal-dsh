@@ -3909,29 +3909,55 @@ function createSshTerminalBackend(deps) {
     idleSilenceMs: deps.idleSilenceMs ?? 350,
     sendTimeoutMs: deps.sendTimeoutMs ?? 3e4,
     maxReadBytes: deps.maxReadBytes ?? 65536,
-    scrollbackLines: deps.scrollbackLines ?? 4e3
+    scrollbackLines: deps.scrollbackLines ?? 4e3,
+    maxSessionsPerOwner: deps.maxSessionsPerOwner ?? 4,
+    allowSubagents: deps.allowSubagents ?? !1
   };
   if (resolved.idleSilenceMs <= 0 || resolved.sendTimeoutMs <= 0)
     throw new Error("at-terminal: idleSilenceMs and sendTimeoutMs must be positive");
+  if (!Number.isSafeInteger(resolved.maxSessionsPerOwner) || resolved.maxSessionsPerOwner <= 0)
+    throw new Error("at-terminal: maxSessionsPerOwner must be a positive integer");
+  let ownerCounts = /* @__PURE__ */ new Map(), releaseOwner = (ownerId) => {
+    let count = ownerCounts.get(ownerId) ?? 0;
+    count <= 1 ? ownerCounts.delete(ownerId) : ownerCounts.set(ownerId, count - 1);
+  };
   return {
     type: deps.type ?? "ssh",
     async spawn(spec) {
       spec.signal?.throwIfAborted();
-      let serverId = spec.name;
-      if (serverId === void 0)
+      let ownerId = typeof spec.owner?.id == "string" && spec.owner.id !== "" ? spec.owner.id : void 0;
+      if (!resolved.allowSubagents && spec.owner?.session?.header?.origin === "subagent")
         throw new Error(
-          "at-terminal: open an SSH terminal with name set to the server id or label; this backend has no default target."
+          "Subagents cannot open persistent SSH terminals because the user cannot see them; use at_terminal_run_remote_command instead."
         );
-      let session, connection = await deps.open(serverId, {
-        output: (text) => session?.feed(text),
-        exit: (info) => session?.end(info)
-      });
-      spec.signal?.throwIfAborted(), session = new SshPtySession(connection, resolved);
+      if (ownerId !== void 0) {
+        let live = ownerCounts.get(ownerId) ?? 0;
+        if (live >= resolved.maxSessionsPerOwner)
+          throw new Error(
+            `Agent ${ownerId} already has ${live} live SSH terminals (limit ${resolved.maxSessionsPerOwner}); close one with terminal_close before opening another.`
+          );
+        ownerCounts.set(ownerId, live + 1);
+      }
+      let session;
       try {
-        return await session.start(), session;
+        let serverId = spec.name;
+        if (serverId === void 0)
+          throw new Error(
+            "at-terminal: open an SSH terminal with name set to the server id or label; this backend has no default target."
+          );
+        let connection = await deps.open(serverId, {
+          output: (text) => session?.feed(text),
+          exit: (info) => session?.end(info)
+        });
+        if (spec.signal?.throwIfAborted(), session = new SshPtySession(connection, resolved), await session.start(), typeof spec.cwd == "string" && spec.cwd.trim() !== "") {
+          let quoted = spec.cwd.replace(/'/g, "'\\''"), cd = await session.startSend({ text: `cd -- '${quoted}'`, submit: !0 }).done;
+          if (cd.waitReason === "timeout" || cd.waitReason === "session_exit")
+            throw new Error(`SSH session could not enter cwd "${spec.cwd}" (${cd.waitReason}).`);
+        }
+        return ownerId !== void 0 && session.whenExited().then(() => releaseOwner(ownerId)), session;
       } catch (error) {
-        throw await session.close("spawn failed").catch(() => {
-        }), error;
+        throw session !== void 0 && await session.close("spawn failed").catch(() => {
+        }), ownerId !== void 0 && releaseOwner(ownerId), error;
       }
     }
   };
@@ -3939,6 +3965,12 @@ function createSshTerminalBackend(deps) {
 
 // src/platform/dsh/terminalEntry.ts
 var name = "at-terminal-ssh-backend", inject = ["terminals"], ROWS = 40, COLS = 120;
+function assertServerAllowsAgentTerminal(server, connected) {
+  if (!(connected || server.backgroundConnectionAllowed === !0))
+    throw new Error(
+      `SSH server "${server.id}" does not allow background connections. Ask the user to enable "Allow background connections" on the AT Terminal server edit form, or open a terminal tab for that server in the AT Terminal panel.`
+    );
+}
 function resolveServerByName(servers, name2) {
   let exactId = servers.find((server) => server.id === name2);
   if (exactId !== void 0) return exactId;
@@ -3974,11 +4006,20 @@ async function assemble() {
   let resolved = await borrowedPlatform(), serverApi = createDshServerApi({ platform: resolved, privateKeyDirectory: "" });
   return {
     api: createDshTerminalApi({ platform: resolved }),
-    servers: async () => (await serverApi.list()).servers ?? []
+    servers: async () => (await serverApi.list()).servers ?? [],
+    isServerConnected: (serverId) => {
+      try {
+        return resolved.terminalContext?.getSnapshot().connectedTerminals.some((terminal) => terminal.serverId === serverId) ?? !1;
+      } catch {
+        return !1;
+      }
+    }
   };
 }
 async function connect(prepared, name2, handlers) {
-  let server = resolveServerByName(await prepared.servers(), name2), session = await prepared.api.open({
+  let server = resolveServerByName(await prepared.servers(), name2);
+  assertServerAllowsAgentTerminal(server, prepared.isServerConnected(server.id));
+  let session = await prepared.api.open({
     serverId: server.id,
     rows: ROWS,
     cols: COLS,
@@ -4013,6 +4054,7 @@ function apply(ctx) {
 }
 export {
   apply,
+  assertServerAllowsAgentTerminal,
   createSshTerminalBackend,
   inject,
   name,

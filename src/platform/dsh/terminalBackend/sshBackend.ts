@@ -44,6 +44,16 @@
  * genuinely are the same choice.
  */
 
+/** The owner shape the terminal registry passes through; narrowed for the policy checks. */
+export interface TerminalSpawnOwner {
+  id?: string;
+  session?: {
+    header?: {
+      origin?: 'subagent';
+    };
+  };
+}
+
 /** What the backend needs from the environment; everything testable is injected. */
 export interface SshBackendDeps {
   /** Backend type as the model will name it in `terminal_open`. */
@@ -59,6 +69,10 @@ export interface SshBackendDeps {
   maxReadBytes?: number;
   /** Scrollback retention, in lines. */
   scrollbackLines?: number;
+  /** How many live sessions one Agent may hold; the official panel uses four. */
+  maxSessionsPerOwner?: number;
+  /** Whether a SubAgent may open an invisible persistent terminal (default false). */
+  allowSubagents?: boolean;
   /** Connect to one server and hand back a byte-level channel. */
   open(serverId: string, handlers: SshOutputHandlers): Promise<SshConnection>;
 }
@@ -109,6 +123,8 @@ export interface TerminalSpawnSpec {
   name?: string;
   cwd?: string;
   signal?: AbortSignal;
+  /** Exact live owner the registry handed to the backend. */
+  owner?: TerminalSpawnOwner;
 }
 
 /**
@@ -515,38 +531,87 @@ export function createSshTerminalBackend(deps: SshBackendDeps): {
     idleSilenceMs: deps.idleSilenceMs ?? 350,
     sendTimeoutMs: deps.sendTimeoutMs ?? 30_000,
     maxReadBytes: deps.maxReadBytes ?? 64 * 1024,
-    scrollbackLines: deps.scrollbackLines ?? 4000
+    scrollbackLines: deps.scrollbackLines ?? 4000,
+    maxSessionsPerOwner: deps.maxSessionsPerOwner ?? 4,
+    allowSubagents: deps.allowSubagents ?? false
   };
   if (resolved.idleSilenceMs <= 0 || resolved.sendTimeoutMs <= 0) {
     throw new Error('at-terminal: idleSilenceMs and sendTimeoutMs must be positive');
   }
+  if (!Number.isSafeInteger(resolved.maxSessionsPerOwner) || resolved.maxSessionsPerOwner <= 0) {
+    throw new Error('at-terminal: maxSessionsPerOwner must be a positive integer');
+  }
+  /** Live session count per owner; decremented exactly once when that session exits. */
+  const ownerCounts = new Map<string, number>();
+  const releaseOwner = (ownerId: string): void => {
+    const count = ownerCounts.get(ownerId) ?? 0;
+    if (count <= 1) ownerCounts.delete(ownerId);
+    else ownerCounts.set(ownerId, count - 1);
+  };
   return {
     type: deps.type ?? 'ssh',
     async spawn(spec: TerminalSpawnSpec): Promise<SshPtySession> {
       spec.signal?.throwIfAborted();
-      // `name` is the server selector for this backend — see the header. The registry
-      // requires a non-empty name when one is given, and hands it through untouched.
-      const serverId = spec.name;
-      if (serverId === undefined) {
+      const ownerId = typeof spec.owner?.id === 'string' && spec.owner.id !== '' ? spec.owner.id : undefined;
+      // A persistent SSH terminal is not one of the user's visible panel tabs: a SubAgent
+      // opening one creates a process the user can neither see nor close. The official
+      // terminal panel refuses this for the same reason; the actionable alternative is the
+      // one-shot command tool.
+      if (!resolved.allowSubagents && spec.owner?.session?.header?.origin === 'subagent') {
         throw new Error(
-          'at-terminal: open an SSH terminal with name set to the server id or label; ' +
-            'this backend has no default target.'
+          'Subagents cannot open persistent SSH terminals because the user cannot see them; ' +
+            'use at_terminal_run_remote_command instead.'
         );
       }
+      if (ownerId !== undefined) {
+        const live = ownerCounts.get(ownerId) ?? 0;
+        if (live >= resolved.maxSessionsPerOwner) {
+          throw new Error(
+            `Agent ${ownerId} already has ${live} live SSH terminals (limit ${resolved.maxSessionsPerOwner}); ` +
+              'close one with terminal_close before opening another.'
+          );
+        }
+        ownerCounts.set(ownerId, live + 1);
+      }
       let session: SshPtySession | undefined;
-      const connection = await deps.open(serverId, {
-        output: (text) => session?.feed(text),
-        exit: (info) => session?.end(info)
-      });
-      spec.signal?.throwIfAborted();
-      session = new SshPtySession(connection, resolved);
       try {
+        // `name` is the server selector for this backend — see the header. The registry
+        // requires a non-empty name when one is given, and hands it through untouched.
+        const serverId = spec.name;
+        if (serverId === undefined) {
+          throw new Error(
+            'at-terminal: open an SSH terminal with name set to the server id or label; ' +
+              'this backend has no default target.'
+          );
+        }
+        const connection = await deps.open(serverId, {
+          output: (text) => session?.feed(text),
+          exit: (info) => session?.end(info)
+        });
+        spec.signal?.throwIfAborted();
+        session = new SshPtySession(connection, resolved);
         await session.start();
+        // `terminal_open({ cwd })` must mean the same thing the local backend's cwd means:
+        // the shell starts there. SSH has no cwd parameter at the channel layer, so make it
+        // the first command — quoted as one POSIX word so a path with spaces/quotes survives.
+        if (typeof spec.cwd === 'string' && spec.cwd.trim() !== '') {
+          const quoted = spec.cwd.replace(/'/g, "'\\''");
+          const cd = await session.startSend({ text: `cd -- '${quoted}'`, submit: true }).done;
+          if (cd.waitReason === 'timeout' || cd.waitReason === 'session_exit') {
+            throw new Error(`SSH session could not enter cwd "${spec.cwd}" (${cd.waitReason}).`);
+          }
+        }
+        if (ownerId !== undefined) {
+          void session.whenExited().then(() => releaseOwner(ownerId));
+        }
         return session;
       } catch (error) {
         // A spawn that fails after connecting must release the connection: the registry
         // never publishes it, so nothing else would ever close it.
-        await session.close('spawn failed').catch(() => undefined);
+        if (session !== undefined) {
+          await session.close('spawn failed').catch(() => undefined);
+        }
+        if (ownerId !== undefined) releaseOwner(ownerId);
         throw error;
       }
     }
