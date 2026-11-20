@@ -270,7 +270,7 @@ describe('buildSshConnectionHandle', () => {
     });
 
     const target = server({ id: 'target-1', host: '10.0.0.20', jumpHostId: 'jump-1' });
-    const jump = server({ id: 'jump-1', host: 'bastion.example.com', username: 'ops', jumpHostId: 'ignored-parent' });
+    const jump = server({ id: 'jump-1', host: 'bastion.example.com', username: 'ops' });
 
     const handle = await buildSshConnectionHandle(
       target,
@@ -293,6 +293,61 @@ describe('buildSshConnectionHandle', () => {
     handle.dispose();
 
     expect(sshMocks.end).toHaveBeenCalled();
+  });
+
+  it('routes a two-level jump chain bastion-1 -> bastion-2 -> target and disposes in reverse', async () => {
+    const sockA = { hop: 'a-to-b' };
+    const sockB = { hop: 'b-to-target' };
+    sshMocks.forwardOut
+      .mockImplementationOnce((_srcIp, _srcPort, _dstHost, _dstPort, callback) => callback(undefined, sockA))
+      .mockImplementationOnce((_srcIp, _srcPort, _dstHost, _dstPort, callback) => callback(undefined, sockB));
+
+    const bastion1 = server({ id: 'bastion-1', host: 'bastion-1.example.com', username: 'ops' });
+    const bastion2 = server({ id: 'bastion-2', host: 'bastion-2.example.com', username: 'ops', jumpHostId: 'bastion-1' });
+    const target = server({ id: 'app', host: '10.0.0.20', jumpHostId: 'bastion-2' });
+    const servers = new Map([
+      ['bastion-1', bastion1],
+      ['bastion-2', bastion2]
+    ]);
+
+    const handle = await buildSshConnectionHandle(
+      target,
+      {
+        getPassword: async () => 'secret',
+        getServer: async (id) => servers.get(id)
+      },
+      { verify: async () => true }
+    );
+
+    expect(sshMocks.connect.mock.calls.map((call) => (call as unknown as Array<{ host?: string }>)[0]?.host)).toEqual([
+      'bastion-1.example.com',
+      'bastion-2.example.com'
+    ]);
+    expect(sshMocks.forwardOut.mock.calls.map((call) => call[2])).toEqual([
+      'bastion-2.example.com',
+      '10.0.0.20'
+    ]);
+    expect(handle.config).toMatchObject({ host: '10.0.0.20', sock: sockB });
+
+    handle.dispose();
+    // The nearest client is closed first, then the outer bastion: the tunnel must not
+    // disappear from under a client that is still using it.
+    expect(sshMocks.end).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a jump-host cycle with the full path', async () => {
+    const a = server({ id: 'a', jumpHostId: 'b' });
+    const b = server({ id: 'b', jumpHostId: 'a' });
+    await expect(
+      buildSshConnectionHandle(
+        a,
+        {
+          getPassword: async () => 'secret',
+          getServer: async (id) => (id === 'a' ? a : b)
+        },
+        { verify: async () => true }
+      )
+    ).rejects.toThrow('Jump host cycle detected: a -> b -> a');
   });
 
   it('throws a clear error when the jump host does not exist', async () => {

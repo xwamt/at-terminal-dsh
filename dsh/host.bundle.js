@@ -14946,7 +14946,11 @@ async function buildSshConnectConfig(server, passwordProvider, hostKeyVerifier) 
     ...passphrase === void 0 ? {} : { passphrase }
   };
 }
+var MAX_JUMP_DEPTH = 5;
 async function buildSshConnectionHandle(server, provider, hostKeyVerifier, options = {}) {
+  return buildSshConnectionHandleRecursive(server, provider, hostKeyVerifier, options, [server.id]);
+}
+async function buildSshConnectionHandleRecursive(server, provider, hostKeyVerifier, options, chain) {
   if (requireHostKeyVerifier(hostKeyVerifier), !server.jumpHostId)
     return {
       config: await buildSshConnectConfig(server, provider, hostKeyVerifier),
@@ -14958,13 +14962,24 @@ async function buildSshConnectionHandle(server, provider, hostKeyVerifier, optio
   let jumpHost = await provider.getServer(server.jumpHostId);
   if (!jumpHost)
     throw new Error(`Jump host "${server.jumpHostId}" was not found.`);
-  let { Client } = await getSsh2(), jumpClient = new Client();
+  if (chain.includes(jumpHost.id))
+    throw new Error(`Jump host cycle detected: ${[...chain, jumpHost.id].join(" -> ")}`);
+  if (chain.length >= MAX_JUMP_DEPTH + 1)
+    throw new Error(
+      `Jump host chain exceeds ${MAX_JUMP_DEPTH} hops: ${[...chain, jumpHost.id].join(" -> ")}`
+    );
+  let upstreamHandle = await buildSshConnectionHandleRecursive(
+    jumpHost,
+    provider,
+    hostKeyVerifier,
+    options,
+    [...chain, jumpHost.id]
+  ), { Client } = await getSsh2(), jumpClient = new Client();
   jumpClient.on("error", () => {
   });
   try {
-    let jumpConfig = await buildSshConnectConfig({ ...jumpHost, jumpHostId: void 0 }, provider, hostKeyVerifier);
     await new Promise((resolve, reject) => {
-      jumpClient.once("ready", resolve), jumpClient.once("error", reject), attachKeyboardInteractive(jumpClient, options.keyboardInteractivePrompt, reject), jumpClient.connect(jumpConfig);
+      jumpClient.once("ready", resolve), jumpClient.once("error", reject), attachKeyboardInteractive(jumpClient, options.keyboardInteractivePrompt, reject), jumpClient.connect(upstreamHandle.config);
     });
     let sock = await new Promise((resolve, reject) => {
       jumpClient.forwardOut("127.0.0.1", 0, server.host, server.port, (error, channel) => {
@@ -14981,11 +14996,11 @@ async function buildSshConnectionHandle(server, provider, hostKeyVerifier, optio
         sock
       },
       dispose: () => {
-        jumpClient.end();
+        jumpClient.end(), upstreamHandle.dispose();
       }
     };
   } catch (error) {
-    throw jumpClient.end(), error;
+    throw jumpClient.end(), upstreamHandle.dispose(), error;
   }
 }
 function createHostVerifier(server, hostKeyVerifier) {

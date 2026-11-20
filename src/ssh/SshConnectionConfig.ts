@@ -120,11 +120,36 @@ export async function buildSshConnectConfig(
   };
 }
 
+/** Hard ceiling on a jump chain, so a hand-edited store cannot build an unbounded tunnel. */
+const MAX_JUMP_DEPTH = 5;
+
 export async function buildSshConnectionHandle(
   server: ServerConfig,
   provider: SshConnectionProvider,
   hostKeyVerifier: HostKeyVerifier,
   options: SshConnectOptions = {}
+): Promise<SshConnectionHandle> {
+  return buildSshConnectionHandleRecursive(server, provider, hostKeyVerifier, options, [server.id]);
+}
+
+/**
+ * Build one connection to `server`, recursively building the tunnel through its jump host.
+ *
+ * The first version called `buildSshConnectConfig({ ...jumpHost, jumpHostId: undefined })`,
+ * which flattened a chain: for `Local -> Bastion A -> Bastion B -> Target`, the hop through
+ * Bastion A vanished and Bastion B was dialled directly. Recursing on the jump host returns a
+ * config that already carries the upstream `sock`; this level then opens one client to that
+ * jump host and forwards the target's `host:port` through it.
+ *
+ * `chain` is ordered from the original target to the current server and exists to detect a
+ * cycle (`a -> b -> a`) before a hand-edited store turns into an infinite connect loop.
+ */
+async function buildSshConnectionHandleRecursive(
+  server: ServerConfig,
+  provider: SshConnectionProvider,
+  hostKeyVerifier: HostKeyVerifier,
+  options: SshConnectOptions,
+  chain: string[]
 ): Promise<SshConnectionHandle> {
   requireHostKeyVerifier(hostKeyVerifier);
   if (!server.jumpHostId) {
@@ -142,7 +167,22 @@ export async function buildSshConnectionHandle(
   if (!jumpHost) {
     throw new Error(`Jump host "${server.jumpHostId}" was not found.`);
   }
+  if (chain.includes(jumpHost.id)) {
+    throw new Error(`Jump host cycle detected: ${[...chain, jumpHost.id].join(' -> ')}`);
+  }
+  if (chain.length >= MAX_JUMP_DEPTH + 1) {
+    throw new Error(
+      `Jump host chain exceeds ${MAX_JUMP_DEPTH} hops: ${[...chain, jumpHost.id].join(' -> ')}`
+    );
+  }
 
+  const upstreamHandle = await buildSshConnectionHandleRecursive(
+    jumpHost,
+    provider,
+    hostKeyVerifier,
+    options,
+    [...chain, jumpHost.id]
+  );
   const { Client } = await getSsh2();
   const jumpClient = new Client();
   /**
@@ -156,13 +196,14 @@ export async function buildSshConnectionHandle(
    */
   jumpClient.on('error', () => undefined);
   try {
-    const jumpConfig = await buildSshConnectConfig({ ...jumpHost, jumpHostId: undefined }, provider, hostKeyVerifier);
-
+    // `upstreamHandle.config` is the config for *this* jump host with its own upstream
+    // `sock` already attached, so connecting through a two-level chain is the same code as
+    // a direct one.
     await new Promise<void>((resolve, reject) => {
       jumpClient.once('ready', resolve);
       jumpClient.once('error', reject);
       attachKeyboardInteractive(jumpClient, options.keyboardInteractivePrompt, reject);
-      jumpClient.connect(jumpConfig);
+      jumpClient.connect(upstreamHandle.config);
     });
 
     const sock = await new Promise<ConnectConfig['sock']>((resolve, reject) => {
@@ -181,11 +222,15 @@ export async function buildSshConnectionHandle(
         sock
       },
       dispose: () => {
+        // Nearest layer first: close the client using this tunnel before releasing the
+        // upstream tunnel it is riding on.
         jumpClient.end();
+        upstreamHandle.dispose();
       }
     };
   } catch (error) {
     jumpClient.end();
+    upstreamHandle.dispose();
     throw error;
   }
 }
