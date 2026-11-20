@@ -16,6 +16,9 @@ vi.mock('ssh2', () => ({
   Client: vi.fn(() => {
     const client = {
       handlers: {} as Record<string, () => void>,
+      // The production connect path installs a permanent no-op `error` guard before the
+      // one-shot ready/error pair; the fake must expose the same method.
+      on: vi.fn((_event: string, _handler: () => void) => client),
       once: vi.fn((event: string, handler: () => void) => {
         client.handlers[event] = handler;
         return client;
