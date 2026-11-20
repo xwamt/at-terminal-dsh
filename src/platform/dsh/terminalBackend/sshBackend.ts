@@ -90,10 +90,17 @@ export interface TerminalSendOutcome {
   truncated: boolean;
 }
 
+/** Output produced since the previous read of one live send operation. */
+export interface TerminalSendRead {
+  delta: string;
+  truncated: boolean;
+}
+
 export interface TerminalSendOperation {
   readonly done: Promise<TerminalSendOutcome>;
   readonly settled: boolean;
-  cancel(): void;
+  readOutput(): TerminalSendRead;
+  cancel(): boolean;
 }
 
 export interface TerminalSpawnSpec {
@@ -391,6 +398,8 @@ function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void; re
 /** One send: what it collected, whether it settled, and how to cancel it. */
 class SshSendOperation implements TerminalSendOperation {
   private readonly buffer = new BoundedScrollback(48 * 1024, 2000);
+  /** Second bounded mirror whose cursor is advanced only by {@link readOutput}. */
+  private readonly unread = new BoundedScrollback(48 * 1024, 2000);
   private readonly deferred = createDeferred<TerminalSendOutcome>();
   private finished = false;
   private cancelled = false;
@@ -406,7 +415,20 @@ class SshSendOperation implements TerminalSendOperation {
   }
 
   append(text: string): void {
-    if (!this.finished) this.buffer.append(text);
+    if (this.finished) return;
+    this.buffer.append(text);
+    this.unread.append(text);
+  }
+
+  /**
+   * The background-job pull source (`dsh-tool-terminal/background.ts`) calls this repeatedly
+   * and turns each result into an offset-counted job chunk. Draining a second mirror rather
+   * than the main buffer keeps the final `viewport` complete: a background consumer must not
+   * eat output the foreground outcome still promises.
+   */
+  readOutput(): TerminalSendRead {
+    const snapshot = this.unread.drain();
+    return { delta: snapshot.text, truncated: snapshot.truncated };
   }
 
   consume(): { text: string; truncated: boolean } {
@@ -426,13 +448,14 @@ class SshSendOperation implements TerminalSendOperation {
     this.deferred.reject(error);
   }
 
-  cancel(): void {
-    if (this.finished || this.cancelled) return;
+  cancel(): boolean {
+    if (this.finished || this.cancelled) return false;
     this.cancelled = true;
     // Cancellation is not a wait reason of its own: the send stops waiting and reports
     // what it has. `inferred_idle` would claim the shell went quiet; `timeout` would claim
     // the deadline passed. Neither is true, so the caller's own abort surfaces instead.
     this.onCancel('inferred_idle', true);
+    return true;
   }
 }
 
@@ -461,6 +484,14 @@ class BoundedScrollback {
 
   snapshot(): { text: string; truncated: boolean } {
     return { text: this.text, truncated: this.dropped };
+  }
+
+  /** Hand back everything accumulated since the previous drain, then reset the cursor. */
+  drain(): { text: string; truncated: boolean } {
+    const result = { text: this.text, truncated: this.dropped };
+    this.text = '';
+    this.dropped = false;
+    return result;
   }
 
   tail(bytes: number): string {

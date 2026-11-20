@@ -2002,7 +2002,51 @@ await check('opt-in terminal bundle', 'The SSH bundle isolates its registry, and
     'the backend artifact must declare inject including terminals'
   )
 
-  return `isolated group of ${inner.length} rows: ${names.join(' -> ')}`
+  // Behaviour, not a source grep: `@deepseek-ai/dsh-tool-terminal`'s background adapter
+  // calls `readOutput()` on every job-output poll and `cancel()` on job kill. A backend that
+  // merely mentions those names in a comment would pass a text scan and fail at runtime, so
+  // build a real send operation out of the committed bundle and exercise both contracts.
+  const backendModule = await import(pathToFileURL(artifact).href)
+  assert.equal(
+    typeof backendModule.createSshTerminalBackend,
+    'function',
+    'the terminal bundle must export createSshTerminalBackend for the send-operation contract check'
+  )
+  let handlers
+  const writes = []
+  // The backend's settle poll is `.unref()`ed on purpose (a live session must not hold the
+  // Host process open). A one-shot gate script has no other handles, so Node would exit on
+  // an unsettled top-level await before the poll fires; this ref'd timer keeps the check
+  // alive for its few milliseconds and is cleared regardless of outcome.
+  const keepAlive = setInterval(() => undefined, 1000)
+  try {
+    const backend = backendModule.createSshTerminalBackend({
+      type: 'ssh',
+      idleSilenceMs: 5,
+      sendTimeoutMs: 500,
+      open: async (_name, next) => {
+        handlers = next
+        setTimeout(() => next.output('root@v:~# '), 0)
+        return { write: (data) => void writes.push(data), close: () => undefined }
+      }
+    })
+    const session = await backend.spawn({ sessionId: 'pty-verify', type: 'ssh', name: 'srv-1' })
+    const operation = session.startSend({ text: 'echo hi', submit: true })
+    assert.equal(typeof operation.readOutput, 'function', 'SshSendOperation.readOutput must be a function')
+    handlers.output('hello\n')
+    assert.deepEqual(
+      operation.readOutput(),
+      { delta: 'hello\n', truncated: false },
+      'readOutput() must return only the unread delta'
+    )
+    assert.equal(operation.cancel(), true, 'the first cancel() must report true')
+    assert.equal(operation.cancel(), false, 'a repeated cancel() must report false')
+    await operation.done
+  } finally {
+    clearInterval(keepAlive)
+  }
+
+  return `isolated group of ${inner.length} rows: ${names.join(' -> ')}, send operation satisfies readOutput/cancel`
 })
 
 /* ----------------------------------- report ----------------------------------- */

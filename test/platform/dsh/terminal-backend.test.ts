@@ -168,6 +168,50 @@ describe('ssh backend — send', () => {
     subject.feed('root@v:~# ');
     await first.done;
   });
+
+  it('readOutput() consumes only the unread delta and leaves the final viewport intact', async () => {
+    const subject = harness();
+    const session = await subject.ready();
+
+    const operation = session.startSend({ text: 'tail -f app.log', submit: true });
+    subject.feed('line 1\n');
+    expect(operation.readOutput()).toEqual({ delta: 'line 1\n', truncated: false });
+    subject.feed('line 2\n');
+    expect(operation.readOutput()).toEqual({ delta: 'line 2\n', truncated: false });
+    // Nothing new: a read after the cursor caught up reports no duplicate bytes.
+    expect(operation.readOutput()).toEqual({ delta: '', truncated: false });
+
+    const outcome = await operation.done;
+    expect(outcome.viewport).toContain('line 1');
+    expect(outcome.viewport).toContain('line 2');
+  });
+
+  it('readOutput() reports truncation when one send produces more than the unread bound', async () => {
+    const subject = harness();
+    const session = await subject.ready();
+
+    const operation = session.startSend({ text: 'find /', submit: true });
+    // 3000 lines is past the 2000-line retention bound; the delta keeps the newest tail and
+    // must say that older bytes were dropped rather than silently pretending completeness.
+    subject.feed(`${Array.from({ length: 3000 }, (_, index) => `entry-${index}`).join('\n')}\n`);
+    const read = operation.readOutput();
+    expect(read.truncated).toBe(true);
+    expect(read.delta).toContain('entry-2999');
+    expect(read.delta).not.toContain('entry-0\n');
+    subject.feed('root@v:~# ');
+    await operation.done;
+  });
+
+  it('cancel() answers the registry contract: true once, then false', async () => {
+    const subject = harness();
+    const session = await subject.ready();
+
+    const operation = session.startSend({ text: 'sleep 60', submit: true });
+    expect(operation.cancel()).toBe(true);
+    expect(operation.cancel()).toBe(false);
+    await operation.done;
+    expect(operation.cancel()).toBe(false);
+  });
 });
 
 describe('ssh backend — read, signal, close', () => {

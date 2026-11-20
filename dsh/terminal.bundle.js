@@ -3836,6 +3836,8 @@ var SshSendOperation = class {
     this.onCancel = onCancel;
   }
   buffer = new BoundedScrollback(48 * 1024, 2e3);
+  /** Second bounded mirror whose cursor is advanced only by {@link readOutput}. */
+  unread = new BoundedScrollback(48 * 1024, 2e3);
   deferred = createDeferred();
   finished = !1;
   cancelled = !1;
@@ -3846,7 +3848,17 @@ var SshSendOperation = class {
     return this.finished;
   }
   append(text) {
-    this.finished || this.buffer.append(text);
+    this.finished || (this.buffer.append(text), this.unread.append(text));
+  }
+  /**
+   * The background-job pull source (`dsh-tool-terminal/background.ts`) calls this repeatedly
+   * and turns each result into an offset-counted job chunk. Draining a second mirror rather
+   * than the main buffer keeps the final `viewport` complete: a background consumer must not
+   * eat output the foreground outcome still promises.
+   */
+  readOutput() {
+    let snapshot = this.unread.drain();
+    return { delta: snapshot.text, truncated: snapshot.truncated };
   }
   consume() {
     let snapshot = this.buffer.snapshot();
@@ -3859,7 +3871,7 @@ var SshSendOperation = class {
     this.finished || (this.finished = !0, this.deferred.reject(error));
   }
   cancel() {
-    this.finished || this.cancelled || (this.cancelled = !0, this.onCancel("inferred_idle", !0));
+    return this.finished || this.cancelled ? !1 : (this.cancelled = !0, this.onCancel("inferred_idle", !0), !0);
   }
 }, BoundedScrollback = class {
   constructor(maxBytes, maxLines) {
@@ -3877,6 +3889,11 @@ var SshSendOperation = class {
   }
   snapshot() {
     return { text: this.text, truncated: this.dropped };
+  }
+  /** Hand back everything accumulated since the previous drain, then reset the cursor. */
+  drain() {
+    let result = { text: this.text, truncated: this.dropped };
+    return this.text = "", this.dropped = !1, result;
   }
   tail(bytes) {
     return this.text.length <= bytes ? this.text : this.text.slice(this.text.length - bytes);
@@ -3996,6 +4013,7 @@ function apply(ctx) {
 }
 export {
   apply,
+  createSshTerminalBackend,
   inject,
   name,
   resolveServerByName

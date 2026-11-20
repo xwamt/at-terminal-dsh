@@ -40,6 +40,13 @@ import type { Platform } from '../../core/ports';
 import { pendingPlatformAssembly, platform } from '../../platform/current';
 import { createSshTerminalBackend, type SshConnection } from './terminalBackend/sshBackend';
 
+/**
+ * The backend factory is exported for the install-time contract gate: `verify.mjs` builds a
+ * real operation from `terminal.bundle.js` and asserts the `TerminalSendOperation` methods
+ * the Host's background-job adapter calls. Exporting it adds no behaviour to the loader row.
+ */
+export { createSshTerminalBackend } from './terminalBackend/sshBackend';
+
 /** Plugin name, as it appears in the loader tree. */
 export const name = 'at-terminal-ssh-backend';
 
