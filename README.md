@@ -4,13 +4,13 @@
 > **Native SSH terminal, SFTP remote file workspace, and direct Agent ops suite for DeepSeek Harness.**
 
 [![DSH Verified](https://img.shields.io/badge/DSH-0.2.2--rc.5_Verified-brightgreen.svg)](#installation--setup--安装与配置)
-[![Test Coverage](https://img.shields.io/badge/tests-101%2F101%20passed%20(1551%20tests)-blue.svg)](#build--verification--构建与验证)
+[![Test Coverage](https://img.shields.io/badge/tests-103%2F103%20passed%20(1593%20tests)-blue.svg)](#build--verification--构建与验证)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Topics](https://img.shields.io/badge/topics-dsh--plugin-purple.svg)](https://github.com/topics/dsh-plugin)
 
 [English](#english) | [中文说明](#中文说明)
 
-> **Release 0.3.1 (2026-11-11)** — DSH 0.2.2-rc.1 compatibility and reliability release: hardened npm packaging and engines, SFTP `edit_file` with stale-version protection, optional multi-file `apply_patch`, native context menus/file actions, SFTP tree + preview split layout, and idle-disconnect cleanup that releases the terminal's SFTP and agent SFTP connections. Full notes: [docs/releases/0.3.1.md](docs/releases/0.3.1.md).
+> **Release 0.3.3 (2026-11-23)** — DSH 0.2.2-rc.5 compatibility, concurrency and reliability release: local-host metrics when no SSH server is connected, concurrent-tool scheduling and multi-agent action tracking, recursive multi-hop jump hosts with cycle detection, hardened persistent-terminal admission (`cwd`, SubAgent refusal, per-Agent session cap), long-lived `ssh2` error guards, 5 MiB audit-log rotation and honest metrics/progress reporting. Full notes: [docs/releases/0.3.3.md](docs/releases/0.3.3.md).
 
 ---
 
@@ -34,7 +34,8 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
    - Zero-latency tool invocation without external stdio/HTTP MCP proxy processes.
    - Fully responds to `exec.signal` for real-time cancellation when an agent task is aborted.
    - Integrates seamlessly with DSH's `ctx.approval` workflow and provides formatted `output.render` rich outputs.
-   - Hardware metrics report CPU, load, memory, per-mount disk usage, network throughput and top processes; the list is bounded (top 5 rows plus a count) so one Docker host cannot flood the transcript.
+   - Hardware metrics report CPU, load, memory, per-mount disk usage, network throughput and top processes; the list is bounded (top 5 rows plus a count) so one Docker host cannot flood the transcript. Concurrent probes for the same host are coalesced, and a failed probe reports unknown values instead of a fabricated disk or memory reading.
+   - **Parallel read scheduling**: the seven stateless read tools (`ping`, `list_ssh_servers`, `get_terminal_context`, `sftp_list_directory`, `sftp_stat_path`, `sftp_read_file`, `get_hardware_metrics`) declare `isConcurrencySafe`, so DSH can run them alongside sibling calls instead of serializing them.
    - **Background jobs & spilled results**: a command started with `run_in_background` returns a job id the model can collect with the host's `job_output` and stop with `job_kill` (the plugin's `at_terminal_job_*` pair appears only in compositions without those host tools); a result too large to inline is written to a file and returned as a `spillPath` to read in slices, instead of flooding the transcript.
    - **Large-file streaming upload**: `at_terminal_sftp_write_file` accepts a host-side `localPath`, so the host reads and streams a local file to the remote instead of routing it through the model context (a 7.3 MB binary uploads in ~0.5 s with a byte-identical sha256).
 2. **Robust Asset Management & Encrypted Export**:
@@ -43,7 +44,8 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
    - **AES-256-GCM** password-protected encrypted asset export and import across machines.
 3. **Bastion / JumpServer Tunneling**:
    - Built-in `jumpHostId` support for tunneling into private networks through jump hosts.
-   - Automated SSH channel port forwarding and strict `HostKeyVerifier` fingerprint checks.
+   - **Multi-hop jump chains**: a jump host may itself have a `jumpHostId`, so `local → bastion A → bastion B → target` works recursively (up to five hops) with cycle detection instead of silently flattening the chain.
+   - Automated SSH channel port forwarding and strict `HostKeyVerifier` fingerprint checks on every hop.
 4. **Three-Tier Trust Levels & Background Execution**:
    - **Untrusted (`none`)**: Strict confirmation required for every command and file modification.
    - **Policy-based (`policy`, recommended)**: Evaluated by `@at-series/command-policy`. Safe queries (`uptime`, `df -h`) run smoothly; sensitive/destructive commands trigger approvals; unauthorized escalations are blocked.
@@ -61,13 +63,14 @@ While retaining the mature SSH terminal session engine, SFTP protocol pipeline, 
    - Connects as a capsule (CPU / memory chips) instead of a window that covers the terminal, then expands into Overview, Hardware and Agent execution tabs.
    - With no SSH server connected, the same HUD reads the **local Host machine** — `vm_stat` / `netstat` on macOS, PowerShell CIM on Windows, `/proc` on Linux — and labels itself `Local machine · <platform>`.
    - The capsule drags from its six-dot grip or any non-button chrome; the CPU / memory chips keep their clicks.
-   - Per-connection audit history: the Agent tab shows the four most recent rows, while **History** reveals everything this connection recorded and resets on disconnect.
+   - Per-connection audit history: the Agent tab shows the four most recent rows, while **History** reveals everything this connection recorded and resets on disconnect. `agent-audit.jsonl` rotates to `.1` at 5 MiB, and recent rows are served from an in-memory ring once the file has been read once, so HUD polling does not grow with the audit history.
+   - **Concurrent actions stay visible**: when several Agents or SubAgents run remote commands at the same time, each action is tracked by `actionId` and carries its `agentId` / `sessionId`; the Agent tab lists all live actions instead of letting the newest one overwrite the older.
    - Long commands and container mount paths clip to one line with an expand control, so the panel never scrolls sideways.
 8. **Platform-Native Shortcuts**:
    - Copy, paste and find follow the operating system: `⌘C` / `⌘V` / `⌘F` on macOS, `Ctrl+C` / `Ctrl+V` / `Ctrl+F` on Windows and Linux.
    - On macOS `Ctrl+C` stays a shell interrupt instead of becoming "copy"; the DSH shortcut registry binds `primary`, so new-tab and page switches map the same way.
 9. **Optional Persistent SSH Terminals** (second, opt-in bundle — not installed by default):
-   - Adds a `type: "ssh"` backend to dsh's own `ctx.terminals`, so the six built-in `terminal_*` tools drive a **remote** shell: `terminal_open({ type: "ssh", name: "payment01" })`, then `terminal_send` / `terminal_read`, and `cd` survives between calls. Opening one requires the server to allow background connections or to have an AT Terminal panel tab already connected; SubAgents are refused and one Agent holds at most four live sessions.
+   - Adds a `type: "ssh"` backend to dsh's own `ctx.terminals`, so the six built-in `terminal_*` tools drive a **remote** shell: `terminal_open({ type: "ssh", name: "payment01" })`, then `terminal_send` / `terminal_read`, and `cd` survives between calls. `terminal_open({ cwd })` starts the shell in the requested directory. Opening one requires the server to allow background connections or to have an AT Terminal panel tab already connected; SubAgents are refused and one Agent holds at most four live sessions.
    - `name` is the server selector (server id first, then label; an ambiguous label is refused rather than guessed), because the official tool takes no `serverId`.
    - Composed as `cordis:group` + `isolate: { terminals: true }`, so a profile without it is byte-for-byte unaffected, and the right-sidebar terminal (a different subsystem) keeps its own registry.
 10. **Settings Page, Trust Library & i18n**:
@@ -187,6 +190,8 @@ independently toggled rows.
 - **多服务器不猜目标**：同时连着多台服务器时，写类 / 执行类工具没拿到 `serverId` 会直接报错并列出候选（打错机器的写入会返回看起来成功的 `exitCode: 0`）；读类工具仍跟随活动终端，但结果里带 `resolvedBy` 与 `candidates`，事后能查「这次打到哪台、怎么定的」。
 - **后台作业与结果溢出**：`at_terminal_run_remote_command` 支持 `run_in_background`，命令不再占住一轮对话；标准 preset 下模型用宿主的 `job_output` / `job_kill` 取回与停止（只有在没有宿主 job 工具的组装里才会出现插件自带的 `at_terminal_job_*` fallback）。单个结果过大时写入溢出文件并返回 `spillPath`，按偏移分片读取，避免灌爆上下文。
 - **大文件直传**：`at_terminal_sftp_write_file` 新增宿主侧 `localPath`——由宿主进程读本机文件并流式上传，7.3 MB 二进制约 470 ms 完成、远端 sha256 与本地逐字节一致，且**零模型上下文开销**。
+- **只读工具并行调度**：7 个无状态只读工具（`ping`、`list_ssh_servers`、`get_terminal_context`、`sftp_list_directory`、`sftp_stat_path`、`sftp_read_file`、`get_hardware_metrics`）声明 `isConcurrencySafe`，DSH 可以把它们与同批调用并行调度，而不是逐个串行等待。
+- **硬件指标更诚实**：同一台服务器的并发探测会合并为一次；探测失败时返回「未知」而不是编造 8 GiB 内存 / 50 GiB 磁盘读数。
 - **全生命周期协同**：
   - **动态取消响应**：完全感知 `exec.signal`，当用户在 DSH 界面点击停止生成或取消任务时，远端 SSH 命令与传输流立即被精确中断。
   - **原生审批通道**：无缝对接 DSH 的 `ctx.approval` 交互机制。
@@ -198,9 +203,9 @@ independently toggled rows.
 - **资产包加密导入/导出**：提供基于 **AES-256-GCM** 加密的资产备份与迁移方案。运维团队可以通过加密密码对资产清单进行导出与跨机器导入，兼顾便捷与资产安全。
 
 #### 3. 跳板机穿透连接（Bastion / JumpServer）
-- **多级内网穿透**：针对企业生产环境常见的内外网隔离网络架构，支持为目标服务器绑定跳板机（`jumpHostId`）。
+- **多级内网穿透**：针对企业生产环境常见的内外网隔离网络架构，支持为目标服务器绑定跳板机（`jumpHostId`）；跳板机自身也可以继续绑定跳板机，形成 `本机 → 堡垒机 A → 堡垒机 B → 目标` 的递归多级链路（最多 5 跳，带环路检测），不会再悄悄压平成直连。
 - **原生隧道转发**：通过跳板机节点自动建立 SSH Channel 端口隧道直接连接内网目标服务器，无需手动在终端配置复杂的 `ProxyJump` 或 SSH config。
-- **严格的主机密钥校验**：穿透链路同样进行 `HostKeyVerifier` 指纹核对，防范中间人劫持风险。
+- **严格的主机密钥校验**：穿透链路每一跳都进行 `HostKeyVerifier` 指纹核对，防范中间人劫持风险。
 
 #### 4. 三级信任体系与后台连接机制
 每台服务器均可配置精细的 Agent 访问权限模型，平衡自动化效率与系统安全：
@@ -233,7 +238,8 @@ independently toggled rows.
 - **胶囊可拖动**：六点 grip 是标称把手，胶囊的非按钮区域（内边距、仪表图标、服务器标签）也可以拖动；CPU / 内存 / 展开 / 关闭仍是各自独立的按钮，不会误触发拖动。展开后的窗口仍可按住标题栏拖动、双击标题栏收起。
 - **无连接时看本机**：没有连接任何 SSH 服务器时，监控显示 Host 所在机器的 CPU / 内存 / 磁盘 / 网络——macOS 走 `vm_stat` 与 `netstat`，Windows 走 PowerShell CIM，Linux 走 `/proc`；胶囊上标注「本机」（展开后在目标栏显示「本机 · 平台」），不再显示空胶囊或上一台已关闭资产的数据。
 - **两种呈现**：`at_terminal_open_monitor` 的 `mode: "hud"` 浮窗、`mode: "tab"` 落到右侧栏页签（页签自带目标服务器，不会被「最近连接的那台」顶掉）。
-- **按连接隔离的审计历史**：Agent 执行页默认展示最近 4 条审计，「历史执行」可查看本次连接以来的全部记录，断线或重连后自动重置。
+- **按连接隔离的审计历史**：Agent 执行页默认展示最近 4 条审计，「历史执行」可查看本次连接以来的全部记录，断线或重连后自动重置。`agent-audit.jsonl` 超过 5 MiB 时轮转到 `.1`，而最近记录在首次读文件后会由内存环形缓冲直接应答，HUD 的轮询开销不再随历史增长。
+- **并发执行可见**：多个 Agent / SubAgent 同时执行远程命令时，每个动作按 `actionId` 独立跟踪并带 `agentId` / `sessionId`；Agent 执行页会列出所有进行中的动作，不再让新动作覆盖旧动作。
 - **长内容折叠**：超长命令与容器挂载路径单行省略并提供展开按钮，面板不再出现横向滚动。
 
 #### 8. 设置页（决策统计 / 审计 / 信任库）
@@ -250,6 +256,7 @@ independently toggled rows.
 - **跨调用存活的远端 shell**：另装 `@at-series/dsh-at-terminal-ssh` 后，模型可用 `terminal_open({type:'ssh', name:'<服务器 id 或名称>'})` 开一个会话，`terminal_send` / `terminal_read` / `terminal_close` 连续操作——适合需要保持 `cd`、REPL、长任务的场景。`at_terminal_run_remote_command` 做不到这件事，它每条命令一条通道。
 - **复用宿主自己的 `ctx.terminals`**：给 DSH 内置的六个 `terminal_*` 工具接一个 `type: "ssh"` 后端，而不是另写一套终端工具——工具的返回形状、截断、`wait` 语义都跟着宿主走，宿主升级我们也跟着走。
 - **`name` 就是服务器选择器**：官方工具没有 `serverId` 参数，所以按「id 优先、名称其次」匹配，**同名两台直接报错并列出两个 id**（不替使用者挑一台）。
+- **准入与工作目录**：Agent 打开的持久终端按后台连接准入——服务器要么允许后台连接，要么已在面板里开着该服务器的终端；SubAgent 一律拒绝（用户看不到它的终端），单个 Agent 最多同时持有 4 个会话；`terminal_open({ cwd })` 会先执行 `cd -- <安全引用后的路径>`，让 shell 从指定目录开始。
 - **隔离而非侵入**：组合成 `cordis:group` + `isolate: { terminals: true }`，不装它的 profile 完全不受影响，装上也不会和右侧栏终端（另一套子系统）抢同一个注册表。
 - **诚实边界**：就绪只认「看到提示符」，否则只能算 `inferred_idle`；`terminal_signal` 直接拒绝（`ssh2` 无 pty 信号通道，改用 `Ctrl+C` 或关闭会话）。
 - **怎么装**：**设置 → 插件 → AT Terminal → 持久终端（可选）** 一行搞定（安装 / 启用 / 停用），或自己装：

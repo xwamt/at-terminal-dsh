@@ -25,6 +25,9 @@ The MCP build still includes the base AT Terminal workflow:
 - Disconnect and reconnect sessions.
 - Disconnect idle sessions after `sshManager.idleDisconnectMinutes` (default 60; `0` disables). Expiry closes the terminal and releases the SFTP tree and agent SFTP session attached to it.
 - Configure terminal font, scrollback, semantic highlighting, and keep-alive behavior.
+- Chain jump hosts: a `jumpHostId` may itself point at another jump host, so
+  `local → bastion A → bastion B → target` is built hop by hop (up to five hops). A cycle is
+  refused with the full path, and teardown closes the nearest tunnel first.
 
 ## SFTP File Management
 
@@ -132,6 +135,11 @@ Forgetting is deliberately bounded: the route resolves host and port inside one 
 chain, so a key is only forgettable from this page when a configured server's own address matches
 it. A jump-host key, or one left behind by a removed server, says so instead of showing a button
 that would silently do nothing.
+
+**Audit storage is bounded.** `agent-audit.jsonl` rotates to `.1` before an append once it reaches
+5 MiB, and the first small read hydrates a 50-line in-memory ring so the HUD's later polls do not
+re-read the whole file. The Settings page and `get_agent_execution_status` therefore keep working
+the same way as the trail grows.
 
 ## Persistent SSH Terminal (opt-in)
 

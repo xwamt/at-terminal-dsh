@@ -289,6 +289,38 @@ so the DSH terminal registry, the SFTP tree and the agent's pooled SFTP session 
 terminal are disposed together. The timer still counts terminal input/output, not
 operating-system idle time.
 
+## 0.3.3 behaviour notes
+
+- **Parallel read scheduling.** Seven stateless read tools (`at_terminal_ping`,
+  `at_terminal_list_ssh_servers`, `at_terminal_get_terminal_context`,
+  `at_terminal_sftp_list_directory`, `at_terminal_sftp_stat_path`,
+  `at_terminal_sftp_read_file`, `at_terminal_get_hardware_metrics`) declare
+  `isConcurrencySafe: () => true`, and the matching rows in `dsh/policy.js` carry
+  `parallel: true`. `executionMode()` opts in only on an exact `true`; every other tool stays
+  exclusive, so writes and commands keep their ordering.
+- **Concurrent actions in the monitor.** `AgentExecutionBridge` now keeps a map keyed by
+  `actionId` instead of one `currentAction`; each entry carries `agentId` / `sessionId` when
+  the tool layer supplies them, and `getSnapshot()` exposes `activeActions`. `currentAction`
+  remains as a compatibility projection of the newest live action, and a settled action stays
+  visible for three seconds.
+- **Audit storage is bounded.** `AgentAuditLog` rotates `agent-audit.jsonl` to `.1` before an
+  append once the file reaches 5 MiB. `createDshAuditLog().readRecent()` hydrates a 50-line
+  in-memory ring on the first read and answers small polls from it thereafter, so the HUD no
+  longer re-reads a growing JSONL on every refresh.
+- **Metrics do not invent data.** `HardwareMetricsCollector` coalesces concurrent probes per
+  server, recognises real mounts under `/mnt`, `/opt`, `/srv` and `/var`, and returns zero/empty
+  values when the probe produced nothing — the previous 8 GiB memory and 50 GiB `/dev/root`
+  fallbacks are gone. `LocalHardwareMetricsCollector` provides the same shape for the Host
+  machine when no SSH server is connected.
+- **SSH connections and the persistent terminal.** `buildSshConnectionHandle()` resolves
+  `jumpHostId` recursively (maximum five hops, cycle detection, reverse-order disposal).
+  `SftpSession` and `SshConnectionTester` keep a permanent `error` listener so a late
+  `Connection lost before handshake` cannot crash the Host. The opt-in SSH backend refuses
+  SubAgent-owned sessions, caps one owner at four live sessions, and runs
+  `cd -- <quoted cwd>` as the first command when `terminal_open({ cwd })` asks for a directory.
+  `SshSendOperation` implements DSH 0.2.2's `readOutput()` and boolean `cancel()`, exercised
+  by verify check 12 against the compiled bundle.
+
 ## Install (Desktop)
 
 The Desktop shell owns package management for its own profile

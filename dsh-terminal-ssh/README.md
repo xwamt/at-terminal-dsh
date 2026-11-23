@@ -19,7 +19,7 @@ Six tools, over SSH, on a shell that survives between calls:
 
 | Tool | What it does |
 |---|---|
-| `terminal_open({ type: 'ssh', name: '<server>' })` | start a session on a configured AT Terminal server |
+| `terminal_open({ type: 'ssh', name: '<server>', cwd? })` | start a session on a configured AT Terminal server; `cwd` starts the shell in that directory |
 | `terminal_send` | write to it |
 | `terminal_read` | read what came back (incremental, with a line range) |
 | `terminal_signal` | **always errors** — `ssh2` has no pty signal channel; the message names the two workarounds |
@@ -29,6 +29,11 @@ Six tools, over SSH, on a shell that survives between calls:
 The point is state: `terminal_send { text: 'cd /tmp' }` followed by a later
 `terminal_send { text: 'pwd' }` answers `/tmp`. A one-shot remote command cannot do that — each call
 is a new connection with a new working directory.
+
+Admission follows the same rule as a background connection: the server must either allow background
+connections or already have a terminal tab open in the AT Terminal panel. SubAgents are refused
+because the user cannot see their terminals, and one Agent may hold at most four live sessions;
+closing one releases its slot immediately.
 
 ## Why it is a separate package
 
@@ -49,7 +54,7 @@ Splitting it out also buys two things that would be lost inside the main package
 
 ## What it needs
 
-- `@at-series/dsh-at-terminal` `^0.3.2` (declared as a peer; it exports the SSH backend this bundle
+- `@at-series/dsh-at-terminal` `^0.3.3` (declared as a peer; it exports the SSH backend this bundle
   references by subpath, so the backend lives in one place instead of being copied here)
 - A DeepSeek Harness desktop build that composes `@deepseek-ai/dsh-terminal` — every 0.2.x does
 - A configured server that either has **Allow background connections** enabled or already has a
